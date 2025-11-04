@@ -2,8 +2,6 @@
 // Novo endpoint para gerar contrato no novo pipe mantendo na mesma fase
 
 const express = require('express');
-const fetch = require('node-fetch');
-const bodyParser = require('body-parser');
 
 const app = express();
 app.use(bodyParser.json());
