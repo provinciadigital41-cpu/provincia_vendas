@@ -1,747 +1,345 @@
-// ============================================================================
-// PIPEFY + D4SIGN (link público + revisão, download e envio para assinatura)
-// ============================================================================
+// server.js
+// Novo endpoint para gerar contrato no novo pipe mantendo na mesma fase
 
 const express = require('express');
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-const dns = require('dns').promises;
-const http = require('http');
-const https = require('https');
-const crypto = require('crypto');
-const { URL } = require('url');
+const fetch = require('node-fetch');
+const bodyParser = require('body-parser');
 
 const app = express();
+app.use(bodyParser.json());
 
-// Logs
-app.use((req, res, next) => {
-  console.log(`[REQ] ${req.method} ${req.originalUrl} ip=${req.headers['x-forwarded-for'] || req.ip}`);
-  next();
-});
-app.use(express.json({ limit: '2mb' }));
-app.use((req, res, next) => {
-  if ((req.headers['content-type'] || '').includes('application/json')) {
-    try { console.log(`[REQ-BODY<=2KB] ${JSON.stringify(req.body).slice(0, 2000)}`); } catch {}
-  }
-  next();
-});
-
-// Keep-Alive
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 50, timeout: 60_000 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50, timeout: 60_000 });
-
-// ============================================================================
-// VARIÁVEIS DE AMBIENTE
-// ============================================================================
+// Variáveis de ambiente necessárias
 const {
-  PORT = 3000,
-  PIPE_API_KEY,
-  PIPE_GRAPHQL_ENDPOINT = 'https://api.pipefy.com/graphql',
-
-  D4SIGN_CRYPT_KEY,
-  D4SIGN_TOKEN,
-  TEMPLATE_UUID_CONTRATO,
-
-  PHASE_ID_CONTRATO_ENVIADO,
-
-  COFRE_UUID_EDNA,
-  COFRE_UUID_GREYCE,
-  COFRE_UUID_MARIANA,
-  COFRE_UUID_VALDEIR,
-  COFRE_UUID_DEBORA,
-  COFRE_UUID_MAYKON,
-  COFRE_UUID_JEFERSON,
-  COFRE_UUID_RONALDO,
-  COFRE_UUID_BRENDA,
-  COFRE_UUID_MAURO,
-
-  PUBLIC_BASE_URL,
-  PUBLIC_LINK_SECRET
+  D4_CRYPT,
+  D4_TOKEN,
+  PIpefy_token, // já existente no seu projeto
+  EMAIL_ASSINATURA_EMPRESA,
+  PIPEFY_FIELD_LINK_CONTRATO,
 } = process.env;
 
-if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) {
-  console.warn('[AVISO] Defina PUBLIC_BASE_URL e PUBLIC_LINK_SECRET nas variáveis de ambiente');
-}
+// Configurações do novo pipe e fase
+// Pipe e fase conforme documento enviado
+const NOVO_PIPE_ID = '306505295';       // novo pipe
+const FASE_VISITA_ID = '339299691';     // fase "Visita"
+// Ambos conforme IDs do documento. :contentReference[oaicite:4]{index=4}
 
-const FIELD_ID_CHECKBOX_DISPARO = 'gerar_contrato';
-const FIELD_ID_LINKS_D4 = 'd4_contrato';
+// Template do D4 já mapeado
+// id "24" é o template "CONTRATO NOVO MODELO D4.docx" com tokens_gerais
+// e a lista de variáveis informadas no documento. :contentReference[oaicite:5]{index=5}
+const D4_TEMPLATE_ID = '24';
 
-const COFRES_UUIDS = {
-  'EDNA BERTO DA SILVA': COFRE_UUID_EDNA,
-  'Greyce Maria Candido Souza': COFRE_UUID_GREYCE,
-  'mariana cristina de oliveira': COFRE_UUID_MARIANA,
-  'Valdeir Almedia': COFRE_UUID_VALDEIR,
-  'Débora Gonçalves': COFRE_UUID_DEBORA,
-  'Maykon Campos': COFRE_UUID_MAYKON,
-  'Jeferson Andrade Siqueira': COFRE_UUID_JEFERSON,
-  'RONALDO SCARIOT DA SILVA': COFRE_UUID_RONALDO,
-  'BRENDA ROSA DA SILVA': COFRE_UUID_BRENDA,
-  'Mauro Furlan Neto': COFRE_UUID_MAURO
-};
+// ==================================================================
+// Helpers de Pipefy
+// ==================================================================
 
-// Idempotência
-const inFlight = new Set();
-const LOCK_RELEASE_MS = 30_000;
-function acquireLock(key) { if (inFlight.has(key)) return false; inFlight.add(key); setTimeout(()=>inFlight.delete(key), LOCK_RELEASE_MS).unref?.(); return true; }
-function releaseLock(key) { inFlight.delete(key); }
+const PIPEFY_API = 'https://api.pipefy.com/graphql';
 
-// ============================================================================
-// HELPERS
-// ============================================================================
-async function preflightDNS() {
-  const hosts = ['api.pipefy.com', 'secure.d4sign.com.br', 'google.com'];
-  for (const host of hosts) {
-    try { const { address } = await dns.lookup(host, { family: 4 }); console.log(`[DNS] ${host} → ${address}`); }
-    catch (e) { console.warn(`[DNS-AVISO] Falha ao resolver ${host}: ${e.code || e.message}`); }
-  }
-}
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-const TRANSIENT_CODES = new Set(['EAI_AGAIN','ENOTFOUND','ECONNRESET','ETIMEDOUT','EHOSTUNREACH','ENETUNREACH']);
-
-async function fetchWithRetry(url, options = {}, { attempts = 5, baseDelayMs = 400, timeoutMs = 15000 } = {}) {
-  let lastErr;
-  for (let i = 1; i <= attempts; i++) {
-    const u = new URL(url);
-    const agent = u.protocol === 'http:' ? httpAgent : httpsAgent;
-    const controller = new AbortController();
-    const to = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, { ...options, agent, signal: controller.signal });
-      clearTimeout(to);
-      return res;
-    } catch (e) {
-      clearTimeout(to);
-      lastErr = e;
-      const code = e.code || e.errno || e.type;
-      const transient = TRANSIENT_CODES.has(code) || e.name === 'AbortError';
-      if (!transient || i === attempts) throw e;
-      await sleep(baseDelayMs * Math.pow(2, i - 1));
-    }
-  }
-  throw lastErr;
-}
-
-// Pipefy base
-async function gql(query, vars) {
-  const res = await fetchWithRetry(PIPE_GRAPHQL_ENDPOINT, {
+async function pipefyGraphQL(query, variables) {
+  const res = await fetch(PIPEFY_API, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${PIPE_API_KEY}` },
-    body: JSON.stringify({ query, variables: vars })
-  }, { attempts: 5, baseDelayMs: 500, timeoutMs: 20000 });
-
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok || json.errors) {
-    console.error('[Pipefy GraphQL ERRO]', json.errors || res.statusText);
-    throw new Error(JSON.stringify(json.errors || res.statusText));
+    headers: {
+      'Authorization': `Bearer ${PIpefy_token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Pipefy error ${res.status}: ${txt}`);
+  }
+  const json = await res.json();
+  if (json.errors) {
+    throw new Error(`Pipefy GraphQL: ${JSON.stringify(json.errors)}`);
   }
   return json.data;
 }
 
-// unwrap: aceita string direta, objetos tipo { string_value: "..." } ou strings estilo '{"string_value"=>"..."}'
-function unwrapValue(v) {
-  if (v == null) return '';
-  if (typeof v === 'string') {
-    const m = v.match(/"string_value"\s*=>\s*"([^"]+)"/);
-    if (m) return m[1];
-    return v;
-  }
-  if (typeof v === 'object' && v.string_value) return String(v.string_value);
-  return String(v);
-}
-
-// >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-// GRAVAÇÃO: usa updateFieldsValues para salvar APENAS a URL (string pura)
-// Fallback para updateCardField se necessário
-// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-async function setCardFieldText(cardId, fieldId, text) {
-  // 1) Tenta updateFieldsValues (valor simples)
-  const q1 = `
-    mutation($input: UpdateFieldsValuesInput!) {
-      updateFieldsValues(input: $input) { card { id } }
+// Busca todos os campos do card, incluindo start form e fase atual
+async function getCardFields(cardId) {
+  const query = `
+    query($id: ID!) {
+      card(id: $id) {
+        id
+        title
+        fields {
+          name
+          value
+          field {
+            id
+          }
+        }
+        pipe { id }
+        current_phase { id name }
+      }
     }
   `;
-  const v1 = { input: { node_id: cardId, values: [{ field_id: fieldId, value: String(text) }] } };
+  const data = await pipefyGraphQL(query, { id: cardId });
+  return data.card;
+}
 
-  try {
-    await gql(q1, v1);
-    return;
-  } catch (e) {
-    console.warn('[Pipefy] updateFieldsValues falhou, tentando updateCardField...', e?.message || e);
-  }
-
-  // 2) Fallback para updateCardField (schema alternativo)
-  const q2 = `
+// Atualiza um campo de texto no card com o link final
+async function setContractLinkOnCard(cardId, link) {
+  const mutation = `
     mutation($input: UpdateCardFieldInput!) {
-      updateCardField(input: $input) { card { id } }
+      updateCardField(input: $input) {
+        card { id }
+      }
     }
   `;
-  const v2 = { input: { card_id: cardId, field_id: fieldId, new_value: { string_value: String(text) } } };
-  await gql(q2, v2);
+  const variables = {
+    input: {
+      card_id: Number(cardId),
+      field_id: PIPEFY_FIELD_LINK_CONTRATO,
+      new_value: link,
+    },
+  };
+  await pipefyGraphQL(mutation, variables);
 }
 
-async function moveCardToPhaseSafe(cardId, destPhaseId) {
-  const q = `mutation($input: MoveCardToPhaseInput!) { moveCardToPhase(input: $input) { card { id } } }`;
-  await gql(q, { input: { card_id: cardId, destination_phase_id: destPhaseId } }).catch(err => {
-    const msg = String(err?.message || err);
-    if (!msg.includes('already in the destination phase')) throw err;
+// ==================================================================
+// Helpers de D4
+// ==================================================================
+
+const D4_BASE = 'https://api.d4sign.com.br/v2';
+
+async function d4Fetch(path, method, payload) {
+  const url = `${D4_BASE}${path}?tokenAPI=${D4_TOKEN}&cryptKey=${D4_CRYPT}`;
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: payload ? JSON.stringify(payload) : undefined,
   });
-}
-
-function getField(fields, id) {
-  const f = fields.find(x => x.field.id === id || x.field.internal_id === id);
-  if (!f) return null;
-  const v = f.value ?? f.report_value ?? null;
-  return unwrapValue(v);
-}
-
-// moeda BR
-function onlyNumberBR(v) {
-  const s = String(v ?? '').replace(/[^\d.,-]/g,'').replace(/\.(?=\d{3}(?:\D|$))/g,'').replace(',', '.');
-  const n = Number(s);
-  return isFinite(n) ? n : 0;
-}
-function moneyBRNoSymbol(n) {
-  return Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-// datas
-const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-function monthNamePt(mIndex1to12) { return MESES_PT[(Math.max(1, Math.min(12, Number(mIndex1to12))) - 1)]; }
-function fmtDMY2(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d)) return '';
-  const dd = String(d.getDate()).padStart(2,'0');
-  const mm = String(d.getMonth()+1).padStart(2,'0');
-  const yy = String(d.getFullYear()).slice(-2);
-  return `${dd}/${mm}/${yy}`;
-}
-
-// Normalização select/checkbox de "Sim"
-function normalizeCheck(v) {
-  if (v == null) return '';
-  if (typeof v === 'boolean') return v ? 'sim' : '';
-  if (Array.isArray(v)) return v.map(x => String(x||'').toLowerCase()).includes('sim') ? 'sim' : '';
-  let s = String(v).trim();
-  if (s.startsWith('[') && s.endsWith(']')) {
-    try { const arr = JSON.parse(s); if (Array.isArray(arr)) return arr.map(x => String(x||'').toLowerCase()).includes('sim') ? 'sim' : ''; } catch {}
-  }
-  s = s.toLowerCase();
-  return (s === 'true' || s === 'yes' || s === 'sim' || s === 'checked') ? 'sim' : '';
-}
-function logDecision(step, obj) {
-  try { console.log(`[DECISION] ${step} :: ${JSON.stringify(obj)}`); } catch { console.log(`[DECISION] ${step}`); }
-}
-
-// ============================================================================
-// D4Sign - criação por template Word, cadastro de signatários,
-// geração de URL de download, envio para assinatura
-// ============================================================================
-async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
-  const base = 'https://secure.d4sign.com.br';
-  const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplateword`, base);
-  url.searchParams.set('tokenAPI', tokenAPI);
-  url.searchParams.set('cryptKey', cryptKey);
-  const body = { name_document: title, templates: { [templateId]: varsObj } };
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
-  const text = await res.text();
-  let json; try { json = JSON.parse(text); } catch { json = null; }
-  if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
-    console.error('[ERRO D4SIGN WORD]', res.status, text);
-    throw new Error(`Falha D4Sign(WORD): ${res.status}`);
-  }
-  return json.uuid || json.uuid_document;
-}
-async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
-  const base = 'https://secure.d4sign.com.br';
-  const url = new URL(`/api/v1/documents/${uuidDocument}/createlist`, base);
-  url.searchParams.set('tokenAPI', tokenAPI);
-  url.searchParams.set('cryptKey', cryptKey);
-  const body = { signers: signers.map(s => ({ email: s.email, name: s.name, act: s.act || '1', foreign: s.foreign || '0', send_email: s.send_email || '1' })) };
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
-  const text = await res.text();
-  if (!res.ok) { console.error('[ERRO D4SIGN createlist]', res.status, text); throw new Error(`Falha ao cadastrar signatários: ${res.status}`); }
-  return text;
-}
-// Gera URL de download (PDF) para um documento do D4Sign
-async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', language = 'pt' } = {}) {
-  const base = 'https://secure.d4sign.com.br';
-  const url = new URL(`/api/v1/documents/${uuidDocument}/download`, base);
-  url.searchParams.set('tokenAPI', tokenAPI);
-  url.searchParams.set('cryptKey', cryptKey);
-  const body = { type, language, document: 'false' };
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST',
-    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
-  const text = await res.text();
-  let json; try { json = JSON.parse(text); } catch { json = null; }
-  if (!res.ok || !json?.url) {
-    console.error('[ERRO D4SIGN download]', res.status, text);
-    throw new Error(`Falha ao gerar URL de download: ${res.status}`);
-  }
-  return json; // { url, name }
-}
-// Envia o documento para assinatura
-async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
-  message = '',
-  skip_email = '0',
-  workflow = '0'
-} = {}) {
-  const base = 'https://secure.d4sign.com.br';
-  const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
-  url.searchParams.set('cryptKey', cryptKey);
-  const body = { message, skip_email, workflow, tokenAPI };
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST',
-    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
-  const text = await res.text();
   if (!res.ok) {
-    console.error('[ERRO D4SIGN sendtosigner]', res.status, text);
-    throw new Error(`Falha ao enviar para assinatura: ${res.status}`);
+    const txt = await res.text();
+    throw new Error(`D4 error ${res.status}: ${txt}`);
   }
-  return text;
+  const json = await res.json();
+  return json;
 }
 
-// ============================================================================
-// Montagem de dados e tokens (modelo novo)
-// ============================================================================
-function getFieldSafeArray(value) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string') {
-    try { const arr = JSON.parse(value); return Array.isArray(arr) ? arr : []; } catch { return [value]; }
-  }
-  return [];
-}
-
-function montarDados(card) {
-  const f = card.fields || [];
-
-  const servicos = getFieldSafeArray(getField(f, 'servi_os_de_contratos'));
-
-  // parcelas pode vir "10X" etc.
-  const parcelasRaw = getField(f, 'quantidade_de_parcelas') || '1';
-  const parcelasNum = (() => {
-    const m = String(parcelasRaw).match(/(\d+)/);
-    return m ? Number(m[1]) : Number(parcelasRaw) || 1;
-  })();
-
-  return {
-    // Identificação e endereço
-    nome: getField(f, 'nome_do_contato') || '',
-    estado_civil: getField(f, 'estado_civil') || '',
-    rua: getField(f, 'rua') || '',
-    bairro: getField(f, 'bairro') || '',
-    numero: getField(f, 'n_mero') || '',
-    cidade: getField(f, 'cidade') || '',
-    uf: getField(f, 'uf') || '',
-    cep: getField(f, 'cep') || '',
-    rg: getField(f, 'rg') || '',
-    cpf: getField(f, 'cpf_cnpj') || '',
-
-    // Contato
-    email: getField(f, 'email_profissional') || '',
-    telefone: getField(f, 'telefone') || '',
-
-    // Serviços
-    servicos,
-    nome_marca: getField(f, 'neg_cio') || '',
-    classe: getField(f, 'classe') || '',
-    risco: getField(f, 'risco_marca') || '',
-
-    // Remuneração (assessoria)
-    valor_total: getField(f, 'valor_do_neg_cio') || '',
-    parcelas: parcelasNum,
-    forma_pagto_assessoria: getField(f, 'm_todo_de_pagamento') || '',
-
-    // Datas de pagamento (novos campos)
-    data_pagto_assessoria: getField(f, 'data_de_pagamento_assessoria') || '',
-    data_pagto_taxa: getField(f, 'data_de_pagamento_da_taxa') || '',
-
-    // Pesquisa de viabilidade (select id "paga": paga | isenta)
-    pesquisa_status: String(getField(f, 'paga') || '').toLowerCase(),
-
-    // Taxa de encaminhamento (select id "copy_of_pesquisa")
-    taxa_faixa: String(getField(f, 'copy_of_pesquisa') || '').toLowerCase(),
-
-    // Vendedor p/ cofre
-    vendedor: card.assignees?.[0]?.name || 'Desconhecido'
+// Cria documento a partir do template e faz merge dos tokens
+async function d4CreateDocumentFromTemplate({ templateId, fileName, variables }) {
+  // Ajuste o payload para o formato de variáveis do teu template
+  // variables deve ser um objeto { token: valor }
+  const payload = {
+    template: templateId,
+    name: fileName,
+    data: variables,
   };
+  return d4Fetch('/documents/create', 'POST', payload);
 }
 
-// nowInfo é a data do momento da geração (com mês por extenso)
-function montarADDWord(d, nowInfo) {
-  const parcelas = Math.max(1, Number(d.parcelas || 1));
-  const totalN = onlyNumberBR(d.valor_total);
-  const parcelaN = totalN / parcelas;
-  const valorParcelaSemRS = moneyBRNoSymbol(parcelaN);
-
-  // pesquisa: ISENTA → "R$00,00 via --- 00/00/00"
-  const valorPesquisaSemRS = d.pesquisa_status === 'isenta' ? '00,00' : '';
-  const formaPagamentoPesquisa = d.pesquisa_status === 'isenta' ? '---' : '';
-  const dataPesquisa = d.pesquisa_status === 'isenta' ? '00/00/00' : '';
-
-  // taxa
-  let valorTaxaSemRS = '';
-  const taxa = String(d.taxa_faixa);
-  if (taxa.includes('440')) valorTaxaSemRS = '440,00';
-  else if (taxa.includes('880')) valorTaxaSemRS = '880,00';
-
-  // serviços: pedido de registro de marca
-  const temMarca = d.servicos.some(s =>
-    String(s).toLowerCase().includes('pedido de registro de marca') ||
-    String(s).toLowerCase().includes('registro de marca') ||
-    String(s).toLowerCase().includes('marca')
-  );
-  const qtdMarca = temMarca ? '1' : '';
-  const descMarca = temMarca
-    ? [
-        d.nome_marca ? `Marca: ${d.nome_marca}` : '',
-        d.classe ? `Classe: ${d.classe}` : ''
-      ].filter(Boolean).join(', ')
-    : '';
-
-  // Data no rodapé com base na geração (mês por extenso)
-  const Dia = String(nowInfo.dia).padStart(2, '0');
-  const Mes = nowInfo.mesNome;
-  const Ano = String(nowInfo.ano);
-
-  // Observações: repetir forma de pagamento da assessoria
-  const observacoes = d.forma_pagto_assessoria || '';
-
-  return {
-    'Contratante 1': d.nome,
-    'Estado Civíl': d.estado_civil,
-    'rua': d.rua,
-    'Bairro': d.bairro,
-    'Numero': d.numero,
-    'Nome da cidade': d.cidade,
-    'UF': d.uf,
-    'CEP': d.cep,
-    'RG': d.rg,
-    'CPF': d.cpf,
-    'Telefone': d.telefone,
-    'E-mail': d.email,
-
-    'Risco': d.risco,
-
-    'Quantidade depósitos/processos de MARCA': qtdMarca,
-    'Nome da Marca': d.nome_marca,
-    'Classe': d.classe,
-
-    'Número de parcelas da Assessoria': String(parcelas),
-    'Valor da parcela da Assessoria': valorParcelaSemRS,
-    'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
-    'Data de pagamento da Assessoria': fmtDMY2(d.data_pagto_assessoria),
-
-    'Valor da Pesquisa': valorPesquisaSemRS,
-    'Forma de pagamento da Pesquisa': formaPagamentoPesquisa,
-    'Data de pagamento da pesquisa': dataPesquisa,
-
-    'Valor da Taxa': valorTaxaSemRS,
-    'Forma de pagamento da Taxa': d.forma_pagto_assessoria || '',
-    'Data de pagamento da Taxa': fmtDMY2(d.data_pagto_taxa),
-
-    // Observações — repetindo a forma de pagamento
-    'Observações': observacoes,
-    'Observacoes': observacoes,
-
-    // Data no rodapé
-    'Cidade': d.cidade,
-    'Dia': Dia,
-    'Mês': Mes,
-    'Ano': Ano
+// Cria lista de signatários padrão com e-mail de assinatura da empresa como remetente
+async function d4AddSigners(documentKey, signers) {
+  const payload = {
+    signers: signers.map(s => ({
+      email: s.email,
+      act: '1', // assinatura simples
+      foreign: '0',
+      certificadoicpbr: '0',
+      name: s.name || s.email,
+    })),
   };
+  return d4Fetch(`/documents/${documentKey}/signers`, 'POST', payload);
 }
 
-function montarSigners(d) {
-  return [{ email: d.email, name: d.nome, act: '1', foreign: '0', send_email: '1' }];
+// Gera link público para assinatura e para download
+async function d4MakeLinks(documentKey) {
+  // url para assinatura pública
+  const signLink = await d4Fetch(`/documents/${documentKey}/sendto`, 'POST', {
+    message: 'Contrato para assinatura',
+    emails: [],
+    workflow: '0',
+  });
+  // link público de download
+  const downloadLink = await d4Fetch(`/documents/${documentKey}/download`, 'GET');
+  return { signLink, downloadLink };
 }
 
-// ============================================================================
-// LINK PÚBLICO
-// ============================================================================
-function b64u(b) { return b.toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
-function mkLeadToken(cardId, ttlSec = 60 * 60 * 24 * 7) {
-  const payload = JSON.stringify({ cardId, iat: Math.floor(Date.now()/1000), exp: Math.floor(Date.now()/1000)+ttlSec });
-  const sig = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(payload).digest();
-  return `${b64u(Buffer.from(payload))}.${b64u(sig)}`;
+// ==================================================================
+// Mapeamento de campos → tokens do template
+// ==================================================================
+//
+// tokens_gerais no template:
+// contratante_1, estado_civil, rua, bairro, numero, nome_da_cidade, uf, cep, rg, cpf, telefone, E-mail,
+// risco, quantidade_depositos_processos_de_marca, nome_da_marca, classe,
+// numero_de_parcelas_da_assessoria, valor_da_parcela_da_assessoria, forma_de_pagamento_da_assessoria, data_de_pagamento_da_assessoria,
+// valor_da_pesquisa, forma_de_pagamento_da_pesquisa, data_de_pagamento_da_pesquisa,
+// valor_da_taxa, forma_de_pagamento_da_taxa, data_de_pagamento_da_taxa,
+// cidade, dia, mes, ano
+//
+// IDs disponíveis no Start Form e Fase Visita constam no doc. :contentReference[oaicite:6]{index=6}
+//
+// Abaixo um mapeamento sugerido para este novo pipe.
+// Ajuste qualquer item que desejar.
+
+const mapFromStartForm = {
+  // Start form
+  contratante_1: 'nome_ou_raz_o_social',
+  cep: 'cep',
+  uf: 'uf',
+  cidade: 'cidade',
+  bairro: 'bairro',
+  rua: 'rua',
+  numero: 'n_mero_1',
+  // Pagamentos e condições
+  valor_da_parcela_da_assessoria: 'valor_da_proposta',
+  numero_de_parcelas_da_assessoria: 'quantidade_de_parcelas',
+  // Pesquisa
+  forma_de_pagamento_da_pesquisa: 'pesquisaa',
+  // Taxa
+  valor_da_taxa: 'pre_o',
+  // Campos complementares se existirem
+};
+
+const mapFromPhaseVisita = {
+  // Fase Visita
+  cpf: 'cpf',
+  r_social_ou_n_completo: 'r_social_ou_n_completo',
+  rua_av_do_cnpj: 'rua_av_do_cnpj',
+  bairro_do_cnpj: 'bairro_do_cnpj',
+  cidade_do_cnpj: 'cidade_do_cnpj',
+  estado_do_cnpj: 'estado_do_cnpj',
+  cep_do_cnpj: 'cep_do_cnpj',
+  telefone: 'contato', // se o conector trouxer telefone, adaptar aqui
+  tipo_da_empresa: 'tipo_da_empresa',
+  tipo_da_empresa_cotitular: 'tipo_da_empresa_cotitular',
+  valor_da_assessoria: 'valor_da_assessoria',
+  sele_o_de_lista: 'sele_o_de_lista',
+  taxa: 'taxa',
+  copy_of_tipo_de_pagamento_taxa: 'copy_of_tipo_de_pagamento_taxa',
+  tipo_de_pagamento: 'tipo_de_pagamento',
+  copy_of_tipo_de_pagamento: 'copy_of_tipo_de_pagamento',
+  pesquisa: 'pesquisa',
+  tipo_de_pagamento_benef_cio: 'tipo_de_pagamento_benef_cio',
+  tem_s_cio: 'tem_s_cio',
+  nome_do_s_cio: 'nome_do_s_cio',
+  cpf_do_s_cio: 'cpf_do_s_cio',
+  coment_rios_para_o_contrato: 'coment_rios_para_o_contrato',
+};
+
+// Conversão de valores de campos do Pipefy para o formato de tokens
+function normalizeValue(fieldId, value) {
+  if (value == null) return '';
+  // Exemplos de normalização
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
 }
-function parseLeadToken(token) {
-  const [p,s] = (token||'').split('.');
-  if (!p || !s) throw new Error('token inválido');
-  const payload = Buffer.from(p.replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');
-  const sig = Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64');
-  const good = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(payload).digest();
-  if (!crypto.timingSafeEqual(sig, good)) throw new Error('assinatura inválida');
-  const obj = JSON.parse(payload);
-  if (obj.exp && Date.now()/1000 > obj.exp) throw new Error('token expirado');
-  return obj;
-}
 
-// ============================================================================
-// ROTAS PÚBLICAS
-// ============================================================================
-app.get('/lead/:token', async (req, res) => {
-  try {
-    const { cardId } = parseLeadToken(req.params.token);
-    const data = await gql(
-      `query($cardId: ID!) {
-        card(id: $cardId) {
-          id title assignees { name }
-          fields { name value report_value field { id internal_id id } }
-        }
-      }`,
-      { cardId }
-    );
-    const card = data.card;
-    const d = montarDados(card);
-
-    const html = `
-<!doctype html><html lang="pt-BR"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Revisar contrato</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:0;background:#f7f7f7;color:#111}
-  .wrap{max-width:860px;margin:24px auto;padding:0 16px}
-  .card{background:#fff;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:24px;margin-bottom:16px}
-  h1{font-size:22px;margin:0 0 12px}
-  h2{font-size:16px;margin:24px 0 8px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600;cursor:pointer}
-  .muted{color:#666}
-  .label{font-weight:700}
-</style>
-<div class="wrap">
-  <div class="card">
-    <h1>Revisar dados do contrato</h1>
-    <div class="muted">Card #${card.id}</div>
-
-    <h2>Contratante(s)</h2>
-    <div class="grid">
-      <div><div class="label">Nome</div><div>${d.nome||'-'}</div></div>
-      <div><div class="label">CPF</div><div>${d.cpf||'-'}</div></div>
-      <div><div class="label">RG</div><div>${d.rg||'-'}</div></div>
-    </div>
-
-    <h2>Contato</h2>
-    <div class="grid">
-      <div><div class="label">E-mail</div><div>${d.email||'-'}</div></div>
-      <div><div class="label">Telefone</div><div>${d.telefone||'-'}</div></div>
-    </div>
-
-    <h2>Serviços</h2>
-    <div>${(d.servicos||[]).join(', ') || '-'}</div>
-
-    <h2>Remuneração</h2>
-    <div class="grid">
-      <div><div class="label">Parcelas</div><div>${String(d.parcelas||'1')}</div></div>
-      <div><div class="label">Valor total</div><div>${moneyBRNoSymbol(onlyNumberBR(d.valor_total))}</div></div>
-      <div><div class="label">Forma de pagamento</div><div>${d.forma_pagto_assessoria||'-'}</div></div>
-    </div>
-
-    <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
-      <button class="btn" type="submit">Gerar contrato</button>
-    </form>
-    <p class="muted" style="margin-top:12px">Ao clicar, o documento será criado no D4Sign e o card será movido para "Contrato enviado".</p>
-  </div>
-</div>
-`;
-    res.setHeader('content-type','text/html; charset=utf-8');
-    return res.status(200).send(html);
-  } catch (e) {
-    return res.status(400).send('Link inválido ou expirado.');
+// Constrói objeto { token: valor } combinando Start Form e Fase
+function buildTemplateVariables(card) {
+  const kv = {};
+  const byId = {};
+  for (const f of card.fields || []) {
+    if (f.field && f.field.id) {
+      byId[f.field.id] = f.value;
+    }
   }
-});
 
-// Gera o documento e mostra botões de Baixar PDF e Enviar para assinatura
-app.post('/lead/:token/generate', async (req, res) => {
-  try {
-    const { cardId } = parseLeadToken(req.params.token);
-    const lockKey = `lead:${cardId}`;
-    if (!acquireLock(lockKey)) return res.status(200).send('Processando, tente novamente em instantes.');
-
-    preflightDNS().catch(()=>{});
-
-    const data = await gql(
-      `query($cardId: ID!) {
-        card(id: $cardId) {
-          id title assignees { name }
-          current_phase { id name }
-          fields { name value report_value field { id internal_id id } }
-        }
-      }`,
-      { cardId }
-    );
-
-    const card = data.card;
-    const d = montarDados(card);
-
-    // Data do momento da geração (com mês por extenso)
-    const now = new Date();
-    const nowInfo = {
-      dia: now.getDate(),
-      mes: now.getMonth()+1,
-      ano: now.getFullYear(),
-      mesNome: monthNamePt(now.getMonth()+1)
-    };
-
-    const add = montarADDWord(d, nowInfo);
-    const signers = montarSigners(d);
-    const uuidSafe = COFRES_UUIDS[d.vendedor];
-    if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
-
-    // 1) Cria doc e 2) cadastra signatários (AINDA NÃO envia para assinatura)
-    const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, card.title, add);
-    await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
-
-    // Move fase
-    await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
-
-    releaseLock(lockKey);
-
-    // 3) Página com duas ações: Download PDF e Enviar para assinatura
-    const token = req.params.token;
-    const html = `
-<!doctype html><meta charset="utf-8"><title>Contrato gerado</title>
-<style>
-  body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;color:#111;margin:0}
-  .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:640px;width:92%}
-  h2{margin:0 0 12px}
-  .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
-  .btn{display:inline-block;padding:12px 16px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600}
-  .muted{color:#666}
-</style>
-<div class="box">
-  <h2>Contrato gerado com sucesso</h2>
-  <p class="muted">UUID do documento: ${uuidDoc}</p>
-  <div class="row">
-    <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF</a>
-    <form method="POST" action="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/send" style="display:inline">
-      <button class="btn" type="submit">Enviar para assinatura</button>
-    </form>
-    <a class="btn" href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(token)}">Voltar</a>
-  </div>
-</div>`;
-    return res.status(200).send(html);
-
-  } catch (e) {
-    console.error('[ERRO LEAD-GENERATE]', e.message || e);
-    return res.status(400).send('Falha ao gerar o contrato.');
+  // tokens que puxamos do start form
+  for (const token in mapFromStartForm) {
+    const src = mapFromStartForm[token];
+    kv[token] = normalizeValue(src, byId[src]);
   }
-});
-
-// Download do PDF (redireciona para URL temporária do D4Sign)
-app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
-  try {
-    const { cardId } = parseLeadToken(req.params.token);
-    if (!cardId) throw new Error('token inválido');
-    const uuidDoc = req.params.uuid;
-
-    const { url: downloadUrl } = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, { type: 'PDF', language: 'pt' });
-    return res.redirect(302, downloadUrl);
-  } catch (e) {
-    console.error('[ERRO lead download]', e.message || e);
-    return res.status(400).send('Falha ao gerar link de download.');
+  // tokens que puxamos da fase Visita
+  for (const token in mapFromPhaseVisita) {
+    const src = mapFromPhaseVisita[token];
+    kv[token] = normalizeValue(src, byId[src]);
   }
-});
 
-// Enviar documento para assinatura
-app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
+  // Campos que dependem de data atual
+  const now = new Date();
+  kv.dia = String(now.getDate()).padStart(2, '0');
+  kv.mes = String(now.getMonth() + 1).padStart(2, '0');
+  kv.ano = String(now.getFullYear());
+
+  // Preenchimentos padrão se faltarem
+  kv['E-mail'] = kv['E-mail'] || '';
+  kv.uf = kv.uf || kv.estado_do_cnpj || '';
+  kv.cidade = kv.cidade || kv.nome_da_cidade || kv.cidade_do_cnpj || '';
+
+  return kv;
+}
+
+// ==================================================================
+// Endpoint novo
+// ==================================================================
+//
+// POST /novo-pipe/gerar-contrato
+// body: { cardId: "..." }
+//
+// Requisitos:
+// 1) O card deve estar no pipe correto e na fase Visita
+// 2) Preenche tokens com dados do start form e fase
+// 3) Gera documento no D4 a partir do template
+// 4) Adiciona signatários
+// 5) Gera links de assinatura e download
+// 6) Grava o link no campo configurado do card
+// 7) Não move de fase
+
+app.post('/novo-pipe/gerar-contrato', async (req, res) => {
   try {
-    const { cardId } = parseLeadToken(req.params.token);
-    if (!cardId) throw new Error('token inválido');
-    const uuidDoc = req.params.uuid;
+    const { cardId } = req.body;
+    if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
 
-    await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
-      message: 'Olá! Há um documento aguardando sua assinatura.',
-      skip_email: '0', // 0 = D4Sign notifica por e-mail
-      workflow: '0'
+    const card = await getCardFields(cardId);
+
+    if (!card || !card.pipe || card.pipe.id !== NOVO_PIPE_ID) {
+      return res.status(400).json({ error: 'Card não pertence ao novo pipe configurado' });
+    }
+    if (!card.current_phase || card.current_phase.id !== FASE_VISITA_ID) {
+      return res.status(400).json({ error: 'Card não está na fase Visita do novo pipe' });
+    }
+
+    const variables = buildTemplateVariables(card);
+
+    const fileName = `Contrato_${card.title || card.id}.docx`;
+
+    const created = await d4CreateDocumentFromTemplate({
+      templateId: D4_TEMPLATE_ID,
+      fileName,
+      variables,
     });
 
-    const okHtml = `
-<!doctype html><meta charset="utf-8"><title>Documento enviado</title>
-<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px}</style>
-<div class="box">
-  <h2>Documento enviado para assinatura</h2>
-  <p>Os signatários foram notificados.</p>
-  <p><a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}">Voltar</a></p>
-</div>`;
-    return res.status(200).send(okHtml);
+    const documentKey = created.uuid || created.documentKey || created.uuidDoc || created.key;
 
-  } catch (e) {
-    console.error('[ERRO sendtosigner]', e.message || e);
-    return res.status(400).send('Falha ao enviar para assinatura.');
-  }
-});
-
-// ============================================================================
-// WEBHOOK PIPEFY: cria o link público no campo do card (só a URL)
-// ============================================================================
-app.post('/pipefy', async (req, res) => {
-  console.log('[PIPEFY] webhook recebido em /pipefy');
-  const cardId = req.body?.data?.action?.card?.id;
-  if (!cardId) return res.status(400).json({ error: 'Sem cardId' });
-
-  const lockKey = `card:${cardId}`;
-  if (!acquireLock(lockKey)) return res.status(200).json({ ok: true, message: 'Processamento em andamento' });
-
-  try {
-    preflightDNS().catch(()=>{});
-
-    const data = await gql(
-      `query($cardId: ID!) {
-        card(id: $cardId) {
-          id title assignees { name }
-          fields { name value report_value field { id internal_id id } }
-        }
-      }`,
-      { cardId }
-    );
-    const card = data.card;
-    const f = card.fields || [];
-
-    const disparo = normalizeCheck(getField(f, FIELD_ID_CHECKBOX_DISPARO));
-    const alreadyRaw = getField(f, FIELD_ID_LINKS_D4);
-    const already = unwrapValue(alreadyRaw);
-    logDecision('estado_atual', { cardId, disparo, already });
-
-    if (disparo !== 'sim') {
-      releaseLock(lockKey);
-      return res.status(200).json({ ok: true, message: 'Campo gerar_contrato != Sim' });
+    if (!documentKey) {
+      throw new Error('Não foi possível obter a chave do documento D4');
     }
 
-    // Gera link público e grava apenas a URL pura
-    const token = mkLeadToken(card.id);
-    const leadUrl = `${PUBLIC_BASE_URL.replace(/\/$/,'')}/lead/${encodeURIComponent(token)}`;
-    await setCardFieldText(card.id, FIELD_ID_LINKS_D4, leadUrl);
+    // Ajuste a lista de signatários conforme necessidade do card
+    // Nesta versão, só adiciona o e-mail institucional para disparo
+    await d4AddSigners(documentKey, [
+      { email: EMAIL_ASSINATURA_EMPRESA },
+    ]);
 
-    releaseLock(lockKey);
-    logDecision('link_publico_gerado', { leadUrl });
-    return res.json({ ok: true, leadUrl });
+    const { signLink, downloadLink } = await d4MakeLinks(documentKey);
 
-  } catch (e) {
-    console.error('[ERRO PIPEFY-D4SIGN]', e.code || e.message || e);
-    releaseLock(lockKey);
-    return res.status(200).json({ ok: false, error: e.code || e.message || 'Erro desconhecido' });
+    const finalUrl = Array.isArray(signLink?.url) ? signLink.url[0] : (signLink?.url || '');
+    const publicDownload = downloadLink?.url || '';
+
+    const composedLink = finalUrl || publicDownload || `https://secure.d4sign.com.br/${documentKey}`;
+
+    await setContractLinkOnCard(cardId, composedLink);
+
+    return res.json({
+      ok: true,
+      cardId,
+      documentKey,
+      contract_link: composedLink,
+      sign_link_raw: signLink,
+      download_link_raw: downloadLink,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: String(err.message || err) });
   }
 });
 
-// Saúde
-app.get('/', (req, res) => res.send('Servidor ativo e rodando'));
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (_, res) => res.json({ ok: true }));
 
-// Start
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  preflightDNS().catch(()=>{});
+  console.log(`Novo pipe rodando na porta ${PORT}`);
 });
