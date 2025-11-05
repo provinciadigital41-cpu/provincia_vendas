@@ -1,4 +1,4 @@
-// server.js — Node 18+, CommonJS
+// server.js — Node 18+, CommonJS (usa fetch nativo)
 // npm i express
 const express = require('express');
 const crypto = require('crypto');
@@ -9,9 +9,11 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logger simples para toda requisição (ajuda a depurar rota/headers)
+// Logger simples p/ qualquer request
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ua="${req.get('user-agent')}" ip=${req.ip}`);
+  console.log(
+    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ua="${req.get('user-agent')}" ip=${req.ip}`
+  );
   next();
 });
 
@@ -38,11 +40,11 @@ const {
 
   // Conectores / Tabelas
   FIELD_ID_CONNECT_MARCAS = 'marcas_1', // conector de Marca no CARD
-  CONTACTS_TABLE_ID,                    // ex.: 306505297 (da URL da Tabela de Contatos)
-  MARCAS_TABLE_ID,                      // ex.: 306555991 (da URL da Tabela de Marcas) — usado se o conector devolve só título
+  CONTACTS_TABLE_ID,                    // ex.: 306505297
+  MARCAS_TABLE_ID,                      // ex.: 306555991
 
   // App pública
-  PUBLIC_BASE_URL,                      // ex.: https://contratos.seudominio.com (incluir prefixo se houver reverse proxy)
+  PUBLIC_BASE_URL,                      // ex.: https://seu-dominio.com (/prefixo se houver)
   PUBLIC_LINK_SECRET,                   // segredo HMAC
 
   // Assinatura
@@ -92,7 +94,6 @@ function makeSignedURL(path, params) {
 }
 
 function validateSignature(req) {
-  // Usa os query params originais, remove sig, recalcula payload ordenado
   const full = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
   const gotSig = full.searchParams.get('sig') || '';
   full.searchParams.delete('sig');
@@ -200,7 +201,7 @@ async function resolveMarcaRecordFromCard(card) {
 
   const first = String(arr[0]);
 
-  // Se for id numérico/compatível, tenta direto:
+  // Se parecer ID numérico, tenta direto:
   const numericOnly = first.replace(/\D/g, '');
   if (numericOnly && numericOnly.length >= 6) {
     try { return await getTableRecord(first); } catch { /* fallback por título */ }
@@ -347,7 +348,7 @@ async function buildTemplateVariablesAsync(card) {
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    // Taxa (placeholders — ajuste quando tiver campo)
+    // Taxa (placeholders)
     valor_da_taxa: '',
     forma_de_pagamento_da_taxa: by['tipo_de_pagamento_benef_cio'] || '',
     data_de_pagamento_da_taxa: '',
@@ -440,6 +441,20 @@ app.get('/download/:documentKey', async (req, res) => {
   }
 });
 
+// ===== ROTA ECO para ver caminho/headers =====
+app.get('/_echo/*', (req, res) => {
+  res.json({
+    method: req.method,
+    originalUrl: req.originalUrl,
+    path: req.path,
+    baseUrl: req.baseUrl,
+    host: req.get('host'),
+    href: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+    headers: req.headers,
+    query: req.query,
+  });
+});
+
 // ===== Fluxo: webhook → confirmar → gerar → baixar/enviar =====
 async function handleCriarLinkConfirmacao(req, res) {
   try {
@@ -447,6 +462,8 @@ async function handleCriarLinkConfirmacao(req, res) {
     if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
 
     const confirmUrl = makeSignedURL('/novo-pipe/confirmar', { cardId });
+    console.log('[link-confirmacao]', { cardId, confirmUrl, PUBLIC_BASE_URL });
+
     await updateCardField(cardId, FIELD_ID_LINKS_D4, confirmUrl);
     return res.json({ ok: true, link: confirmUrl });
   } catch (e) {
@@ -454,7 +471,7 @@ async function handleCriarLinkConfirmacao(req, res) {
   }
 }
 app.post('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao);
-app.get('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao); // útil para teste no navegador
+app.get('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao); // útil p/ teste no navegador
 
 app.get('/novo-pipe/confirmar', async (req, res) => {
   try {
@@ -620,9 +637,28 @@ app.get('/contatos/export.csv', async (req, res) => {
 // ===== Healthcheck =====
 app.get('/health', (_, res) => res.json({ ok: true }));
 
-// ===== Start =====
+// ===== Start + listagem de rotas =====
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
+
+  // Listar rotas registradas
+  const list = [];
+  app._router.stack.forEach(m => {
+    if (m.route && m.route.path) {
+      const methods = Object.keys(m.route.methods).map(x => x.toUpperCase()).join(',');
+      list.push(`${methods} ${m.route.path}`);
+    } else if (m.name === 'router' && m.handle.stack) {
+      m.handle.stack.forEach(h => {
+        const route = h.route;
+        if (route) {
+          const methods = Object.keys(route.methods).map(x => x.toUpperCase()).join(',');
+          list.push(`${methods} ${route.path}`);
+        }
+      });
+    }
+  });
+  console.log('[rotas-registradas]');
+  list.sort().forEach(r => console.log('  -', r));
 });
 
 /*
@@ -635,20 +671,16 @@ PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
 
 D4SIGN_CRYPT_KEY=xxxxx
 D4SIGN_TOKEN=xxxxx
-TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # UUID real do template
+TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
-PUBLIC_BASE_URL=https://seu-dominio.com
+PUBLIC_BASE_URL=https://seu-dominio.com            # inclua /prefixo se o proxy usar
 PUBLIC_LINK_SECRET=um-segredo-forte
 EMAIL_ASSINATURA_EMPRESA=assinaturas@seu-dominio.com
 
-# Campo do card p/ gravar link interno (opcional; default d4_contrato)
 PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
-
-# IDs das tabelas (retirar da URL do Pipefy)
 CONTACTS_TABLE_ID=306505297
 MARCAS_TABLE_ID=306555991
 
-# Cofres por responsável
 COFRE_UUID_EDNA=...
 COFRE_UUID_GREYCE=...
 COFRE_UUID_MARIANA=...
