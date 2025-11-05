@@ -1,14 +1,21 @@
-// server.js — Node 18+, CommonJS (usa fetch nativo do Node)
+// server.js — Node 18+, CommonJS
+// npm i express
 const express = require('express');
 const crypto = require('crypto');
 
 const app = express();
+
+// ===== Middlewares =====
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ======================
-// 1) Variáveis de ambiente
-// ======================
+// Logger simples para toda requisição (ajuda a depurar rota/headers)
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ua="${req.get('user-agent')}" ip=${req.ip}`);
+  next();
+});
+
+// ===== Variáveis de ambiente =====
 const {
   PORT = 3000,
 
@@ -21,23 +28,25 @@ const {
   D4SIGN_TOKEN,
   TEMPLATE_UUID_CONTRATO,          // fallback global (opcional)
 
-  // Pipe & fase (opcionais)
-  NOVO_PIPE_ID,                    // se quiser validar pipe do card
-  FASE_VISITA_ID,                  // se quiser validar fase do card
-  PHASE_ID_CONTRATO_ENVIADO,       // caso queira mover depois
+  // Pipe/fase (opcionais)
+  NOVO_PIPE_ID,
+  FASE_VISITA_ID,
+  PHASE_ID_CONTRATO_ENVIADO,
 
-  // Campo do card p/ gravar o link interno
-  PIPEFY_FIELD_LINK_CONTRATO,      // se não vier, usamos 'd4_contrato'
+  // Campo no card para gravar o link interno
+  PIPEFY_FIELD_LINK_CONTRATO,
 
   // Conectores / Tabelas
   FIELD_ID_CONNECT_MARCAS = 'marcas_1', // conector de Marca no CARD
-  CONTACTS_TABLE_ID,                    // ex.: "306505297"
-  MARCAS_TABLE_ID,                      // ex.: "306555991" (opcional; usamos quando precisarmos varrer marcas por título)
+  CONTACTS_TABLE_ID,                    // ex.: 306505297 (da URL da Tabela de Contatos)
+  MARCAS_TABLE_ID,                      // ex.: 306555991 (da URL da Tabela de Marcas) — usado se o conector devolve só título
 
-  // Remetente e domínios públicos da SUA app
+  // App pública
+  PUBLIC_BASE_URL,                      // ex.: https://contratos.seudominio.com (incluir prefixo se houver reverse proxy)
+  PUBLIC_LINK_SECRET,                   // segredo HMAC
+
+  // Assinatura
   EMAIL_ASSINATURA_EMPRESA,
-  PUBLIC_BASE_URL,                      // ex.: https://contratos.suaempresa.com
-  PUBLIC_LINK_SECRET,                   // HMAC p/ assinar links
 
   // Cofres por responsável
   COFRE_UUID_EDNA,
@@ -56,7 +65,6 @@ if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY não definido');
 if (!D4SIGN_CRYPT_KEY || !D4SIGN_TOKEN) console.warn('[AVISO] D4SIGN_* não definidos');
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Defina PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 
-// campo onde salvamos o link interno no card
 const FIELD_ID_LINKS_D4 = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 
 // mapeamento de cofres pelo nome do responsável
@@ -73,9 +81,7 @@ const COFRES_UUIDS = {
   'Mauro Furlan Neto': COFRE_UUID_MAURO,
 };
 
-// ======================
-/* 2) Helpers de assinatura de links (HMAC) */
-// ======================
+// ===== Assinatura de links (HMAC) =====
 function makeSignedURL(path, params) {
   const url = new URL(path, PUBLIC_BASE_URL);
   Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, String(v)));
@@ -86,20 +92,16 @@ function makeSignedURL(path, params) {
 }
 
 function validateSignature(req) {
-  const base = `${req.protocol}://${req.get('host')}${req.path}`;
-  const url = new URL(base);
-  // reconstruir com as query params originais
-  const original = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
-  const gotSig = original.searchParams.get('sig') || '';
-  original.searchParams.delete('sig');
-  const payload = [...original.searchParams.entries()].map(([k, v]) => `${k}=${v}`).sort().join('&');
+  // Usa os query params originais, remove sig, recalcula payload ordenado
+  const full = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
+  const gotSig = full.searchParams.get('sig') || '';
+  full.searchParams.delete('sig');
+  const payload = [...full.searchParams.entries()].map(([k, v]) => `${k}=${v}`).sort().join('&');
   const expected = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(payload).digest('hex');
   return gotSig === expected;
 }
 
-// ======================
-// 3) Pipefy GraphQL helpers
-// ======================
+// ===== Pipefy GraphQL =====
 async function pipefyGraphQL(query, variables) {
   const res = await fetch(PIPE_GRAPHQL_ENDPOINT, {
     method: 'POST',
@@ -117,7 +119,7 @@ async function pipefyGraphQL(query, variables) {
 }
 
 async function getCardFields(cardId) {
-  const query = `
+  const q = `
     query($id: ID!) {
       card(id: $id) {
         id
@@ -126,24 +128,18 @@ async function getCardFields(cardId) {
         current_phase { id name }
         pipe { id name }
       }
-    }
-  `;
-  const data = await pipefyGraphQL(query, { id: cardId });
+    }`;
+  const data = await pipefyGraphQL(q, { id: cardId });
   return data.card;
 }
 
 async function updateCardField(cardId, fieldId, newValue) {
-  const mutation = `
+  const m = `
     mutation($input: UpdateCardFieldInput!) {
       updateCardField(input: $input) { card { id } }
-    }
-  `;
-  await pipefyGraphQL(mutation, {
-    input: {
-      card_id: Number(cardId),
-      field_id: fieldId,
-      new_value: newValue,
-    },
+    }`;
+  await pipefyGraphQL(m, {
+    input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue },
   });
 }
 
@@ -155,13 +151,11 @@ async function getTableRecord(recordId) {
         title
         record_fields { name value field { id type } }
       }
-    }
-  `;
+    }`;
   const data = await pipefyGraphQL(q, { id: recordId });
   return data.table_record;
 }
 
-// pagina todos registros de uma tabela (sem argumento search)
 async function listTableRecords(tableId, first = 100, after = null) {
   const q = `
     query($tableId: ID!, $first: Int!, $after: String) {
@@ -192,39 +186,30 @@ function toByIdFromCard(card) {
 }
 
 function normalizePhone(s) { return String(s || '').replace(/\D/g, ''); }
-
 function parseMaybeJsonArray(value) {
   try { return Array.isArray(value) ? value : JSON.parse(value); }
   catch { return value ? [String(value)] : []; }
 }
 
-// ======================
-// 4) Resolver de Marca & Contato
-// ======================
-
-// Busca record de Marca a partir do valor do conector do CARD.
-// Se o conector do card tiver IDs, usa direto; se tiver títulos, lista a tabela de Marcas e encontra por title.
+// ===== Marca & Contato =====
 async function resolveMarcaRecordFromCard(card) {
   const by = toByIdFromCard(card);
-  const v = by[FIELD_ID_CONNECT_MARCAS]; // pode ser array de IDs OU array de títulos
+  const v = by[FIELD_ID_CONNECT_MARCAS];
   const arr = Array.isArray(v) ? v : v ? [v] : [];
   if (!arr.length) return null;
 
-  // heurística: se parecer número/id (só dígitos), assume que é ID
   const first = String(arr[0]);
+
+  // Se for id numérico/compatível, tenta direto:
   const numericOnly = first.replace(/\D/g, '');
   if (numericOnly && numericOnly.length >= 6) {
-    // provavelmente ID de record
-    try {
-      const rec = await getTableRecord(first);
-      return rec;
-    } catch (_) { /* cai para busca por título */ }
+    try { return await getTableRecord(first); } catch { /* fallback por título */ }
   }
 
-  // caso contrário, trata como título (ex.: "BUCANEIROS MOTO CLUBE")
-  if (!MARCAS_TABLE_ID) return null; // precisa do id da tabela de Marcas para varrer
+  // Caso contrário, busca por título na Tabela de Marcas
+  if (!MARCAS_TABLE_ID) return null;
   let after = null;
-  for (let i = 0; i < 50; i++) { // até ~5k registros se first=100
+  for (let i = 0; i < 50; i++) {
     const { records, pageInfo } = await listTableRecords(MARCAS_TABLE_ID, 100, after);
     const hit = records.find(r => String(r.title || '').trim().toLowerCase() === first.trim().toLowerCase());
     if (hit) return hit;
@@ -232,43 +217,6 @@ async function resolveMarcaRecordFromCard(card) {
     after = pageInfo.endCursor || null;
   }
   return null;
-}
-
-// a partir do record de Marca, extrai Contato (email/telefone) via conector "contatos":
-// - Se conector devolver IDs, usamos direto.
-// - Se devolver espelho (telefones/emails como string JSON), tentamos extrair; se faltar, varremos tabela de contatos para achar o record por telefone/email.
-async function resolveContatoFromMarcaRecord(marcaRecord) {
-  const fieldConn = (marcaRecord?.record_fields || []).find(f => f?.field?.id === 'contatos');
-  if (!fieldConn) return { email: '', telefone: '' };
-
-  // caso 1: IDs
-  if (Array.isArray(fieldConn.value)) {
-    const first = fieldConn.value[0];
-    if (first) {
-      const contato = await getTableRecord(first);
-      return extractEmailPhoneFromRecord(contato);
-    }
-  }
-
-  // caso 2: espelho (string JSON com valores)
-  const mirrored = parseMaybeJsonArray(fieldConn.value);
-  // tenta achar direto
-  let email = mirrored.find(x => String(x).includes('@')) || '';
-  let telefone = mirrored.find(x => normalizePhone(x).length >= 10) || '';
-
-  // se ambos vieram, pronto
-  if (email && telefone) return { email: String(email), telefone: String(telefone) };
-
-  // senão, se tivermos tabela de contatos, varre para achar por telefone/email
-  if (CONTACTS_TABLE_ID) {
-    const found = await findContatoInTable({ phoneCandidate: telefone, emailCandidate: email });
-    if (found?.record) {
-      const fromRecord = extractEmailPhoneFromRecord(found.record);
-      return { email: fromRecord.email || email, telefone: fromRecord.telefone || telefone };
-    }
-  }
-
-  return { email: String(email || ''), telefone: String(telefone || '') };
 }
 
 function extractEmailPhoneFromRecord(record) {
@@ -284,8 +232,8 @@ function extractEmailPhoneFromRecord(record) {
   return { email, telefone };
 }
 
-// varre tabela de contatos e tenta match por telefone (terminação) ou e-mail exato
-async function findContatoInTable({ phoneCandidate, emailCandidate, maxPages = 100, pageSize = 100 }) {
+async function listFindContato({ phoneCandidate, emailCandidate, maxPages = 100, pageSize = 100 }) {
+  if (!CONTACTS_TABLE_ID) return null;
   let after = null;
   const wantedPhone = normalizePhone(phoneCandidate);
   const wantedEmail = (emailCandidate || '').toLowerCase();
@@ -296,13 +244,9 @@ async function findContatoInTable({ phoneCandidate, emailCandidate, maxPages = 1
       const { email, telefone } = extractEmailPhoneFromRecord(rec);
       const nodePhone = normalizePhone(telefone);
       const nodeEmail = (email || '').toLowerCase();
-
       const phoneMatch = wantedPhone && nodePhone && (nodePhone.endsWith(wantedPhone) || wantedPhone.endsWith(nodePhone));
       const emailMatch = wantedEmail && nodeEmail && nodeEmail === wantedEmail;
-
-      if (phoneMatch || emailMatch) {
-        return { record: rec, email, telefone };
-      }
+      if (phoneMatch || emailMatch) return { record: rec, email, telefone };
     }
     if (!pageInfo?.hasNextPage) break;
     after = pageInfo.endCursor || null;
@@ -310,30 +254,49 @@ async function findContatoInTable({ phoneCandidate, emailCandidate, maxPages = 1
   return null;
 }
 
-// ======================
-// 5) Montagem dos tokens do template (async)
-// ======================
+async function resolveContatoFromMarcaRecord(marcaRecord) {
+  const conn = (marcaRecord?.record_fields || []).find(f => f?.field?.id === 'contatos');
+  if (!conn) return { email: '', telefone: '' };
+
+  // Caso 1: IDs no value
+  if (Array.isArray(conn.value)) {
+    const first = conn.value[0];
+    if (first) {
+      const contato = await getTableRecord(first);
+      return extractEmailPhoneFromRecord(contato);
+    }
+  }
+
+  // Caso 2: espelho em string JSON
+  const mirrored = parseMaybeJsonArray(conn.value);
+  let email = mirrored.find(x => String(x).includes('@')) || '';
+  let telefone = mirrored.find(x => normalizePhone(x).length >= 10) || '';
+
+  if (email && telefone) return { email: String(email), telefone: String(telefone) };
+
+  const found = await listFindContato({ phoneCandidate: telefone, emailCandidate: email });
+  if (found?.record) {
+    const { email: em, telefone: tel } = extractEmailPhoneFromRecord(found.record);
+    return { email: em || email, telefone: tel || telefone };
+  }
+  return { email: String(email || ''), telefone: String(telefone || '') };
+}
+
+// ===== Tokens do template =====
 function nowParts() {
   const d = new Date();
-  return {
-    dd: String(d.getDate()).padStart(2, '0'),
-    MM: String(d.getMonth() + 1).padStart(2, '0'),
-    yyyy: String(d.getFullYear()),
-  };
+  return { dd: String(d.getDate()).padStart(2, '0'), MM: String(d.getMonth() + 1).padStart(2, '0'), yyyy: String(d.getFullYear()) };
 }
 
 async function buildTemplateVariablesAsync(card) {
   const by = toByIdFromCard(card);
   const np = nowParts();
 
-  // Nome da marca = título do card
   const marcaRecord = await resolveMarcaRecordFromCard(card);
   const nomeMarca = card.title || '';
   let contatoEmail = '', contatoTelefone = '', classe = '';
 
-  // Classe por label (opcional) + contato por conector
   if (marcaRecord) {
-    // tenta "classe"
     const classeField = (marcaRecord.record_fields || []).find(f => String(f?.name || '').toLowerCase().includes('classe'));
     classe = classeField?.value || '';
     const contato = await resolveContatoFromMarcaRecord(marcaRecord);
@@ -341,20 +304,18 @@ async function buildTemplateVariablesAsync(card) {
     contatoTelefone = contato.telefone || '';
   }
 
-  // parcelas
-  const rawSel = by['sele_o_de_lista']; // ex.: "6x"
+  const rawSel = by['sele_o_de_lista'];
   const nParc = rawSel ? (String(rawSel).match(/(\d+)\s*x/i)?.[1] || '1') : '1';
   const totalAssess = Number(by['valor_da_assessoria'] || 0);
   const valorParcelaAssess = nParc && !isNaN(totalAssess) ? (totalAssess / Number(nParc)).toFixed(2) : '';
 
-  // pesquisa (radio: Paga/Isenta)
   const pesquisa = by['pesquisa'];
   const valorPesquisa = (pesquisa === 'Isenta') ? 'R$ 00,00' : '';
   const formaPesquisa = (pesquisa === 'Isenta') ? '---' : '';
   const dataPesquisa  = (pesquisa === 'Isenta') ? '00/00/00' : '';
 
   return {
-    // Identificação / endereço (Start Form)
+    // Identificação / endereço
     contratante_1: by['r_social_ou_n_completo'] || '',
     cpf: by['cpf'] || '',
     rg: by['rg'] || '',
@@ -367,7 +328,7 @@ async function buildTemplateVariablesAsync(card) {
     uf: by['uf'] || '',
     cep: by['cep'] || '',
 
-    // Contato (derivado do DB conectado à Marca)
+    // Contato via DB conectado
     'E-mail': contatoEmail,
     telefone: contatoTelefone,
 
@@ -386,12 +347,12 @@ async function buildTemplateVariablesAsync(card) {
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    // Taxa (placeholders por enquanto; ajuste quando tiver os campos)
+    // Taxa (placeholders — ajuste quando tiver campo)
     valor_da_taxa: '',
     forma_de_pagamento_da_taxa: by['tipo_de_pagamento_benef_cio'] || '',
     data_de_pagamento_da_taxa: '',
 
-    // Datas do rodapé
+    // Datas
     dia: np.dd,
     mes: np.MM,
     ano: np.yyyy,
@@ -401,15 +362,10 @@ async function buildTemplateVariablesAsync(card) {
   };
 }
 
-// ======================
-// 6) Resolver do Cofre por responsável do card
-// ======================
+// ===== Cofre por responsável =====
 function resolveCofreUuidByCard(card) {
   const by = toByIdFromCard(card);
   const candidatos = [];
-
-  // ids de campos do seu pipe que podem trazer o responsável
-  // ajuste aqui se houver outro id:
   if (by['respons_vel_5']) candidatos.push(by['respons_vel_5']);
   if (by['representante']) candidatos.push(by['representante']);
 
@@ -428,9 +384,7 @@ function resolveCofreUuidByCard(card) {
   return null;
 }
 
-// ======================
-// 7) D4Sign helpers
-// ======================
+// ===== D4Sign =====
 const D4_BASE = 'https://api.d4sign.com.br/v2';
 
 async function d4Fetch(path, method, payload) {
@@ -444,13 +398,10 @@ async function d4Fetch(path, method, payload) {
   return res.json();
 }
 
-// Cria documento a partir do UUID do template, dentro do cofre (safe)
 async function d4CreateFromTemplateUUID({ templateUuid, fileName, variables, safeUuid }) {
   const payload = { template: templateUuid, name: fileName, data: variables, safe: safeUuid };
   const created = await d4Fetch('/documents/create', 'POST', payload);
-
   if (!created?.uuid && safeUuid) {
-    // fallback em ambientes antigos
     const alt = await d4Fetch(`/documents/create/${safeUuid}`, 'POST', { template: templateUuid, name: fileName, data: variables });
     return alt;
   }
@@ -474,7 +425,6 @@ async function d4SendToSign(documentKey, message = 'Contrato para assinatura') {
   return d4Fetch(`/documents/${documentKey}/sendto`, 'POST', { message, emails: [], workflow: '0' });
 }
 
-// Proxy de download (vendedor nunca vê URL do D4)
 app.get('/download/:documentKey', async (req, res) => {
   try {
     if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
@@ -490,25 +440,22 @@ app.get('/download/:documentKey', async (req, res) => {
   }
 });
 
-// ======================
-// 8) Fluxo de páginas internas
-// ======================
-
-// (A) Automação do Pipefy grava link da Página 1 (Confirmar)
-app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
+// ===== Fluxo: webhook → confirmar → gerar → baixar/enviar =====
+async function handleCriarLinkConfirmacao(req, res) {
   try {
-    const { cardId } = req.body;
+    const cardId = req.method === 'GET' ? (req.query.cardId || req.query.card_id) : (req.body.cardId || req.body.card_id);
     if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
 
     const confirmUrl = makeSignedURL('/novo-pipe/confirmar', { cardId });
     await updateCardField(cardId, FIELD_ID_LINKS_D4, confirmUrl);
-    res.json({ ok: true, link: confirmUrl });
+    return res.json({ ok: true, link: confirmUrl });
   } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
+    return res.status(500).json({ error: String(e.message || e) });
   }
-});
+}
+app.post('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao);
+app.get('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao); // útil para teste no navegador
 
-// (B) Página 1 — Confirmar dados e acionar Gerar
 app.get('/novo-pipe/confirmar', async (req, res) => {
   try {
     if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
@@ -517,7 +464,6 @@ app.get('/novo-pipe/confirmar', async (req, res) => {
 
     const card = await getCardFields(cardId);
 
-    // validações opcionais
     if (NOVO_PIPE_ID && String(card?.pipe?.id) !== String(NOVO_PIPE_ID)) {
       return res.status(400).send('Card não pertence ao pipe configurado');
     }
@@ -548,7 +494,6 @@ app.get('/novo-pipe/confirmar', async (req, res) => {
   }
 });
 
-// (C) POST Gerar — cria no D4 (template UUID + cofre do responsável) e redireciona p/ Página 2
 app.post('/novo-pipe/gerar', async (req, res) => {
   try {
     const { cardId, sig } = req.body;
@@ -558,21 +503,17 @@ app.post('/novo-pipe/gerar', async (req, res) => {
     const card = await getCardFields(cardId);
     const vars = await buildTemplateVariablesAsync(card);
 
-    // Template UUID
     const templateUuid = vars.TEMPLATE_UUID_CONTRATO || TEMPLATE_UUID_CONTRATO;
-    if (!templateUuid) throw new Error('TEMPLATE_UUID_CONTRATO não encontrado (card ou .env)');
+    if (!templateUuid) throw new Error('TEMPLATE_UUID_CONTRATO não encontrado (card/env)');
 
-    // Cofre do responsável
     const safeUuid = resolveCofreUuidByCard(card);
     if (!safeUuid) throw new Error('Não foi possível resolver o cofre pelo responsável do card');
 
-    // Cria documento
     const fileName = `Contrato_${card.title || card.id}.docx`;
     const created = await d4CreateFromTemplateUUID({ templateUuid, fileName, variables: vars, safeUuid });
     const documentKey = created.uuid || created.documentKey || created.key;
     if (!documentKey) throw new Error('Não foi possível obter documentKey do D4');
 
-    // Atualiza link no card p/ Página 2
     const nextUrl = makeSignedURL(`/contratos/${documentKey}`, { cardId });
     await updateCardField(cardId, FIELD_ID_LINKS_D4, nextUrl);
 
@@ -582,7 +523,6 @@ app.post('/novo-pipe/gerar', async (req, res) => {
   }
 });
 
-// (D) Página 2 — Baixar e Enviar para assinatura
 app.get('/contratos/:documentKey', async (req, res) => {
   try {
     if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
@@ -616,7 +556,6 @@ app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
     const card = await getCardFields(cardId);
     const vars = await buildTemplateVariablesAsync(card);
 
-    // lista de signatários: empresa + cliente (se tivermos e-mail)
     const signers = [{ email: EMAIL_ASSINATURA_EMPRESA }];
     if (vars['E-mail']) signers.push({ email: vars['E-mail'] });
 
@@ -634,9 +573,7 @@ app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
   }
 });
 
-// ======================
-// 9) Endpoints para listar/exportar TODOS os contatos
-// ======================
+// ===== Utilidades: listar/exportar contatos =====
 app.get('/contatos', async (req, res) => {
   try {
     if (!CONTACTS_TABLE_ID) return res.status(400).json({ error: 'CONTACTS_TABLE_ID não definido' });
@@ -662,7 +599,6 @@ app.get('/contatos/export.csv', async (req, res) => {
     if (!CONTACTS_TABLE_ID) return res.status(400).send('CONTACTS_TABLE_ID não definido');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="contatos.csv"');
-    // header
     res.write('id;title;email;telefone\n');
     let after = null;
     for (let i = 0; i < 100; i++) {
@@ -681,10 +617,46 @@ app.get('/contatos/export.csv', async (req, res) => {
   }
 });
 
-// ======================
+// ===== Healthcheck =====
 app.get('/health', (_, res) => res.json({ ok: true }));
-// ======================
 
+// ===== Start =====
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
+
+/*
+.env — exemplo mínimo
+---------------------
+PORT=3000
+
+PIPE_API_KEY=xxxxx
+PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
+
+D4SIGN_CRYPT_KEY=xxxxx
+D4SIGN_TOKEN=xxxxx
+TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # UUID real do template
+
+PUBLIC_BASE_URL=https://seu-dominio.com
+PUBLIC_LINK_SECRET=um-segredo-forte
+EMAIL_ASSINATURA_EMPRESA=assinaturas@seu-dominio.com
+
+# Campo do card p/ gravar link interno (opcional; default d4_contrato)
+PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
+
+# IDs das tabelas (retirar da URL do Pipefy)
+CONTACTS_TABLE_ID=306505297
+MARCAS_TABLE_ID=306555991
+
+# Cofres por responsável
+COFRE_UUID_EDNA=...
+COFRE_UUID_GREYCE=...
+COFRE_UUID_MARIANA=...
+COFRE_UUID_VALDEIR=...
+COFRE_UUID_DEBORA=...
+COFRE_UUID_MAYKON=...
+COFRE_UUID_JEFERSON=...
+COFRE_UUID_RONALDO=...
+COFRE_UUID_BRENDA=...
+COFRE_UUID_MAURO=...
+*/
