@@ -2,7 +2,7 @@
 // Novo endpoint para gerar contrato no novo pipe mantendo na mesma fase
 
 const express = require('express');
-const bodyParser = requite('body-parser');
+const bodyParser = require('body-parser');
 
 const app = express();
 app.use(bodyParser.json());
