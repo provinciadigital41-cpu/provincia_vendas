@@ -16,41 +16,26 @@ app.use((req, res, next) => {
 });
 
 // ===== Variáveis de ambiente =====
-const {
-  PORT = 3000,
-
-  // Pipefy
+const env = process.env;
+let {
+  PORT,
   PIPE_API_KEY,
-  PIPE_GRAPHQL_ENDPOINT = 'https://api.pipefy.com/graphql',
-
-  // D4Sign
+  PIPE_GRAPHQL_ENDPOINT,
   D4SIGN_CRYPT_KEY,
   D4SIGN_TOKEN,
-  TEMPLATE_UUID_CONTRATO,          // fallback global (opcional)
-
-  // (opcionais/validação)
+  TEMPLATE_UUID_CONTRATO,
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
-
-  // Campo do card onde gravar o link
   PIPEFY_FIELD_LINK_CONTRATO,
-
-  // Conectores / Tabelas
-  FIELD_ID_CONNECT_MARCA_NOME = process.env.FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1', // Nome da marca + DB Contato
-  FIELD_ID_CONNECT_CLASSE     = process.env.FIELD_ID_CONNECT_CLASSE     || 'marcas_2', // Classe (DB Marcas e serviços)
-  CONTACTS_TABLE_ID           = process.env.CONTACTS_TABLE_ID || '',                  // tabela de Contatos (opcional para varrer)
-  MARCAS_TABLE_ID             = process.env.MARCAS_TABLE_ID   || '',                  // se precisar varrer por título (marcas_1)
-  CLASSES_TABLE_ID            = process.env.CLASSES_TABLE_ID  || '306572615',         // DB "Marcas e serviços"
-
-  // App pública
+  FIELD_ID_CONNECT_MARCA_NOME,
+  FIELD_ID_CONNECT_CLASSE,
+  CONTACTS_TABLE_ID,
+  MARCAS_TABLE_ID,
+  CLASSES_TABLE_ID,
   PUBLIC_BASE_URL,
   PUBLIC_LINK_SECRET,
-
-  // Assinatura
   EMAIL_ASSINATURA_EMPRESA,
-
-  // Cofres por responsável
   COFRE_UUID_EDNA,
   COFRE_UUID_GREYCE,
   COFRE_UUID_MARIANA,
@@ -61,14 +46,21 @@ const {
   COFRE_UUID_RONALDO,
   COFRE_UUID_BRENDA,
   COFRE_UUID_MAURO,
-} = process.env;
+} = env;
+
+// Defaults
+PORT = PORT || 3000;
+PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql';
+FIELD_ID_CONNECT_MARCA_NOME = FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1'; // Nome da marca + Contatos
+FIELD_ID_CONNECT_CLASSE = FIELD_ID_CONNECT_CLASSE || 'marcas_2';         // Classe (DB Marcas e serviços)
+CLASSES_TABLE_ID = CLASSES_TABLE_ID || '306572615';
+const FIELD_ID_LINKS_D4 = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY não definido');
 if (!D4SIGN_CRYPT_KEY || !D4SIGN_TOKEN) console.warn('[AVISO] D4SIGN_* não definidos');
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Defina PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 
-const FIELD_ID_LINKS_D4 = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
-
+// Cofres por responsável
 const COFRES_UUIDS = {
   'EDNA BERTO DA SILVA': COFRE_UUID_EDNA,
   'Greyce Maria Candido Souza': COFRE_UUID_GREYCE,
@@ -339,9 +331,8 @@ async function resolveClasseFromCard(card, marcaRecordFallback) {
           String(f?.name || '').toLowerCase().includes('classe')
         );
         if (classeField?.value) return String(classeField.value);
-        // se não houver campo específico, use o título
         if (rec?.title) return String(rec.title);
-      } catch { /* cai para espelho */ }
+      } catch { /* espelho */ }
     }
     try {
       const mirrored = Array.isArray(v) ? v : JSON.parse(v);
@@ -376,7 +367,7 @@ async function buildTemplateVariablesAsync(card) {
   const marcaRecordNomeContato = await resolveMarcaRecordFromCard(card); // via marcas_1
   const nomeMarca = card.title || '';
 
-  // Contato — prioridade: conector de contatos na fase (qualquer campo tipo connector com 'contato' no nome)
+  // Contato — prioridade: conector de contatos na fase
   let contatoEmail = '', contatoTelefone = '';
   const contatoConnectorOnPhase = (card.fields || []).find(f =>
     (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
@@ -401,7 +392,7 @@ async function buildTemplateVariablesAsync(card) {
       }
     } catch { /* segue */ }
   }
-  // Fallback 1: marcas_1 (DB nome/contato)
+  // Fallback 1: marcas_1
   if ((!contatoEmail || !contatoTelefone) && marcaRecordNomeContato) {
     const contato = await resolveContatoFromMarcaRecord(marcaRecordNomeContato);
     contatoEmail    = contatoEmail    || contato.email || '';
@@ -701,7 +692,8 @@ app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
       <p><a href="${back}">Voltar</a></p>
     </body></html>`);
   } catch (e) {
-    res.status(500).send(String(e.message || e) });
+    // <<<<<< CORRIGIDO o parêntese aqui >>>>>>
+    res.status(500).send(String(e.message || e));
   }
 });
 
@@ -774,42 +766,3 @@ app.listen(PORT, () => {
   console.log('[rotas-registradas]');
   list.sort().forEach(r => console.log('  -', r));
 });
-
-/*
-.env — exemplo mínimo
----------------------
-PORT=3000
-
-PIPE_API_KEY=xxxxx
-PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
-
-D4SIGN_CRYPT_KEY=xxxxx
-D4SIGN_TOKEN=xxxxx
-TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-PUBLIC_BASE_URL=https://provincia-vendas.lnghgu.easypanel.host
-PUBLIC_LINK_SECRET=um-segredo-forte
-EMAIL_ASSINATURA_EMPRESA=assinaturas@seu-dominio.com
-
-# Campo para gravar link no card
-PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
-
-# Conectores / Tabelas
-FIELD_ID_CONNECT_MARCA_NOME=marcas_1         # Nome da marca + Contatos
-FIELD_ID_CONNECT_CLASSE=marcas_2             # Classe (DB Marcas e serviços)
-CONTACTS_TABLE_ID=...                        # se quiser varrer contatos
-MARCAS_TABLE_ID=...                          # se precisar varrer títulos do marcas_1
-CLASSES_TABLE_ID=306572615                   # DB Classe
-
-# Cofres por vendedor
-COFRE_UUID_EDNA=...
-COFRE_UUID_GREYCE=...
-COFRE_UUID_MARIANA=...
-COFRE_UUID_VALDEIR=...
-COFRE_UUID_DEBORA=...
-COFRE_UUID_MAYKON=...
-COFRE_UUID_JEFERSON=...
-COFRE_UUID_RONALDO=...
-COFRE_UUID_BRENDA=...
-COFRE_UUID_MAURO=...
-*/
