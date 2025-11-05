@@ -1,4 +1,4 @@
-// server.js — Node 18+, CommonJS (usa fetch nativo)
+// server.js — Node 18+, CommonJS
 // npm i express
 const express = require('express');
 const crypto = require('crypto');
@@ -11,9 +11,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Logger simples p/ qualquer request
 app.use((req, res, next) => {
-  console.log(
-    `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ua="${req.get('user-agent')}" ip=${req.ip}`
-  );
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ua="${req.get('user-agent')}" ip=${req.ip}`);
   next();
 });
 
@@ -30,22 +28,24 @@ const {
   D4SIGN_TOKEN,
   TEMPLATE_UUID_CONTRATO,          // fallback global (opcional)
 
-  // Pipe/fase (opcionais)
+  // (opcionais/validação)
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
 
-  // Campo no card para gravar o link interno
+  // Campo do card onde gravar o link
   PIPEFY_FIELD_LINK_CONTRATO,
 
   // Conectores / Tabelas
-  FIELD_ID_CONNECT_MARCAS = 'marcas_1', // conector de Marca no CARD
-  CONTACTS_TABLE_ID,                    // ex.: 306505297
-  MARCAS_TABLE_ID,                      // ex.: 306555991
+  FIELD_ID_CONNECT_MARCA_NOME = process.env.FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1', // Nome da marca + DB Contato
+  FIELD_ID_CONNECT_CLASSE     = process.env.FIELD_ID_CONNECT_CLASSE     || 'marcas_2', // Classe (DB Marcas e serviços)
+  CONTACTS_TABLE_ID           = process.env.CONTACTS_TABLE_ID || '',                  // tabela de Contatos (opcional para varrer)
+  MARCAS_TABLE_ID             = process.env.MARCAS_TABLE_ID   || '',                  // se precisar varrer por título (marcas_1)
+  CLASSES_TABLE_ID            = process.env.CLASSES_TABLE_ID  || '306572615',         // DB "Marcas e serviços"
 
   // App pública
-  PUBLIC_BASE_URL,                      // ex.: https://seu-dominio.com (/prefixo se houver)
-  PUBLIC_LINK_SECRET,                   // segredo HMAC
+  PUBLIC_BASE_URL,
+  PUBLIC_LINK_SECRET,
 
   // Assinatura
   EMAIL_ASSINATURA_EMPRESA,
@@ -69,7 +69,6 @@ if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Defina PUBLIC
 
 const FIELD_ID_LINKS_D4 = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 
-// mapeamento de cofres pelo nome do responsável
 const COFRES_UUIDS = {
   'EDNA BERTO DA SILVA': COFRE_UUID_EDNA,
   'Greyce Maria Candido Souza': COFRE_UUID_GREYCE,
@@ -92,7 +91,6 @@ function makeSignedURL(path, params) {
   url.searchParams.set('sig', sig);
   return url.toString();
 }
-
 function validateSignature(req) {
   const full = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
   const gotSig = full.searchParams.get('sig') || '';
@@ -118,7 +116,6 @@ async function pipefyGraphQL(query, variables) {
   }
   return json.data;
 }
-
 async function getCardFields(cardId) {
   const q = `
     query($id: ID!) {
@@ -133,7 +130,6 @@ async function getCardFields(cardId) {
   const data = await pipefyGraphQL(q, { id: cardId });
   return data.card;
 }
-
 async function updateCardField(cardId, fieldId, newValue) {
   const m = `
     mutation($input: UpdateCardFieldInput!) {
@@ -143,7 +139,6 @@ async function updateCardField(cardId, fieldId, newValue) {
     input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue },
   });
 }
-
 async function getTableRecord(recordId) {
   const q = `
     query($id: ID!) {
@@ -156,7 +151,6 @@ async function getTableRecord(recordId) {
   const data = await pipefyGraphQL(q, { id: recordId });
   return data.table_record;
 }
-
 async function listTableRecords(tableId, first = 100, after = null) {
   const q = `
     query($tableId: ID!, $first: Int!, $after: String) {
@@ -180,34 +174,72 @@ async function listTableRecords(tableId, first = 100, after = null) {
   return { records: edges.map(e => e.node), pageInfo };
 }
 
+// ===== Utils =====
 function toByIdFromCard(card) {
   const by = {};
   for (const f of card?.fields || []) if (f?.field?.id) by[f.field.id] = f.value;
   return by;
 }
-
 function normalizePhone(s) { return String(s || '').replace(/\D/g, ''); }
+function onlyDigits(s) { return String(s||'').replace(/\D/g,''); }
 function parseMaybeJsonArray(value) {
   try { return Array.isArray(value) ? value : JSON.parse(value); }
   catch { return value ? [String(value)] : []; }
 }
+function getValueByName(card, nameSubstr) {
+  const target = String(nameSubstr).toLowerCase();
+  const hit = (card.fields || []).find(f => String(f?.name || '').toLowerCase().includes(target));
+  return hit?.value ?? '';
+}
+function getFirstByNames(card, names=[]) {
+  for (const n of names) {
+    const v = getValueByName(card, n);
+    if (v) return v;
+  }
+  return '';
+}
+function parseNumberBR(v) {
+  if (v == null) return NaN;
+  const s = String(v).trim();
+  if (!s) return NaN;
+  const br = s.match(/^\d{1,3}(\.\d{3})*,\d{2}$/);
+  if (br) return Number(s.replace(/\./g,'').replace(',','.'));
+  const en = s.match(/^\d+(\.\d+)?$/);
+  if (en) return Number(s);
+  return Number(s.replace(/[^\d.,-]/g,'').replace(/\./g,'').replace(',','.'));
+}
+function toBRL(n) { return (n==null || isNaN(n)) ? '' : n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function pickParcelas(card) {
+  const by = toByIdFromCard(card);
+  let raw = by['sele_o_de_lista'] || by['numero_de_parcelas'] || '';
+  if (!raw) raw = getFirstByNames(card, ['parcela', 'parcelas', 'nº parcelas', 'numero de parcelas', 'número de parcelas']);
+  const m = String(raw||'').match(/(\d+)/);
+  return m ? m[1] : '1';
+}
+function pickValorAssessoria(card) {
+  const by = toByIdFromCard(card);
+  let raw = by['valor_da_assessoria'] || by['valor_assessoria'] || '';
+  if (!raw) raw = getFirstByNames(card, ['valor da assessoria', 'assessoria']);
+  if (!raw) {
+    const hit = (card.fields||[]).find(f => String(f?.field?.type||'').toLowerCase()==='currency');
+    raw = hit?.value || '';
+  }
+  const n = parseNumberBR(raw);
+  return isNaN(n) ? null : n;
+}
 
-// ===== Marca & Contato =====
+// ===== Marca (nome/contato) via marcas_1 =====
 async function resolveMarcaRecordFromCard(card) {
   const by = toByIdFromCard(card);
-  const v = by[FIELD_ID_CONNECT_MARCAS];
+  const v = by[FIELD_ID_CONNECT_MARCA_NOME]; // 'marcas_1'
   const arr = Array.isArray(v) ? v : v ? [v] : [];
   if (!arr.length) return null;
 
   const first = String(arr[0]);
 
-  // Se parecer ID numérico, tenta direto:
-  const numericOnly = first.replace(/\D/g, '');
-  if (numericOnly && numericOnly.length >= 6) {
-    try { return await getTableRecord(first); } catch { /* fallback por título */ }
+  if (/^\d+$/.test(first)) {
+    try { return await getTableRecord(first); } catch { /* fallback título */ }
   }
-
-  // Caso contrário, busca por título na Tabela de Marcas
   if (!MARCAS_TABLE_ID) return null;
   let after = null;
   for (let i = 0; i < 50; i++) {
@@ -219,7 +251,6 @@ async function resolveMarcaRecordFromCard(card) {
   }
   return null;
 }
-
 function extractEmailPhoneFromRecord(record) {
   let email = '', telefone = '';
   for (const f of record?.record_fields || []) {
@@ -232,13 +263,11 @@ function extractEmailPhoneFromRecord(record) {
   }
   return { email, telefone };
 }
-
 async function listFindContato({ phoneCandidate, emailCandidate, maxPages = 100, pageSize = 100 }) {
   if (!CONTACTS_TABLE_ID) return null;
   let after = null;
   const wantedPhone = normalizePhone(phoneCandidate);
   const wantedEmail = (emailCandidate || '').toLowerCase();
-
   for (let i = 0; i < maxPages; i++) {
     const { records, pageInfo } = await listTableRecords(CONTACTS_TABLE_ID, pageSize, after);
     for (const rec of records) {
@@ -254,12 +283,10 @@ async function listFindContato({ phoneCandidate, emailCandidate, maxPages = 100,
   }
   return null;
 }
-
 async function resolveContatoFromMarcaRecord(marcaRecord) {
-  const conn = (marcaRecord?.record_fields || []).find(f => f?.field?.id === 'contatos');
+  const conn = (marcaRecord?.record_fields || []).find(f => f?.field?.id === 'contatos' || String(f?.name||'').toLowerCase().includes('contato'));
   if (!conn) return { email: '', telefone: '' };
 
-  // Caso 1: IDs no value
   if (Array.isArray(conn.value)) {
     const first = conn.value[0];
     if (first) {
@@ -267,12 +294,9 @@ async function resolveContatoFromMarcaRecord(marcaRecord) {
       return extractEmailPhoneFromRecord(contato);
     }
   }
-
-  // Caso 2: espelho em string JSON
   const mirrored = parseMaybeJsonArray(conn.value);
   let email = mirrored.find(x => String(x).includes('@')) || '';
   let telefone = mirrored.find(x => normalizePhone(x).length >= 10) || '';
-
   if (email && telefone) return { email: String(email), telefone: String(telefone) };
 
   const found = await listFindContato({ phoneCandidate: telefone, emailCandidate: email });
@@ -283,55 +307,152 @@ async function resolveContatoFromMarcaRecord(marcaRecord) {
   return { email: String(email || ''), telefone: String(telefone || '') };
 }
 
+// ===== Documento & Classe =====
+function pickDocumento(card) {
+  // prioriza campos de fase (CPF/CNPJ)
+  const prefer = ['cpf', 'cnpj', 'documento', 'doc', 'cpf/cnpj', 'cpf cnpj', 'cnpj/cpf'];
+  for (const key of prefer) {
+    const v = getFirstByNames(card, [key]);
+    const digits = onlyDigits(v);
+    if (digits.length === 11 || digits.length === 14) {
+      return { tipo: digits.length === 11 ? 'CPF' : 'CNPJ', valor: v || '' };
+    }
+  }
+  // fallback: CNPJ do start form
+  const by = toByIdFromCard(card);
+  const cnpjStart = by['cnpj'] || getFirstByNames(card, ['cnpj']);
+  if (cnpjStart) return { tipo: 'CNPJ', valor: cnpjStart };
+  return { tipo: '', valor: '' };
+}
+async function resolveClasseFromCard(card, marcaRecordFallback) {
+  const by = toByIdFromCard(card);
+
+  // 1) Conector de CLASSE na fase (marcas_2)
+  const v = by[FIELD_ID_CONNECT_CLASSE];
+  const arr = Array.isArray(v) ? v : v ? [v] : [];
+  if (arr.length) {
+    const first = String(arr[0]);
+    if (/^\d+$/.test(first)) {
+      try {
+        const rec = await getTableRecord(first); // record no DB 306572615
+        const classeField = (rec.record_fields || []).find(f =>
+          String(f?.name || '').toLowerCase().includes('classe')
+        );
+        if (classeField?.value) return String(classeField.value);
+        // se não houver campo específico, use o título
+        if (rec?.title) return String(rec.title);
+      } catch { /* cai para espelho */ }
+    }
+    try {
+      const mirrored = Array.isArray(v) ? v : JSON.parse(v);
+      if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
+    } catch {}
+  }
+
+  // 2) Campo de fase com label “classe”
+  const fromPhase = getFirstByNames(card, ['classe', 'classes', 'classificação']);
+  if (fromPhase) return String(fromPhase);
+
+  // 3) Fallback: marcaRecord antigo (se existir)
+  if (marcaRecordFallback) {
+    const classeField = (marcaRecordFallback.record_fields || []).find(f =>
+      String(f?.name || '').toLowerCase().includes('classe')
+    );
+    if (classeField?.value) return String(classeField.value);
+  }
+  return '';
+}
+
 // ===== Tokens do template =====
 function nowParts() {
   const d = new Date();
   return { dd: String(d.getDate()).padStart(2, '0'), MM: String(d.getMonth() + 1).padStart(2, '0'), yyyy: String(d.getFullYear()) };
 }
-
 async function buildTemplateVariablesAsync(card) {
   const by = toByIdFromCard(card);
   const np = nowParts();
 
-  const marcaRecord = await resolveMarcaRecordFromCard(card);
+  // Marca & Nome da Marca
+  const marcaRecordNomeContato = await resolveMarcaRecordFromCard(card); // via marcas_1
   const nomeMarca = card.title || '';
-  let contatoEmail = '', contatoTelefone = '', classe = '';
 
-  if (marcaRecord) {
-    const classeField = (marcaRecord.record_fields || []).find(f => String(f?.name || '').toLowerCase().includes('classe'));
-    classe = classeField?.value || '';
-    const contato = await resolveContatoFromMarcaRecord(marcaRecord);
-    contatoEmail = contato.email || '';
-    contatoTelefone = contato.telefone || '';
+  // Contato — prioridade: conector de contatos na fase (qualquer campo tipo connector com 'contato' no nome)
+  let contatoEmail = '', contatoTelefone = '';
+  const contatoConnectorOnPhase = (card.fields || []).find(f =>
+    (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
+    String(f.name || '').toLowerCase().includes('contato')
+  );
+  if (contatoConnectorOnPhase?.value) {
+    try {
+      const arr = Array.isArray(contatoConnectorOnPhase.value)
+        ? contatoConnectorOnPhase.value
+        : JSON.parse(contatoConnectorOnPhase.value);
+      const first = arr && arr[0];
+      if (first && /^\d+$/.test(String(first))) {
+        const rec = await getTableRecord(first);
+        const ex = extractEmailPhoneFromRecord(rec);
+        contatoEmail = ex.email || '';
+        contatoTelefone = ex.telefone || '';
+      } else if (Array.isArray(arr)) {
+        const em = arr.find(s => String(s).includes('@'));
+        const ph = arr.find(s => normalizePhone(s).length >= 10);
+        if (em) contatoEmail = String(em);
+        if (ph) contatoTelefone = String(ph);
+      }
+    } catch { /* segue */ }
   }
+  // Fallback 1: marcas_1 (DB nome/contato)
+  if ((!contatoEmail || !contatoTelefone) && marcaRecordNomeContato) {
+    const contato = await resolveContatoFromMarcaRecord(marcaRecordNomeContato);
+    contatoEmail    = contatoEmail    || contato.email || '';
+    contatoTelefone = contatoTelefone || contato.telefone || '';
+  }
+  // Fallback 2: qualquer campo do card
+  if (!contatoEmail)    contatoEmail    = getFirstByNames(card, ['email','e-mail']);
+  if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
 
-  const rawSel = by['sele_o_de_lista'];
-  const nParc = rawSel ? (String(rawSel).match(/(\d+)\s*x/i)?.[1] || '1') : '1';
-  const totalAssess = Number(by['valor_da_assessoria'] || 0);
-  const valorParcelaAssess = nParc && !isNaN(totalAssess) ? (totalAssess / Number(nParc)).toFixed(2) : '';
+  // Documento (CPF/CNPJ)
+  const doc = pickDocumento(card);
+  const cpf  = doc.tipo === 'CPF'  ? doc.valor : '';
+  const cnpj = doc.tipo === 'CNPJ' ? doc.valor : '';
 
-  const pesquisa = by['pesquisa'];
+  // Classe via marcas_2 (fase)
+  const classe = await resolveClasseFromCard(card, marcaRecordNomeContato);
+
+  // Endereço
+  const rua    = by['rua']      || getFirstByNames(card, ['rua','logradouro','endereço']);
+  const numero = by['n_mero_1'] || getFirstByNames(card, ['numero','número','nº']);
+  const bairro = by['bairro']   || getFirstByNames(card, ['bairro']);
+  const cidade = by['cidade']   || getFirstByNames(card, ['cidade','município']);
+  const uf     = by['uf']       || getFirstByNames(card, ['uf','estado']);
+  const cep    = by['cep']      || getFirstByNames(card, ['cep']);
+
+  // Assessoria
+  const nParc = pickParcelas(card);
+  const valorAssess = pickValorAssessoria(card);
+  const valorParcelaAssess = (valorAssess && Number(nParc)>0) ? toBRL(valorAssess/Number(nParc)) : '';
+
+  // Pesquisa (Isenta padrão)
+  const pesquisa = by['pesquisa'] || getFirstByNames(card, ['pesquisa']);
   const valorPesquisa = (pesquisa === 'Isenta') ? 'R$ 00,00' : '';
   const formaPesquisa = (pesquisa === 'Isenta') ? '---' : '';
   const dataPesquisa  = (pesquisa === 'Isenta') ? '00/00/00' : '';
 
+  // Forma/Data assessoria
+  const formaAssess = by['adiantamento_da_primeira_parcela'] || getFirstByNames(card, ['forma de pagamento','adiantamento']);
+  const dataAssess  = by['data_da_venda_1'] || getFirstByNames(card, ['data da venda','data de pagamento']);
+
   return {
     // Identificação / endereço
-    contratante_1: by['r_social_ou_n_completo'] || '',
-    cpf: by['cpf'] || '',
-    rg: by['rg'] || '',
+    contratante_1: by['r_social_ou_n_completo'] || getFirstByNames(card, ['razão social','nome completo','nome do cliente']) || '',
+    cpf, cnpj,
+    rg: by['rg'] || getFirstByNames(card, ['rg']) || '',
 
-    rua: by['rua'] || '',
-    bairro: by['bairro'] || '',
-    numero: by['n_mero_1'] || '',
-    nome_da_cidade: by['cidade'] || '',
-    cidade: by['cidade'] || '',
-    uf: by['uf'] || '',
-    cep: by['cep'] || '',
+    rua, bairro, numero, nome_da_cidade: cidade, cidade, uf, cep,
 
-    // Contato via DB conectado
-    'E-mail': contatoEmail,
-    telefone: contatoTelefone,
+    // Contato
+    'E-mail': contatoEmail || '',
+    telefone: contatoTelefone || '',
 
     // Marca
     nome_da_marca: nomeMarca,
@@ -340,35 +461,34 @@ async function buildTemplateVariablesAsync(card) {
     // Assessoria
     numero_de_parcelas_da_assessoria: nParc,
     valor_da_parcela_da_assessoria: valorParcelaAssess,
-    forma_de_pagamento_da_assessoria: by['adiantamento_da_primeira_parcela'] || '',
-    data_de_pagamento_da_assessoria: by['data_da_venda_1'] || '',
+    forma_de_pagamento_da_assessoria: formaAssess || '',
+    data_de_pagamento_da_assessoria: dataAssess || '',
 
-    // Pesquisa (Isenta por padrão)
+    // Pesquisa
     valor_da_pesquisa: valorPesquisa,
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
     // Taxa (placeholders)
     valor_da_taxa: '',
-    forma_de_pagamento_da_taxa: by['tipo_de_pagamento_benef_cio'] || '',
+    forma_de_pagamento_da_taxa: by['tipo_de_pagamento_benef_cio'] || getFirstByNames(card, ['tipo de pagamento']) || '',
     data_de_pagamento_da_taxa: '',
 
     // Datas
-    dia: np.dd,
-    mes: np.MM,
-    ano: np.yyyy,
+    dia: np.dd, mes: np.MM, ano: np.yyyy,
 
-    // Auxiliares
+    // Aux
     TEMPLATE_UUID_CONTRATO: by['TEMPLATE_UUID_CONTRATO'] || TEMPLATE_UUID_CONTRATO || '',
   };
 }
 
-// ===== Cofre por responsável =====
+// ===== Cofre por responsável (vendedor_respons_vel) =====
 function resolveCofreUuidByCard(card) {
   const by = toByIdFromCard(card);
   const candidatos = [];
-  if (by['respons_vel_5']) candidatos.push(by['respons_vel_5']);
-  if (by['representante']) candidatos.push(by['representante']);
+  if (by['vendedor_respons_vel']) candidatos.push(by['vendedor_respons_vel']);
+  if (by['respons_vel_5']) candidatos.push(by['respons_vel_5']);       // fallback
+  if (by['representante']) candidatos.push(by['representante']);       // fallback
 
   const nomes = []
     .concat(candidatos)
@@ -387,7 +507,6 @@ function resolveCofreUuidByCard(card) {
 
 // ===== D4Sign =====
 const D4_BASE = 'https://api.d4sign.com.br/v2';
-
 async function d4Fetch(path, method, payload) {
   const url = `${D4_BASE}${path}?tokenAPI=${D4SIGN_TOKEN}&cryptKey=${D4SIGN_CRYPT_KEY}`;
   const res = await fetch(url, {
@@ -398,7 +517,6 @@ async function d4Fetch(path, method, payload) {
   if (!res.ok) throw new Error(`D4 error ${res.status}: ${await res.text()}`);
   return res.json();
 }
-
 async function d4CreateFromTemplateUUID({ templateUuid, fileName, variables, safeUuid }) {
   const payload = { template: templateUuid, name: fileName, data: variables, safe: safeUuid };
   const created = await d4Fetch('/documents/create', 'POST', payload);
@@ -408,7 +526,6 @@ async function d4CreateFromTemplateUUID({ templateUuid, fileName, variables, saf
   }
   return created;
 }
-
 async function d4AddSigners(documentKey, signers) {
   const payload = {
     signers: signers.map(s => ({
@@ -421,11 +538,9 @@ async function d4AddSigners(documentKey, signers) {
   };
   return d4Fetch(`/documents/${documentKey}/signers`, 'POST', payload);
 }
-
 async function d4SendToSign(documentKey, message = 'Contrato para assinatura') {
   return d4Fetch(`/documents/${documentKey}/sendto`, 'POST', { message, emails: [], workflow: '0' });
 }
-
 app.get('/download/:documentKey', async (req, res) => {
   try {
     if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
@@ -441,7 +556,7 @@ app.get('/download/:documentKey', async (req, res) => {
   }
 });
 
-// ===== ROTA ECO para ver caminho/headers =====
+// ===== ROTA ECO =====
 app.get('/_echo/*', (req, res) => {
   res.json({
     method: req.method,
@@ -471,7 +586,7 @@ async function handleCriarLinkConfirmacao(req, res) {
   }
 }
 app.post('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao);
-app.get('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao); // útil p/ teste no navegador
+app.get('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao);
 
 app.get('/novo-pipe/confirmar', async (req, res) => {
   try {
@@ -493,7 +608,7 @@ app.get('/novo-pipe/confirmar', async (req, res) => {
     const resumo = `
       <h2>Confirmar dados do cliente</h2>
       <p><b>Contratante:</b> ${vars.contratante_1 || ''}</p>
-      <p><b>CPF:</b> ${vars.cpf || ''} &nbsp; <b>RG:</b> ${vars.rg || ''}</p>
+      <p><b>CPF:</b> ${vars.cpf || ''} &nbsp; <b>CNPJ:</b> ${vars.cnpj || ''} &nbsp; <b>RG:</b> ${vars.rg || ''}</p>
       <p><b>Endereço:</b> ${vars.rua || ''}, ${vars.numero || ''} - ${vars.bairro || ''} - ${vars.cidade || ''}/${vars.uf || ''} - ${vars.cep || ''}</p>
       <p><b>Contato:</b> ${vars['E-mail'] || ''} &nbsp; ${vars.telefone || ''}</p>
       <p><b>Marca:</b> ${vars.nome_da_marca || ''} &nbsp; <b>Classe:</b> ${vars.classe || ''}</p>
@@ -586,62 +701,61 @@ app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
       <p><a href="${back}">Voltar</a></p>
     </body></html>`);
   } catch (e) {
-    res.status(500).send(String(e.message || e));
+    res.status(500).send(String(e.message || e) });
   }
 });
 
-// ===== Utilidades: listar/exportar contatos =====
-app.get('/contatos', async (req, res) => {
+// ===== Debug =====
+app.get('/debug/card', async (req, res) => {
   try {
-    if (!CONTACTS_TABLE_ID) return res.status(400).json({ error: 'CONTACTS_TABLE_ID não definido' });
-    const out = [];
-    let after = null;
-    for (let i = 0; i < 100; i++) {
-      const { records, pageInfo } = await listTableRecords(CONTACTS_TABLE_ID, 200, after);
-      for (const r of records) {
-        const { email, telefone } = extractEmailPhoneFromRecord(r);
-        out.push({ id: r.id, title: r.title, email, telefone });
-      }
-      if (!pageInfo?.hasNextPage) break;
-      after = pageInfo.endCursor || null;
-    }
-    res.json({ ok: true, count: out.length, contacts: out });
+    const { cardId } = req.query;
+    if (!cardId) return res.status(400).send('cardId obrigatório');
+    const card = await getCardFields(cardId);
+    res.json({
+      id: card.id,
+      title: card.title,
+      pipe: card.pipe,
+      phase: card.current_phase,
+      fields: (card.fields || []).map(f => ({
+        name: f.name, id: f.field?.id, type: f.field?.type, value: f.value
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+app.get('/debug/vars', async (req, res) => {
+  try {
+    const { cardId } = req.query;
+    if (!cardId) return res.status(400).send('cardId obrigatório');
+    const card = await getCardFields(cardId);
+    const vars = await buildTemplateVariablesAsync(card);
+    res.json(vars);
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+app.get('/debug/marca-contato', async (req, res) => {
+  try {
+    const { cardId } = req.query;
+    if (!cardId) return res.status(400).send('cardId obrigatório');
+    const card = await getCardFields(cardId);
+    const marcaRecord = await resolveMarcaRecordFromCard(card);
+    let contato = { email:'', telefone:'' };
+    if (marcaRecord) contato = await resolveContatoFromMarcaRecord(marcaRecord);
+    const classe = await resolveClasseFromCard(card, marcaRecord);
+    res.json({ cardTitle: card.title, marcaRecord, contato, classe });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
 });
 
-app.get('/contatos/export.csv', async (req, res) => {
-  try {
-    if (!CONTACTS_TABLE_ID) return res.status(400).send('CONTACTS_TABLE_ID não definido');
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="contatos.csv"');
-    res.write('id;title;email;telefone\n');
-    let after = null;
-    for (let i = 0; i < 100; i++) {
-      const { records, pageInfo } = await listTableRecords(CONTACTS_TABLE_ID, 200, after);
-      for (const r of records) {
-        const { email, telefone } = extractEmailPhoneFromRecord(r);
-        const line = `${r.id};"${(r.title || '').replace(/"/g, '""')}";"${(email || '').replace(/"/g, '""')}";"${(telefone || '').replace(/"/g, '""')}"\n`;
-        res.write(line);
-      }
-      if (!pageInfo?.hasNextPage) break;
-      after = pageInfo.endCursor || null;
-    }
-    res.end();
-  } catch (e) {
-    res.status(500).send(String(e.message || e));
-  }
-});
-
-// ===== Healthcheck =====
+// ===== Health =====
 app.get('/health', (_, res) => res.json({ ok: true }));
 
-// ===== Start + listagem de rotas =====
+// ===== Start + rotas registradas =====
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
-
-  // Listar rotas registradas
   const list = [];
   app._router.stack.forEach(m => {
     if (m.route && m.route.path) {
@@ -673,14 +787,21 @@ D4SIGN_CRYPT_KEY=xxxxx
 D4SIGN_TOKEN=xxxxx
 TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
-PUBLIC_BASE_URL=https://seu-dominio.com            # inclua /prefixo se o proxy usar
+PUBLIC_BASE_URL=https://provincia-vendas.lnghgu.easypanel.host
 PUBLIC_LINK_SECRET=um-segredo-forte
 EMAIL_ASSINATURA_EMPRESA=assinaturas@seu-dominio.com
 
+# Campo para gravar link no card
 PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
-CONTACTS_TABLE_ID=306505297
-MARCAS_TABLE_ID=306555991
 
+# Conectores / Tabelas
+FIELD_ID_CONNECT_MARCA_NOME=marcas_1         # Nome da marca + Contatos
+FIELD_ID_CONNECT_CLASSE=marcas_2             # Classe (DB Marcas e serviços)
+CONTACTS_TABLE_ID=...                        # se quiser varrer contatos
+MARCAS_TABLE_ID=...                          # se precisar varrer títulos do marcas_1
+CLASSES_TABLE_ID=306572615                   # DB Classe
+
+# Cofres por vendedor
 COFRE_UUID_EDNA=...
 COFRE_UUID_GREYCE=...
 COFRE_UUID_MARIANA=...
