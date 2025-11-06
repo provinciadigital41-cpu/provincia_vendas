@@ -475,92 +475,71 @@ function nowParts() {
   return { dd: String(d.getDate()).padStart(2, '0'), MM: String(d.getMonth() + 1).padStart(2, '0'), yyyy: String(d.getFullYear()) };
 }
 async function buildTemplateVariablesAsync(card) {
-  const by = toByIdFromCard(card);
+  const by = toByIdFromCard(card);           // ← declare aqui uma única vez
   const np = nowParts();
 
-// Marca & Nome da Marca
-const by = toByIdFromCard(card);               // <— não esqueça disso aqui
-const marcaRecord = await resolveMarcaRecordFromCard(card); // via marcas_1
-const nomeMarca = card.title || '';
+  // Marca & Nome da Marca
+  const marcaRecord = await resolveMarcaRecordFromCard(card); // via marcas_1
+  const nomeMarca = card.title || '';
 
-// 1) Contato via conector na FASE (se existir; label contendo "contat")
-let contatoNome = '', contatoEmail = '', contatoTelefone = '';
-const contatoConnectorOnPhase = (card.fields || []).find(f =>
-  (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
-  String(f.name || '').toLowerCase().includes('contat') // pega "contato" e "contatos"
-);
-if (contatoConnectorOnPhase?.value) {
-  try {
-    const arr = Array.isArray(contatoConnectorOnPhase.value)
-      ? contatoConnectorOnPhase.value
-      : JSON.parse(contatoConnectorOnPhase.value);
-    const first = arr && arr[0];
-    if (first && /^\d+$/.test(String(first))) {
-      const rec = await getTableRecord(first);
-      const ex = extractNameEmailPhoneFromRecord(rec); // lê "nome_do_contato" por id ou "nome" por label
-      contatoNome = ex.nome || '';
-      contatoEmail = ex.email || '';
-      contatoTelefone = ex.telefone || '';
-    } else if (Array.isArray(arr)) {
-      const em = arr.find(s => String(s).includes('@'));
-      const ph = arr.find(s => normalizePhone(s).length >= 10);
-      contatoEmail = em ? String(em) : '';
-      contatoTelefone = ph ? String(ph) : '';
+  // 1) Contato via conector na FASE (label contém "contat")
+  let contatoNome = '', contatoEmail = '', contatoTelefone = '';
+  const contatoConnectorOnPhase = (card.fields || []).find(f =>
+    (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
+    String(f.name || '').toLowerCase().includes('contat')
+  );
+  if (contatoConnectorOnPhase?.value) {
+    try {
+      const arr = Array.isArray(contatoConnectorOnPhase.value)
+        ? contatoConnectorOnPhase.value
+        : JSON.parse(contatoConnectorOnPhase.value);
+      const first = arr && arr[0];
+      if (first && /^\d+$/.test(String(first))) {
+        const rec = await getTableRecord(first);
+        const ex = extractNameEmailPhoneFromRecord(rec);
+        contatoNome = ex.nome || '';
+        contatoEmail = ex.email || '';
+        contatoTelefone = ex.telefone || '';
+      } else if (Array.isArray(arr)) {
+        const em = arr.find(s => String(s).includes('@'));
+        const ph = arr.find(s => normalizePhone(s).length >= 10);
+        contatoEmail = em ? String(em) : '';
+        contatoTelefone = ph ? String(ph) : '';
+      }
+    } catch (e) {
+      console.warn('[contatoConnectorOnPhase][parse-error]', e);
     }
-  } catch (e) {
-    console.warn('[contatoConnectorOnPhase][parse-error]', e);
   }
-}
 
-// 2) Fallback: Contato via marcas_1 (DB de Marcas – Captação)
-if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
-  const contato = await resolveContatoFromMarcaRecord(marcaRecord);
-  contatoNome     = contatoNome     || contato.nome || '';
-  contatoEmail    = contatoEmail    || contato.email || '';
-  contatoTelefone = contatoTelefone || contato.telefone || '';
-}
-
-// 3) Fallback: tenta achar por nome de campo no próprio card
-if (!contatoNome) contatoNome = getFirstByNames(card, [
-  'nome do contato','contratante','responsável legal','responsavel legal'
-]);
-
-// 4) Fallback de e-mail/telefone por campos soltos
-if (!contatoEmail)    contatoEmail    = getFirstByNames(card, ['email','e-mail']);
-if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
-
-// >>> Contratante DEVE ser o nome de contato (não o título/marca)
-const contratante = contatoNome
-  || by['r_social_ou_n_completo']
-  || getFirstByNames(card, ['razão social','nome completo','nome do cliente'])
-  || '';
-
-// (debug opcional)
-if (!contatoNome)    console.warn('[contratante][sem-contato-nome]');
-if (!contatoEmail)   console.warn('[contratante][sem-contato-email]');
-if (!contatoTelefone)console.warn('[contratante][sem-contato-telefone]');
-
-
-  // Fallback 1: marcas_1 (DB com contato dentro)
+  // 2) Fallback: contatos via marcas_1
   if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
     const contato = await resolveContatoFromMarcaRecord(marcaRecord);
     contatoNome     = contatoNome     || contato.nome || '';
     contatoEmail    = contatoEmail    || contato.email || '';
     contatoTelefone = contatoTelefone || contato.telefone || '';
   }
-  // Fallback 2: qualquer campo do card
+
+  // 3) Fallback: nome do contato por label
+  if (!contatoNome) contatoNome = getFirstByNames(card, [
+    'nome do contato','contratante','responsável legal','responsavel legal'
+  ]);
+
+  // 4) Fallback: e-mail/telefone por labels soltos
   if (!contatoEmail)    contatoEmail    = getFirstByNames(card, ['email','e-mail']);
   if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
 
-  // >>> Contratante vem do NOME DO CONTATO <<<
-  const contratante = contatoNome || by['r_social_ou_n_completo'] || getFirstByNames(card, ['razão social','nome completo','nome do cliente']) || '';
+  // Contratante deve ser o nome do contato (não o título/marca)
+  const contratante = contatoNome
+    || by['r_social_ou_n_completo']
+    || getFirstByNames(card, ['razão social','nome completo','nome do cliente'])
+    || '';
 
-  // Documento (CPF/CNPJ)
+  // Documento
   const doc = pickDocumento(card);
   const cpf  = doc.tipo === 'CPF'  ? doc.valor : '';
   const cnpj = doc.tipo === 'CNPJ' ? doc.valor : '';
 
-  // Classe — prioriza conector/classes inpi
+  // Classe (prioriza “Classes INPI” no card)
   const classe = await resolveClasseFromCard(card, marcaRecord);
 
   // Endereço
