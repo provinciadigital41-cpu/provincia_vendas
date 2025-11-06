@@ -478,15 +478,16 @@ async function buildTemplateVariablesAsync(card) {
   const by = toByIdFromCard(card);
   const np = nowParts();
 
-// Marca & Nome da Marca (título do card)
+// Marca & Nome da Marca
+const by = toByIdFromCard(card);               // <— não esqueça disso aqui
 const marcaRecord = await resolveMarcaRecordFromCard(card); // via marcas_1
 const nomeMarca = card.title || '';
 
-// 1) Contato via conector na FASE (se existir; campo com "contato" no label)
+// 1) Contato via conector na FASE (se existir; label contendo "contat")
 let contatoNome = '', contatoEmail = '', contatoTelefone = '';
 const contatoConnectorOnPhase = (card.fields || []).find(f =>
   (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
-  String(f.name || '').toLowerCase().includes('contato')
+  String(f.name || '').toLowerCase().includes('contat') // pega "contato" e "contatos"
 );
 if (contatoConnectorOnPhase?.value) {
   try {
@@ -506,7 +507,9 @@ if (contatoConnectorOnPhase?.value) {
       contatoEmail = em ? String(em) : '';
       contatoTelefone = ph ? String(ph) : '';
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[contatoConnectorOnPhase][parse-error]', e);
+  }
 }
 
 // 2) Fallback: Contato via marcas_1 (DB de Marcas – Captação)
@@ -518,14 +521,24 @@ if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
 }
 
 // 3) Fallback: tenta achar por nome de campo no próprio card
-if (!contatoNome) contatoNome = getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']);
+if (!contatoNome) contatoNome = getFirstByNames(card, [
+  'nome do contato','contratante','responsável legal','responsavel legal'
+]);
 
 // 4) Fallback de e-mail/telefone por campos soltos
 if (!contatoEmail)    contatoEmail    = getFirstByNames(card, ['email','e-mail']);
 if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
 
 // >>> Contratante DEVE ser o nome de contato (não o título/marca)
-const contratante = contatoNome || by['r_social_ou_n_completo'] || getFirstByNames(card, ['razão social','nome completo','nome do cliente']) || '';
+const contratante = contatoNome
+  || by['r_social_ou_n_completo']
+  || getFirstByNames(card, ['razão social','nome completo','nome do cliente'])
+  || '';
+
+// (debug opcional)
+if (!contatoNome)    console.warn('[contratante][sem-contato-nome]');
+if (!contatoEmail)   console.warn('[contratante][sem-contato-email]');
+if (!contatoTelefone)console.warn('[contratante][sem-contato-telefone]');
 
 
   // Fallback 1: marcas_1 (DB com contato dentro)
