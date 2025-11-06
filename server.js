@@ -249,6 +249,31 @@ function firstFromValue(value) {
   if (value && typeof value === 'object') return String(value.name || value.username || value.email || value.value || '');
   return '';
 }
+async function resolveClasseFromLabelOnCard(card) {
+  // Procura um campo de CONECTOR cujo label contenha "classes inpi"
+  const f = (card.fields || []).find(ff =>
+    (ff?.field?.type === 'connector' || ff?.field?.type === 'table_connection') &&
+    String(ff?.name || '').toLowerCase().includes('classes inpi')
+  );
+  if (!f || !f.value) return '';
+
+  // value pode ser [id], "[\"id\"]" ou espelho ["CLASSE 20"]
+  let arr = [];
+  try { arr = Array.isArray(f.value) ? f.value : JSON.parse(f.value); } catch { arr = [f.value]; }
+  const first = arr && arr[0];
+  if (!first) return '';
+
+  // Se for id numérico, abre o record e usa o título (CLASSE 20)
+  if (/^\d+$/.test(String(first))) {
+    try {
+      const rec = await getTableRecord(String(first));
+      return rec?.title || '';
+    } catch { /* segue fallback */ }
+  }
+
+  // Se for espelho, normalmente o primeiro item já é o título
+  return String(first || '');
+}
 
 // ===== Marca (nome/contato) via marcas_1 =====
 async function resolveMarcaRecordFromCard(card) {
@@ -364,10 +389,11 @@ function pickDocumento(card) {
   return { tipo: '', valor: '' };
 }
 
-// Classe: tenta conector direto (FIELD_ID_CONNECT_CLASSES) -> record da classes inpi -> título;
-// caso não exista, usa marcas_2 -> record -> procura campo que tenha "classe" (conector/espelho) -> resolve título
 async function resolveClasseFromCard(card, marcaRecordFallback) {
-  const by = toByIdFromCard(card);
+  // 0) prioridade: achar "Classes INPI" direto no card
+  const fromLabel = await resolveClasseFromLabelOnCard(card);
+  if (fromLabel) return fromLabel;
+  // ... restante da função permanece igual (conector FIELD_ID_CONNECT_CLASSES, depois marcas_2 etc.)
 
   // 1) Conector DIRETO para "classes inpi" na fase (se existir)
   if (FIELD_ID_CONNECT_CLASSES) {
@@ -448,36 +474,52 @@ async function buildTemplateVariablesAsync(card) {
   const by = toByIdFromCard(card);
   const np = nowParts();
 
-  // Marca & Nome da Marca (o título do card é o nome da marca, como você definiu)
-  const marcaRecord = await resolveMarcaRecordFromCard(card); // via marcas_1
-  const nomeMarca = card.title || '';
+// Marca & Nome da Marca (título do card)
+const marcaRecord = await resolveMarcaRecordFromCard(card); // via marcas_1
+const nomeMarca = card.title || '';
 
-  // Contato — prioridade: conector de contatos na fase
-  let contatoNome = '', contatoEmail = '', contatoTelefone = '';
-  const contatoConnectorOnPhase = (card.fields || []).find(f =>
-    (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
-    String(f.name || '').toLowerCase().includes('contato')
-  );
-  if (contatoConnectorOnPhase?.value) {
-    try {
-      const arr = Array.isArray(contatoConnectorOnPhase.value)
-        ? contatoConnectorOnPhase.value
-        : JSON.parse(contatoConnectorOnPhase.value);
-      const first = arr && arr[0];
-      if (first && /^\d+$/.test(String(first))) {
-        const rec = await getTableRecord(first);
-        const ex = extractNameEmailPhoneFromRecord(rec);
-        contatoNome = ex.nome || '';
-        contatoEmail = ex.email || '';
-        contatoTelefone = ex.telefone || '';
-      } else if (Array.isArray(arr)) {
-        const em = arr.find(s => String(s).includes('@'));
-        const ph = arr.find(s => normalizePhone(s).length >= 10);
-        contatoEmail = em ? String(em) : '';
-        contatoTelefone = ph ? String(ph) : '';
-      }
-    } catch {}
-  }
+// 1) Contato via conector "Contatos" da FASE (se existir)
+let contatoNome = '', contatoEmail = '', contatoTelefone = '';
+const contatoConnectorOnPhase = (card.fields || []).find(f =>
+  (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
+  String(f.name || '').toLowerCase().includes('contato')
+);
+if (contatoConnectorOnPhase?.value) {
+  try {
+    const arr = Array.isArray(contatoConnectorOnPhase.value)
+      ? contatoConnectorOnPhase.value
+      : JSON.parse(contatoConnectorOnPhase.value);
+    const first = arr && arr[0];
+    if (first && /^\d+$/.test(String(first))) {
+      const rec = await getTableRecord(first);
+      const ex = extractNameEmailPhoneFromRecord(rec);
+      contatoNome = ex.nome || '';
+      contatoEmail = ex.email || '';
+      contatoTelefone = ex.telefone || '';
+    } else if (Array.isArray(arr)) {
+      const em = arr.find(s => String(s).includes('@'));
+      const ph = arr.find(s => normalizePhone(s).length >= 10);
+      contatoEmail = em ? String(em) : '';
+      contatoTelefone = ph ? String(ph) : '';
+    }
+  } catch {}
+}
+
+// 2) Fallback: Contato via marcas_1 (DB de Marcas – Captação)
+if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
+  const contato = await resolveContatoFromMarcaRecord(marcaRecord);
+  contatoNome     = contatoNome     || contato.nome || '';
+  contatoEmail    = contatoEmail    || contato.email || '';
+  contatoTelefone = contatoTelefone || contato.telefone || '';
+}
+
+// 3) Fallback: campos soltos do card (se faltar email/telefone)
+if (!contatoEmail)    contatoEmail    = getFirstByNames(card, ['email','e-mail']);
+if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
+
+// >>> Contratante vem do NOME DO CONTATO <<<
+const contratante = contatoNome || by['r_social_ou_n_completo'] || getFirstByNames(card, ['razão social','nome completo','nome do cliente']) || '';
+
   // Fallback 1: marcas_1 (DB com contato dentro)
   if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
     const contato = await resolveContatoFromMarcaRecord(marcaRecord);
@@ -536,8 +578,8 @@ async function buildTemplateVariablesAsync(card) {
     telefone: contatoTelefone || '',
 
     // Marca
-    nome_da_marca: nomeMarca,
-    classe: String(classe || ''),
+    nome_da_marca: nomemarca,
+    classe: String(await resolveClasseFromCard(card, marcaRecord) || ''),
 
     // Assessoria
     numero_de_parcelas_da_assessoria: nParc,
