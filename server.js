@@ -473,28 +473,203 @@ async function buildTemplateVariablesAsync(card) {
   };
 }
 
+function stripDiacritics(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+function normalizeName(s) {
+  return stripDiacritics(String(s || '').trim()).toLowerCase();
+}
+function extractAssigneeNames(raw) {
+  // Pode vir como: "NOME", ["NOME"], [{name:"NOME"}], {name:"NOME"}, JSON string, etc.
+  const out = [];
+  const push = v => { if (v) out.push(String(v)); };
+
+  const tryParse = v => {
+    if (typeof v === 'string') {
+      try { const j = JSON.parse(v); return j; } catch { /* ignore */ }
+    }
+    return v;
+  };
+
+  const val = tryParse(raw);
+
+  if (Array.isArray(val)) {
+    for (const it of val) {
+      if (!it) continue;
+      if (typeof it === 'string') {
+        push(it);
+      } else if (typeof it === 'object') {
+        push(it.name || it.username || it.email || it.value);
+      }
+    }
+  } else if (typeof val === 'object' && val) {
+    push(val.name || val.username || val.email || val.value);
+  } else if (typeof val === 'string') {
+    // Pode ser "['NOME']" ou "NOME"
+    const m = val.match(/^\s*\[.*\]\s*$/) ? tryParse(val) : null;
+    if (m && Array.isArray(m)) {
+      m.forEach(x => push(typeof x === 'string' ? x : (x?.name || x?.email)));
+    } else {
+      push(val);
+    }
+  }
+
+  // limpa vazios/duplicados
+  return [...new Set(out.filter(Boolean))];
+}
+
+function buildEmailMapFromEnv(env) {
+  // Procura envs no formato COFRE_UUID_EMAIL_* com valor "email:uuid"
+  const map = {};
+  Object.keys(env).forEach(k => {
+    if (k.startsWith('COFRE_UUID_EMAIL_')) {
+      const val = String(env[k] || '');
+      const [email, uuid] = val.split(':').map(x => x?.trim());
+      if (email && uuid) map[email.toLowerCase()] = uuid;
+    }
+  });
+  return map;
+}
+
+function stripDiacritics(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+function normalizeName(s) {
+  return stripDiacritics(String(s || '').trim()).toLowerCase();
+}
+function extractAssigneeNames(raw) {
+  // Pode vir como: "NOME", ["NOME"], [{name:"NOME"}], {name:"NOME"}, JSON string, etc.
+  const out = [];
+  const push = v => { if (v) out.push(String(v)); };
+
+  const tryParse = v => {
+    if (typeof v === 'string') {
+      try { const j = JSON.parse(v); return j; } catch { /* ignore */ }
+    }
+    return v;
+  };
+
+  const val = tryParse(raw);
+
+  if (Array.isArray(val)) {
+    for (const it of val) {
+      if (!it) continue;
+      if (typeof it === 'string') {
+        push(it);
+      } else if (typeof it === 'object') {
+        push(it.name || it.username || it.email || it.value);
+      }
+    }
+  } else if (typeof val === 'object' && val) {
+    push(val.name || val.username || val.email || val.value);
+  } else if (typeof val === 'string') {
+    // Pode ser "['NOME']" ou "NOME"
+    const m = val.match(/^\s*\[.*\]\s*$/) ? tryParse(val) : null;
+    if (m && Array.isArray(m)) {
+      m.forEach(x => push(typeof x === 'string' ? x : (x?.name || x?.email)));
+    } else {
+      push(val);
+    }
+  }
+
+  // limpa vazios/duplicados
+  return [...new Set(out.filter(Boolean))];
+}
+
+function buildEmailMapFromEnv(env) {
+  // Procura envs no formato COFRE_UUID_EMAIL_* com valor "email:uuid"
+  const map = {};
+  Object.keys(env).forEach(k => {
+    if (k.startsWith('COFRE_UUID_EMAIL_')) {
+      const val = String(env[k] || '');
+      const [email, uuid] = val.split(':').map(x => x?.trim());
+      if (email && uuid) map[email.toLowerCase()] = uuid;
+    }
+  });
+  return map;
+}
+
 // ===== Cofre por responsável (vendedor_respons_vel) =====
 function resolveCofreUuidByCard(card) {
   const by = toByIdFromCard(card);
-  const candidatos = [];
-  if (by['vendedor_respons_vel']) candidatos.push(by['vendedor_respons_vel']);
-  if (by['respons_vel_5']) candidatos.push(by['respons_vel_5']);       // fallback
-  if (by['representante']) candidatos.push(by['representante']);       // fallback
 
-  const nomes = []
-    .concat(candidatos)
-    .filter(Boolean)
-    .flatMap(v => Array.isArray(v) ? v : [v])
-    .map(v => (typeof v === 'string' ? v : (v?.name || v?.email || '')))
-    .filter(Boolean);
+  // 1) colete valores de possíveis campos de responsável
+  const candidatosBrutos = [];
+  if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
+  if (by['respons_vel_5'])       candidatosBrutos.push(by['respons_vel_5']); // fallback antigo
+  if (by['representante'])       candidatosBrutos.push(by['representante']); // fallback antigo
 
-  for (const nome of nomes) {
-    if (COFRES_UUIDS[nome]) return COFRES_UUIDS[nome];
-    const k = Object.keys(COFRES_UUIDS).find(key => key.toLowerCase() === String(nome).toLowerCase());
-    if (k) return COFRES_UUIDS[k];
+  // 2) extraia lista de nomes/emails em texto
+  let nomesOuEmails = [];
+  candidatosBrutos.forEach(v => { nomesOuEmails = nomesOuEmails.concat(extractAssigneeNames(v)); });
+
+  // 3) tente casar por NOME com COFRES_UUIDS (tira acentos e ignora caixa)
+  const normKeys = Object.keys(COFRES_UUIDS || {}).reduce((acc, k) => {
+    acc[normalizeName(k)] = COFRES_UUIDS[k];
+    return acc;
+  }, {});
+
+  for (const s of nomesOuEmails) {
+    const n = normalizeName(s);
+    if (normKeys[n]) return normKeys[n];
   }
-  return null;
+
+  // 4) tente casar por E-MAIL (se houver) via envs COFRE_UUID_EMAIL_* (email:uuid)
+  const emailMap = buildEmailMapFromEnv(process.env);
+  for (const s of nomesOuEmails) {
+    const maybeEmail = String(s || '').toLowerCase();
+    if (maybeEmail.includes('@') && emailMap[maybeEmail]) {
+      return emailMap[maybeEmail];
+    }
+  }
+
+  // 5) debug: loga o que veio e o que existe
+  console.warn('[COFRE][NAO_ENCONTRADO]', {
+    recebidos: nomesOuEmails,
+    chavesCofres: Object.keys(COFRES_UUIDS || {}),
+  });
+
+  // 6) fallback global para não travar o fluxo
+  if (process.env.DEFAULT_COFRE_UUID) {
+    console.warn('[COFRE][FALLBACK] usando DEFAULT_COFRE_UUID');
+    return process.env.DEFAULT_COFRE_UUID;
+  }
+
+  return null; // mantém comportamento atual (gera erro acima)
 }
+
+app.get('/debug/cofre', async (req, res) => {
+  try {
+    const { cardId } = req.query;
+    if (!cardId) return res.status(400).send('cardId obrigatório');
+    const card = await getCardFields(cardId);
+
+    const by = toByIdFromCard(card);
+    const candidatosBrutos = [];
+    if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
+    if (by['respons_vel_5'])       candidatosBrutos.push(by['respons_vel_5']);
+    if (by['representante'])       candidatosBrutos.push(by['representante']);
+
+    const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
+    const escolhido = resolveCofreUuidByCard(card);
+
+    res.json({
+      pipe: card?.pipe,
+      phase: card?.current_phase,
+      candidatosBrutos,
+      nomesOuEmails,
+      cofreEscolhido: escolhido,
+      possuiFallback: Boolean(process.env.DEFAULT_COFRE_UUID),
+      chavesCofres: Object.keys(COFRES_UUIDS || {}),
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
 
 // ===== D4Sign =====
 const D4_BASE = 'https://api.d4sign.com.br/v2';
