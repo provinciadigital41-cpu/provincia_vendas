@@ -40,6 +40,7 @@ let {
   CONTACTS_TABLE_ID,           // opcional
   MARCAS_TABLE_ID,             // opcional
   CLASSES_TABLE_ID,            // tabela Classes INPI (ex.: 306521337)
+  MARCAS2_TABLE_ID,
 
   // app pública
   PUBLIC_BASE_URL,
@@ -70,6 +71,7 @@ PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql
 FIELD_ID_CONNECT_MARCA_NOME = FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1';
 FIELD_ID_CONNECT_CLASSE     = FIELD_ID_CONNECT_CLASSE     || 'marcas_2';
 CLASSES_TABLE_ID            = CLASSES_TABLE_ID            || '306521337';
+MARCAS2_TABLE_ID            = MARCAS2_TABLE_ID            || '';
 const FIELD_ID_LINKS_D4     = PIPEFY_FIELD_LINK_CONTRATO  || 'd4_contrato';
 
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY não definido');
@@ -353,37 +355,82 @@ async function resolveClasseFromCard(card, marcaRecordFallback) {
     }
   }
 
-  // marcas_2 → procurar campo "classe" dentro do record
-  const v2 = by[FIELD_ID_CONNECT_CLASSE];
-  const arr2 = Array.isArray(v2) ? v2 : v2 ? [v2] : [];
-  if (arr2.length) {
-    const first = String(arr2[0]);
-    if (/^\d+$/.test(first)) {
-      try {
-        const rec = await getTableRecord(first);
-        const classeField = (rec.record_fields || []).find(f => String(f?.name || '').toLowerCase().includes('classe'));
-        if (classeField?.value) {
-          const val = classeField.value;
-          if (Array.isArray(val)) {
-            const id0 = String(val[0] || '');
-            if (/^\d+$/.test(id0)) { const recClasse = await getTableRecord(id0); return recClasse?.title || ''; }
-          } else {
-            try { const a = JSON.parse(val); if (Array.isArray(a) && a.length) return String(a[0] || ''); }
-            catch { if (val) return String(val); }
+  // 2) Conector "Marcas e serviços" (marcas_2) → se vier TÍTULO, abre na tabela MARCAS2_TABLE_ID
+const v2 = by[FIELD_ID_CONNECT_CLASSE];
+const arr2 = Array.isArray(v2) ? v2 : v2 ? [v2] : [];
+if (arr2.length) {
+  const first = String(arr2[0]);
+
+  // Caso 2.1: veio ID numérico (mantém como já estava)
+  if (/^\d+$/.test(first)) {
+    try {
+      const rec = await getTableRecord(first);
+      // procurar um campo que contenha "classe" e seguir o conector
+      const classeField = (rec.record_fields || []).find(f =>
+        String(f?.name || '').toLowerCase().includes('classe')
+      );
+      if (classeField?.value) {
+        const val = classeField.value;
+        if (Array.isArray(val)) {
+          const id0 = String(val[0] || '');
+          if (/^\d+$/.test(id0)) {
+            const recClasse = await getTableRecord(id0);
+            return recClasse?.title || '';
+          }
+        } else {
+          try {
+            const a = JSON.parse(val);
+            if (Array.isArray(a) && a.length) return String(a[0] || '');
+          } catch {
+            if (val) return String(val);
           }
         }
-        if (rec?.title) return String(rec.title);
-      } catch {}
+      }
+      if (rec?.title) return String(rec.title);
+    } catch {}
+  } else {
+    // Caso 2.2: veio TÍTULO (espelho) -> procurar pelo título na tabela Marcas (Visita)
+    if (MARCAS2_TABLE_ID) {
+      let after = null;
+      for (let i = 0; i < 50; i++) {
+        const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
+        const rec = records.find(r => String(r.title || '').trim().toLowerCase() === first.trim().toLowerCase());
+        if (rec) {
+          // dentro do record, achar um campo que contenha “classe” e seguir o conector
+          const classeField = (rec.record_fields || []).find(f =>
+            String(f?.name || '').toLowerCase().includes('classe')
+          );
+          if (classeField?.value) {
+            const val = classeField.value;
+            if (Array.isArray(val)) {
+              const id0 = String(val[0] || '');
+              if (/^\d+$/.test(id0)) {
+                const recClasse = await getTableRecord(id0);
+                return recClasse?.title || '';
+              }
+            } else {
+              try {
+                const a = JSON.parse(val);
+                if (Array.isArray(a) && a.length) return String(a[0] || '');
+              } catch {
+                if (val) return String(val);
+              }
+            }
+          }
+          // fallback: título do próprio record
+          return String(rec.title || '');
+        }
+        if (!pageInfo?.hasNextPage) break;
+        after = pageInfo.endCursor || null;
+      }
     } else {
-      try { const mirrored = Array.isArray(v2) ? v2 : JSON.parse(v2); if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || ''); } catch {}
+      // Sem MARCAS2_TABLE_ID, última tentativa: usar o texto que veio
+      try {
+        const mirrored = Array.isArray(v2) ? v2 : JSON.parse(v2);
+        if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
+      } catch {}
     }
   }
-
-  if (marcaRecordFallback) {
-    const classeField = (marcaRecordFallback.record_fields || []).find(f => String(f?.name || '').toLowerCase().includes('classe'));
-    if (classeField?.value) return String(classeField.value);
-  }
-  return '';
 }
 
 // ===== Cofre do responsável =====
