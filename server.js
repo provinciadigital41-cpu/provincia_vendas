@@ -116,9 +116,18 @@ function onlyNumberBR(s){
   const n = parseNumberBR(s);
   return isNaN(n)? 0 : n;
 }
-function monthNamePt(m){ // 1..12
-  const arr = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
-  return arr[(m-1)%12];
+
+// Datas — meses por extenso (capitalizados) e formatações auxiliares
+const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+function monthNamePt(mIndex1to12) { return MESES_PT[(Math.max(1, Math.min(12, Number(mIndex1to12))) - 1)]; }
+function fmtDMY2(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return '';
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${dd}/${mm}/${yy}`;
 }
 
 // Retry com timeout exponencial
@@ -279,7 +288,7 @@ async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMi
   if (!contactsTableId) return null;
   let after=null;
   for (let i=0;i<100;i++){
-    const {records, pageInfo} = await listTableRecords(contactsTable_ID_or_CONTACTS_TABLE_ID(), 200, after);
+    const {records, pageInfo} = await listTableRecords(contactsTableId, 200, after);
     // title
     if (titleMirror){
       const r = records.find(x => String(x.title||'').trim() === String(titleMirror).trim());
@@ -299,9 +308,7 @@ async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMi
   }
   return null;
 }
-// Alguns ambientes passam CONTACTS_TABLE_ID como número → normalizar para string
 function contacts_table_id(){ return String(CONTACTS_TABLE_ID||'').trim(); }
-function contactsTable_ID_or_CONTACTS_TABLE_ID(){ return contacts_table_id(); }
 
 async function resolveContatoFromMarcaRecord(marcaRecord){
   const campo = (marcaRecord?.record_fields||[]).find(f=> f?.field?.id==='contatos' || String(f?.name||'').toLowerCase().includes('contato'));
@@ -460,6 +467,27 @@ function resolveCofreUuidByCard(card){
 }
 
 /* =========================
+ * Regras novas solicitadas
+ * =======================*/
+
+// Extrai o valor da Taxa seguindo a sua regra (440 / 880) a partir de d.taxa_faixa
+function computeValorTaxaBRLFromFaixa(d){
+  let valorTaxaSemRS = '';
+  const taxa = String(d.taxa_faixa||'');
+  if (taxa.includes('440')) valorTaxaSemRS = '440,00';
+  else if (taxa.includes('880')) valorTaxaSemRS = '880,00';
+  return valorTaxaSemRS ? `R$ ${valorTaxaSemRS}` : '';
+}
+
+// Deixa apenas dígitos na classe; se houver várias, junta por vírgula
+function normalizeClasseToNumbersOnly(classeStr){
+  if (!classeStr) return '';
+  // pega todos os blocos numéricos (35, 41, etc)
+  const nums = String(classeStr).match(/\d+/g) || [];
+  return nums.join(', ');
+}
+
+/* =========================
  * Montagem de dados do contrato
  * =======================*/
 function pickParcelas(card){
@@ -483,8 +511,10 @@ function pickValorAssessoria(card){
 async function montarDados(card){
   const by = toById(card);
 
+  // === Classe / Marca / Contato (como já estava) ===
   const marcaRecord = await resolveMarcaRecordFromCard(card);
-  const classe = await resolveClasseFromCard(card, marcaRecord);
+  let classe = await resolveClasseFromCard(card, marcaRecord);
+  classe = normalizeClasseToNumbersOnly(classe);
 
   // contato: prioriza conector "contato" na fase; senão, marcas_1
   let contatoNome='', contatoEmail='', contatoTelefone='';
@@ -517,91 +547,202 @@ async function montarDados(card){
   if (!contatoEmail)   contatoEmail   = getFirstByNames(card, ['email','e-mail']);
   if (!contatoTelefone)contatoTelefone= getFirstByNames(card, ['telefone','celular','whatsapp','whats']);
 
+  // === Documento (CPF/CNPJ) ===
   const doc = pickDocumento(card);
-  const cpf  = doc.tipo==='CPF'?  doc.valor : '';
-  const cnpj = doc.tipo==='CNPJ'? doc.valor : '';
+  const cpfDoc  = doc.tipo==='CPF'?  doc.valor : '';
+  const cnpjDoc = doc.tipo==='CNPJ'? doc.valor : '';
 
+  // Além do doc “livre”, também pegar os campos específicos que você criou
+  const cpfCampo  = by['cpf']    || '';
+  const cnpjCampo = by['cnpj_1'] || '';
+
+  // === Parcelas / Assessoria ===
   const nParcelas = pickParcelas(card);
   const valorAssessoria = pickValorAssessoria(card);
 
-  // serviços
+  // forma pagamento assessoria (novo id que você informou)
+  const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
+
+  // === Serviços / quantidade de marca (sua regra) ===
   const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
+  const temMarca = Boolean(getFirstByNames(card, ['marca']) || by['marca'] || by['marcas_1'] || card.title);
+  const qtdMarca = temMarca ? '1' : '';
   const servicos = [serv1].filter(Boolean);
 
-  // forma pagamento assessoria
-  const formaAss = by['adiantamento_da_primeira_parcela'] || getFirstByNames(card, ['forma de pagamento','adiantamento']) || '';
+  // === TAXA ===
+  // manter no d.taxa_faixa o texto do campo taxa (ex. "MEI/ME/EPP/PF (R$440,00)")
+  const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
+  const valorTaxaBRL = computeValorTaxaBRLFromFaixa({ taxa_faixa: taxaFaixaRaw });
+  const formaPagtoTaxa = by['tipo_de_pagamento'] || '';
+  const dataPagtoTaxa = ''; // ainda não existe no pipe → manter vazio
 
-  // vendedor (para cofre)
+  // === ENDEREÇO (CNPJ) ===
+  const cepCnpj    = by['cep_do_cnpj']     || '';
+  const ruaCnpj    = by['rua_av_do_cnpj']  || '';
+  const bairroCnpj = by['bairro_do_cnpj']  || '';
+  const cidadeCnpj = by['cidade_do_cnpj']  || '';
+  const ufCnpj     = by['estado_do_cnpj']  || '';
+  const numeroCnpj = by['n_mero_1']        || getFirstByNames(card, ['numero','número','nº']) || '';
+
+  // === Vendedor (para cofre) ===
   const vendedor = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'])[0] || '';
+
+  // === Campos extras solicitados ===
+  const riscoMarca = by['risco_da_marca'] || '';
+  const nacionalidade = by['nacionalidade'] || '';
+  const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
 
   return {
     cardId: card.id,
     titulo: card.title,
+
+    // Contratante
     nome: contatoNome || (by['r_social_ou_n_completo']||''),
-    cpf, cnpj,
+    cpf: cpfDoc, 
+    cnpj: cnpjDoc,
     rg: by['rg'] || '',
+
+    // Também entregar campos específicos para o template
+    cpf_campo: cpfCampo,
+    cnpj_campo: cnpjCampo,
+
+    // Contato
     email: contatoEmail || '',
     telefone: contatoTelefone || '',
+
+    // Marca / Classe / Qtd marca
     classe: classe || '',
+    qtd_marca: qtdMarca,
+
+    // Serviços / Assessoria
     servicos,
     parcelas: nParcelas,
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
+
+    // TAXA (mapeado)
+    taxa_faixa: taxaFaixaRaw || '',
+    valor_taxa_brl: valorTaxaBRL,
+    forma_pagto_taxa: formaPagtoTaxa,
+    data_pagto_taxa: dataPagtoTaxa,
+
+    // Endereço (CNPJ)
+    cep_cnpj: cepCnpj,
+    rua_cnpj: ruaCnpj,
+    bairro_cnpj: bairroCnpj,
+    cidade_cnpj: cidadeCnpj,
+    uf_cnpj: ufCnpj,
+    numero_cnpj: numeroCnpj,
+
+    // Extras
+    risco_marca: riscoMarca,
+    nacionalidade,
+    selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
+
+    // Vendedor
     vendedor
   };
 }
 
 // Variáveis para Template Word (ADD)
 function montarADDWord(d, nowInfo){
+  // valores de assessoria (mantém cálculo de parcela)
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
 
-  // Pesquisa (regra: 99% Isenta)
+  // Pesquisa: 99% Isenta
   const valorPesquisa = 'R$ 00,00';
   const formaPesquisa = '---';
   const dataPesquisa  = '00/00/00';
 
-  return {
+  // Endereço (CNPJ) — usa campos do d
+  const rua    = d.rua_cnpj || '';
+  const bairro = d.bairro_cnpj || '';
+  const numero = d.numero_cnpj || '';
+  const cidade = d.cidade_cnpj || '';
+  const uf     = d.uf_cnpj || '';
+  const cep    = d.cep_cnpj || '';
+
+  // Taxa — seguindo sua regra (440/880)
+  const valorDaTaxa = d.valor_taxa_brl || '';                  // e.g. "R$ 440,00"
+  const formaDaTaxa = d.forma_pagto_taxa || '';
+  const dataDaTaxa  = d.data_pagto_taxa || '';
+
+  // Data atual (mês por extenso capitalizado)
+  const dia = String(nowInfo.dia).padStart(2,'0');
+  const mes = String(nowInfo.mes).padStart(2,'0');
+  const ano = String(nowInfo.ano);
+  const mesExtenso = monthNamePt(nowInfo.mes);
+
+  const baseVars = {
+    // Identificação / contrato
     contratante_1: d.nome || '',
     cpf: d.cpf || '',
     cnpj: d.cnpj || '',
     rg: d.rg || '',
 
-    rua: getFieldFromText(d, 'rua') || '', // se quiser, preencha via montarDados com endereço completo
-    bairro: getFieldFromText(d, 'bairro') || '',
-    numero: getFieldFromText(d, 'numero') || '',
-    nome_da_cidade: getFieldFromText(d, 'cidade') || '',
-    cidade: getFieldFromText(d, 'cidade') || '',
-    uf: getFieldFromText(d, 'uf') || '',
-    cep: getFieldFromText(d, 'cep') || '',
+    // Campos adicionais de doc (como você pediu)
+    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
+    'CPF': d.cpf_campo || '',
+    'CNPJ': d.cnpj_campo || '',
 
+    // Endereço
+    rua,
+    bairro,
+    numero,
+    nome_da_cidade: cidade,
+    cidade,
+    uf,
+    cep,
+
+    // Contato
     'E-mail': d.email || '',
     telefone: d.telefone || '',
 
+    // Marca / Classe / Quantidade de marca / Risco
     nome_da_marca: d.titulo || '',
     classe: d.classe || '',
+    qtd_marca: d.qtd_marca || '',
+    risco_da_marca: d.risco_marca || '',
 
+    // Dados pessoais adicionais
+    Nacionalidade: d.nacionalidade || '',
+
+    // Assessoria
     numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
     valor_da_parcela_da_assessoria: toBRL(valorParcela),
     forma_de_pagamento_da_assessoria: d.forma_pagto_assessoria || '',
     data_de_pagamento_da_assessoria: '',
 
+    // Pesquisa
     valor_da_pesquisa: valorPesquisa,
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    valor_da_taxa: '',
-    forma_de_pagamento_da_taxa: '',
-    data_de_pagamento_da_taxa: '',
+    // Taxa (snake_case)
+    valor_da_taxa: valorDaTaxa,
+    forma_de_pagamento_da_taxa: formaDaTaxa,
+    data_de_pagamento_da_taxa: dataDaTaxa,
 
-    dia: String(nowInfo.dia).padStart(2,'0'),
-    mes: String(nowInfo.mes).padStart(2,'0'),
-    ano: String(nowInfo.ano),
+    // Datas
+    dia,
+    mes,
+    ano,
+    mes_extenso: mesExtenso,
+
+    // Template
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
+
+  // Também expõe as chaves exatamente como no seu template:
+  // "Valor da Taxa", "Forma de pagamento da Taxa", "Data de pagamento da Taxa"
+  baseVars['Valor da Taxa'] = valorDaTaxa;
+  baseVars['Forma de pagamento da Taxa'] = formaDaTaxa;
+  baseVars['Data de pagamento da Taxa'] = dataDaTaxa;
+
+  return baseVars;
 }
-function getFieldFromText(){ return ''; } // placeholder (endereços detalhados podem ser adicionados se necessário)
 
 function montarSigners(d){
   const list = [];
@@ -732,24 +873,28 @@ app.get('/lead/:token', async (req, res) => {
 <title>Revisar contrato</title>
 <style>
   body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:0;background:#f7f7f7;color:#111}
-  .wrap{max-width:860px;margin:24px auto;padding:0 16px}
+  .wrap{max-width:920px;margin:24px auto;padding:0 16px}
   .card{background:#fff;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:24px;margin-bottom:16px}
   h1{font-size:22px;margin:0 0 12px}
   h2{font-size:16px;margin:24px 0 8px}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
   .btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600;cursor:pointer}
   .muted{color:#666}
   .label{font-weight:700}
+  .tag{display:inline-block;background:#111;color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;margin-left:8px}
 </style>
 <div class="wrap">
   <div class="card">
-    <h1>Revisar dados do contrato</h1>
-    <div class="muted">Card #${card.id}</div>
+    <h1>Revisar dados do contrato <span class="tag">Card #${card.id}</span></h1>
 
     <h2>Contratante(s)</h2>
     <div class="grid">
       <div><div class="label">Nome</div><div>${d.nome||'-'}</div></div>
-      <div><div class="label">CPF</div><div>${d.cpf||'-'}</div></div>
+      <div><div class="label">Nacionalidade</div><div>${d.nacionalidade||'-'}</div></div>
+      <div><div class="label">CPF/CNPJ (seleção)</div><div>${d.selecao_cnpj_ou_cpf||'-'}</div></div>
+      <div><div class="label">CPF (campo)</div><div>${d.cpf_campo||'-'}</div></div>
+      <div><div class="label">CNPJ (campo)</div><div>${d.cnpj_campo||'-'}</div></div>
       <div><div class="label">RG</div><div>${d.rg||'-'}</div></div>
     </div>
 
@@ -759,14 +904,39 @@ app.get('/lead/:token', async (req, res) => {
       <div><div class="label">Telefone</div><div>${d.telefone||'-'}</div></div>
     </div>
 
+    <h2>Marca</h2>
+    <div class="grid3">
+      <div><div class="label">Nome da marca</div><div>${d.titulo||'-'}</div></div>
+      <div><div class="label">Classes (apenas números)</div><div>${d.classe||'-'}</div></div>
+      <div><div class="label">Risco da marca</div><div>${d.risco_marca||'-'}</div></div>
+      <div><div class="label">Qtd. de marcas</div><div>${d.qtd_marca||'0'}</div></div>
+    </div>
+
     <h2>Serviços</h2>
     <div>${(d.servicos||[]).join(', ') || '-'}</div>
 
-    <h2>Remuneração</h2>
-    <div class="grid">
+    <h2>Remuneração — Assessoria</h2>
+    <div class="grid3">
+      <div><div class="label">Valor total</div><div>${d.valor_total||'-'}</div></div>
       <div><div class="label">Parcelas</div><div>${String(d.parcelas||'1')}</div></div>
-      <div><div class="label">Valor total</div><div>${moneyBRNoSymbol(onlyNumberBR(d.valor_total))}</div></div>
       <div><div class="label">Forma de pagamento</div><div>${d.forma_pagto_assessoria||'-'}</div></div>
+    </div>
+
+    <h2>Taxa</h2>
+    <div class="grid3">
+      <div><div class="label">Valor da Taxa</div><div>${d.valor_taxa_brl || '-'}</div></div>
+      <div><div class="label">Forma de pagamento (Taxa)</div><div>${d.forma_pagto_taxa || '-'}</div></div>
+      <div><div class="label">Data de pagamento (Taxa)</div><div>${d.data_pagto_taxa || '-'}</div></div>
+    </div>
+
+    <h2>Endereço (CNPJ)</h2>
+    <div class="grid3">
+      <div><div class="label">CEP</div><div>${d.cep_cnpj || '-'}</div></div>
+      <div><div class="label">Rua/Av</div><div>${d.rua_cnpj || '-'}</div></div>
+      <div><div class="label">Número</div><div>${d.numero_cnpj || '-'}</div></div>
+      <div><div class="label">Bairro</div><div>${d.bairro_cnpj || '-'}</div></div>
+      <div><div class="label">Cidade</div><div>${d.cidade_cnpj || '-'}</div></div>
+      <div><div class="label">UF</div><div>${d.uf_cnpj || '-'}</div></div>
     </div>
 
     <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
