@@ -69,7 +69,10 @@ let {
   COFRE_UUID_MAURO,
 
   // fallback opcional
-  DEFAULT_COFRE_UUID
+  DEFAULT_COFRE_UUID,
+
+  // base da API do D4 (mantemos via API; não abrimos secure)
+  D4_API_BASE
 } = process.env;
 
 // Defaults / sane defaults
@@ -79,6 +82,7 @@ FIELD_ID_CONNECT_MARCA_NOME = FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1';
 FIELD_ID_CONNECT_CLASSE     = FIELD_ID_CONNECT_CLASSE     || 'marcas_2';
 PIPEFY_FIELD_LINK_CONTRATO  = PIPEFY_FIELD_LINK_CONTRATO  || 'd4_contrato';
 CLASSES_TABLE_ID            = CLASSES_TABLE_ID            || '306521337';
+D4_API_BASE                 = D4_API_BASE || 'https://api.d4sign.com.br/v2';
 
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY não definido');
 if (!D4SIGN_CRYPT_KEY || !D4SIGN_TOKEN) console.warn('[AVISO] D4SIGN_* não definidos');
@@ -229,7 +233,6 @@ function parseNumberBR(v) {
 function toBRL(n) { return (n==null || isNaN(n)) ? '' : n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
 function pickParcelas(card) {
   const by = toByIdFromCard(card);
-  // tenta 'sele_o_de_lista' (Quantidade de Parcelas), 'quantidade_de_parcelas', ou texto
   let raw = by['sele_o_de_lista'] || by['quantidade_de_parcelas'] || by['numero_de_parcelas'] || '';
   if (!raw) raw = getFirstByNames(card, ['parcela', 'parcelas', 'nº parcelas', 'numero de parcelas', 'número de parcelas']);
   const m = String(raw||'').match(/(\d+)/);
@@ -569,11 +572,14 @@ function resolveCofreUuidByCard(card) {
   return null;
 }
 
-// ===== D4Sign =====
-const D4_BASE = 'https://api.d4sign.com.br/v2';
+// ===== D4Sign (API) =====
 async function d4Fetch(path, method, payload) {
-  const url = `${D4_BASE}${path}?tokenAPI=${D4SIGN_TOKEN}&cryptKey=${D4SIGN_CRYPT_KEY}`;
-  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: payload ? JSON.stringify(payload) : undefined });
+  const url = `${D4_API_BASE}${path}?tokenAPI=${D4SIGN_TOKEN}&cryptKey=${D4SIGN_CRYPT_KEY}`;
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: payload ? JSON.stringify(payload) : undefined
+  });
   if (!res.ok) throw new Error(`D4 error ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -796,24 +802,43 @@ app.post('/novo-pipe/gerar', async (req, res) => {
   }
 });
 
+// Tela pós-geração — baixar e enviar por API (sem abrir portal)
 app.get('/contratos/:documentKey', async (req, res) => {
   try {
     if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
     const { documentKey } = req.params;
     const { cardId } = req.query;
 
+    const card = await getCardFields(cardId);
+    const vars = await buildTemplateVariablesAsync(card);
     const downloadUrl = makeSignedURL(`/download/${documentKey}`, { cardId });
-    const html = `
-      <h2>Contrato gerado</h2>
-      <p><b>DocumentKey:</b> ${documentKey}</p>
-      <p><a href="${downloadUrl}">Baixar documento</a></p>
-      <form method="POST" action="/contratos/${documentKey}/enviar-assinatura">
-        <input type="hidden" name="cardId" value="${cardId || ''}"/>
-        <input type="hidden" name="sig" value="${new URL(req.originalUrl, PUBLIC_BASE_URL).searchParams.get('sig')||''}"/>
-        <button type="submit">Enviar para assinatura</button>
-      </form>
-    `;
-    res.send(`<!doctype html><html><body>${html}</body></html>`);
+
+    const emailCliente = vars['E-mail'] || '';
+    const emailInterno = process.env.EMAIL_ASSINATURA_EMPRESA || '';
+
+    const html = `<!doctype html>
+<html>
+  <body>
+    <h2>Contrato gerado</h2>
+    <p><b>DocumentKey:</b> ${documentKey}</p>
+    <p><a href="${downloadUrl}">Baixar documento (PDF)</a></p>
+
+    <hr/>
+    <h3>Enviar para assinatura</h3>
+    <form method="POST" action="/contratos/${documentKey}/enviar-assinatura">
+      <input type="hidden" name="cardId" value="${cardId || ''}"/>
+      <input type="hidden" name="sig" value="${new URL(req.originalUrl, PUBLIC_BASE_URL).searchParams.get('sig')||''}"/>
+
+      <p><label>E-mails dos signatários (separe por vírgula):<br/>
+        <input name="emails" type="text" style="width:420px"
+               value="${[emailCliente, emailInterno].filter(Boolean).join(', ')}" />
+      </label></p>
+
+      <button type="submit">Enviar para assinatura (API)</button>
+    </form>
+  </body>
+</html>`;
+    res.send(html);
   } catch (e) {
     res.status(500).send(String(e.message || e));
   }
@@ -822,42 +847,61 @@ app.get('/contratos/:documentKey', async (req, res) => {
 app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
   try {
     const { documentKey } = req.params;
-    const { cardId, sig } = req.body;
+    const { cardId, sig, emails } = req.body;
     if (!cardId) return res.status(400).send('Faltou cardId');
     if (!sig) return res.status(401).send('assinatura ausente');
 
     const card = await getCardFields(cardId);
     const vars = await buildTemplateVariablesAsync(card);
 
-    const signers = [];
-    if (EMAIL_ASSINATURA_EMPRESA) signers.push({ email: EMAIL_ASSINATURA_EMPRESA });
-    if (vars['E-mail'])           signers.push({ email: vars['E-mail'] });
+    // Monta lista de e-mails: prioridade ao que veio do formulário
+    let list = String(emails || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
 
-    if (!signers.length) throw new Error('Nenhum e-mail de assinatura configurado');
+    // Se vazio, cai para os defaults (cliente + interno)
+    if (!list.length) {
+      if (vars['E-mail']) list.push(vars['E-mail']);
+      if (process.env.EMAIL_ASSINATURA_EMPRESA) list.push(process.env.EMAIL_ASSINATURA_EMPRESA);
+    }
 
+    // Dedup simples
+    list = [...new Set(list.map(s => s.toLowerCase()))];
+
+    if (!list.length) throw new Error('Nenhum e-mail de assinatura informado ou configurado');
+
+    // Adiciona signatários e envia pelo D4 API
+    const signers = list.map(email => ({ email }));
     await d4AddSigners(documentKey, signers);
     await d4SendToSign(documentKey, 'Contrato para assinatura');
 
     const back = makeSignedURL(`/contratos/${documentKey}`, { cardId });
-    res.send(`<!doctype html><html><body>
-      <h2>Contrato enviado para assinatura</h2>
-      <p><b>Assinantes:</b> ${signers.map(s => s.email).join(', ')}</p>
-      <p><a href="${back}">Voltar</a></p>
-    </body></html>`);
+    const html = `<!doctype html>
+<html>
+  <body>
+    <h2>Contrato enviado para assinatura</h2>
+    <p><b>DocumentKey:</b> ${documentKey}</p>
+    <p><b>Assinantes:</b> ${list.join(', ')}</p>
+    <p><a href="${back}">Voltar</a></p>
+  </body>
+</html>`;
+    res.send(html);
   } catch (e) {
     res.status(500).send(String(e.message || e));
   }
 });
 
-// ===== Downloads =====
-const D4_BASE = 'https://api.d4sign.com.br/v2'; // já definido acima — manter aqui para clareza
+// ===== Download do PDF via API (sem redirecionar ao portal) =====
 app.get('/download/:documentKey', async (req, res) => {
   try {
     if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
     const { documentKey } = req.params;
-    const url = `${D4_BASE}/documents/${documentKey}/download?tokenAPI=${D4SIGN_TOKEN}&cryptKey=${D4SIGN_CRYPT_KEY}`;
+
+    const url = `${D4_API_BASE}/documents/${documentKey}/download?tokenAPI=${D4SIGN_TOKEN}&cryptKey=${D4SIGN_CRYPT_KEY}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`D4 download ${r.status}`);
+
     res.setHeader('Content-Disposition', `attachment; filename="Contrato_${documentKey}.pdf"`);
     res.setHeader('Content-Type', r.headers.get('content-type') || 'application/pdf');
     r.body.pipe(res);
@@ -960,6 +1004,7 @@ app.listen(PORT, () => {
  * PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
  * D4SIGN_CRYPT_KEY=...
  * D4SIGN_TOKEN=...
+ * D4_API_BASE=https://api.d4sign.com.br/v2
  * TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
  *
  * # campo do card para gravar link
@@ -978,7 +1023,14 @@ app.listen(PORT, () => {
  * # cofres (exemplos)
  * COFRE_UUID_EDNA=...
  * COFRE_UUID_GREYCE=...
- * ...
+ * COFRE_UUID_MARIANA=...
+ * COFRE_UUID_VALDEIR=...
+ * COFRE_UUID_DEBORA=...
+ * COFRE_UUID_MAYKON=...
+ * COFRE_UUID_JEFERSON=...
+ * COFRE_UUID_RONALDO=...
+ * COFRE_UUID_BRENDA=...
+ * COFRE_UUID_MAURO=...
  * DEFAULT_COFRE_UUID=...   # (opcional)
  *
  * # assinatura
