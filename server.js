@@ -260,6 +260,10 @@ function parseMaybeJsonArray(v){
   try { return Array.isArray(v)? v : JSON.parse(v); }
   catch { return v? [String(v)] : []; }
 }
+function checklistToText(v) {
+  const arr = parseMaybeJsonArray(v);
+  return Array.isArray(arr) ? arr.join(', ') : String(v || '');
+}
 function extractNameEmailPhoneFromRecord(record){
   let nome='', email='', telefone='';
   for (const f of record?.record_fields||[]){
@@ -518,6 +522,49 @@ async function montarDados(card){
   const marcaRecord = await resolveMarcaRecordFromCard(card);
   let classe = await resolveClasseFromCard(card, marcaRecord);
   classe = normalizeClasseToNumbersOnly(classe);
+  
+  // TIPOS DE MARCA (card → fallback no registro de Marcas (Visita))
+  let tipoMarca = '';
+  const by = toById(card);
+
+  // 1) pega direto do card (por id/label)
+  tipoMarca = checklistToText(
+    by['tipo_de_marca'] ||
+    by['checklist_vertical'] ||          // se o id estiver genérico
+    getFirstByNames(card, ['tipo de marca'])
+  );
+
+  // 2) se não achar no card, tenta no conector "marcas_2" (Marcas - Visita)
+  if (!tipoMarca) {
+    const v2 = by[FIELD_ID_CONNECT_CLASSE]; // 'marcas_2'
+    const arr2 = parseMaybeJsonArray(v2);
+    const first2 = arr2 && arr2[0];
+    if (first2) {
+      try {
+        let rec = null;
+        if (/^\d+$/.test(String(first2))) {
+          // veio ID numérico
+          rec = await getTableRecord(String(first2));
+        } else if (MARCAS2_TABLE_ID) {
+          // veio título espelhado — procurar por título na tabela
+          let after = null;
+          for (let i = 0; i < 50; i++) {
+            const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
+            rec = records.find(r => String(r.title || '').trim().toLowerCase() === String(first2).trim().toLowerCase());
+            if (rec || !pageInfo?.hasNextPage) break;
+            after = pageInfo.endCursor || null;
+          }
+        }
+        if (rec) {
+          const fTipo = (rec.record_fields || []).find(f =>
+            String(f?.field?.id || '').toLowerCase() === 'tipo_de_marca' ||
+            String(f?.name || '').toLowerCase().includes('tipo de marca')
+          );
+          if (fTipo) tipoMarca = checklistToText(fTipo.value);
+        }
+      } catch {}
+    }
+  }
 
   // contato
   let contatoNome='', contatoEmail='', contatoTelefone='';
@@ -614,6 +661,7 @@ async function montarDados(card){
     // Marca / Classe / Qtd marca
     classe: classe || '',
     qtd_marca: qtdMarca,
+    tipo_marca: tipoMarca || '',
 
     // Serviços / Assessoria
     servicos,
@@ -704,6 +752,7 @@ function montarADDWord(d, nowInfo){
     nome_da_marca: d.titulo || '',
     classe: d.classe || '',
     'Quantidade depósitos/processos de MARCA': d.qtd_marca || '',
+    'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
 
     // Dados pessoais adicionais
