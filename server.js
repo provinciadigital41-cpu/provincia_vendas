@@ -28,14 +28,25 @@ let {
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
   PIPEFY_FIELD_LINK_CONTRATO,
-  FIELD_ID_CONNECT_MARCA_NOME,
-  FIELD_ID_CONNECT_CLASSE,
-  CONTACTS_TABLE_ID,
-  MARCAS_TABLE_ID,
-  CLASSES_TABLE_ID,
+
+  // conectores
+  FIELD_ID_CONNECT_MARCA_NOME,     // marcas_1 (Nome da marca + Contatos)
+  FIELD_ID_CONNECT_CLASSE,         // marcas_2 (Marcas e serviços) - opcional como apoio
+  FIELD_ID_CONNECT_CLASSES,        // (opcional) conector DIRETO para "classes inpi" na fase
+
+  // tabelas
+  CONTACTS_TABLE_ID,               // opcional p/ varrer DB de contatos
+  MARCAS_TABLE_ID,                 // opcional p/ varrer DB de marcas_1 por título
+  CLASSES_TABLE_ID,                // DB "classes inpi"
+
+  // app pública
   PUBLIC_BASE_URL,
   PUBLIC_LINK_SECRET,
+
+  // assinatura
   EMAIL_ASSINATURA_EMPRESA,
+
+  // cofres
   COFRE_UUID_EDNA,
   COFRE_UUID_GREYCE,
   COFRE_UUID_MARIANA,
@@ -46,21 +57,24 @@ let {
   COFRE_UUID_RONALDO,
   COFRE_UUID_BRENDA,
   COFRE_UUID_MAURO,
+  DEFAULT_COFRE_UUID, // fallback global opcional
+
+  // mapeamentos por e-mail (opcionais): COFRE_UUID_EMAIL_* = "email:uuid"
 } = env;
 
 // Defaults
 PORT = PORT || 3000;
 PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql';
-FIELD_ID_CONNECT_MARCA_NOME = FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1'; // Nome da marca + Contatos
-FIELD_ID_CONNECT_CLASSE = FIELD_ID_CONNECT_CLASSE || 'marcas_2';         // Classe (DB Marcas e serviços)
-CLASSES_TABLE_ID = CLASSES_TABLE_ID || '306572615';
-const FIELD_ID_LINKS_D4 = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
+FIELD_ID_CONNECT_MARCA_NOME = FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1';
+FIELD_ID_CONNECT_CLASSE     = FIELD_ID_CONNECT_CLASSE     || 'marcas_2';
+CLASSES_TABLE_ID            = CLASSES_TABLE_ID            || '306521337'; // classes inpi
+const FIELD_ID_LINKS_D4     = PIPEFY_FIELD_LINK_CONTRATO  || 'd4_contrato';
 
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY não definido');
 if (!D4SIGN_CRYPT_KEY || !D4SIGN_TOKEN) console.warn('[AVISO] D4SIGN_* não definidos');
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Defina PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 
-// Cofres por responsável
+// Cofres por responsável (por nome)
 const COFRES_UUIDS = {
   'EDNA BERTO DA SILVA': COFRE_UUID_EDNA,
   'Greyce Maria Candido Souza': COFRE_UUID_GREYCE,
@@ -219,6 +233,22 @@ function pickValorAssessoria(card) {
   const n = parseNumberBR(raw);
   return isNaN(n) ? null : n;
 }
+function firstFromValue(value) {
+  if (Array.isArray(value)) return String(value[0] || '');
+  if (typeof value === 'string') {
+    try {
+      const j = JSON.parse(value);
+      if (Array.isArray(j)) return String(j[0] || '');
+      if (j && typeof j === 'object') return String(j.name || j.username || j.email || j.value || '');
+    } catch {
+      const m = value.match(/^\s*\[\s*"(.*)"\s*\]\s*$/);
+      if (m) return m[1];
+    }
+    return value;
+  }
+  if (value && typeof value === 'object') return String(value.name || value.username || value.email || value.value || '');
+  return '';
+}
 
 // ===== Marca (nome/contato) via marcas_1 =====
 async function resolveMarcaRecordFromCard(card) {
@@ -243,17 +273,24 @@ async function resolveMarcaRecordFromCard(card) {
   }
   return null;
 }
-function extractEmailPhoneFromRecord(record) {
-  let email = '', telefone = '';
+function extractNameEmailPhoneFromRecord(record) {
+  let nome = '', email = '', telefone = '';
   for (const f of record?.record_fields || []) {
     const t = (f?.field?.type || '').toLowerCase();
+    const id = (f?.field?.id || '').toLowerCase();
     const label = (f?.name || '').toLowerCase();
-    if (!email && (t === 'email' || label.includes('email'))) email = String(f.value || '');
-    if (!telefone && (t === 'phone' || t === 'tel' || label.includes('telefone') || label.includes('celular') || label.includes('whats'))) {
+
+    if (!nome && (id === 'nome_do_contato' || label.includes('nome'))) {
+      nome = String(f.value || '');
+    }
+    if (!email && (t === 'email' || label.includes('email'))) {
+      email = String(f.value || '');
+    }
+    if (!telefone && (t === 'phone' || label.includes('telefone') || label.includes('celular') || label.includes('whats'))) {
       telefone = String(f.value || '');
     }
   }
-  return { email, telefone };
+  return { nome, email, telefone };
 }
 async function listFindContato({ phoneCandidate, emailCandidate, maxPages = 100, pageSize = 100 }) {
   if (!CONTACTS_TABLE_ID) return null;
@@ -263,12 +300,12 @@ async function listFindContato({ phoneCandidate, emailCandidate, maxPages = 100,
   for (let i = 0; i < maxPages; i++) {
     const { records, pageInfo } = await listTableRecords(CONTACTS_TABLE_ID, pageSize, after);
     for (const rec of records) {
-      const { email, telefone } = extractEmailPhoneFromRecord(rec);
+      const { email, telefone } = extractNameEmailPhoneFromRecord(rec);
       const nodePhone = normalizePhone(telefone);
       const nodeEmail = (email || '').toLowerCase();
       const phoneMatch = wantedPhone && nodePhone && (nodePhone.endsWith(wantedPhone) || wantedPhone.endsWith(nodePhone));
       const emailMatch = wantedEmail && nodeEmail && nodeEmail === wantedEmail;
-      if (phoneMatch || emailMatch) return { record: rec, email, telefone };
+      if (phoneMatch || emailMatch) return { record: rec, email, telefone, nome: extractNameEmailPhoneFromRecord(rec).nome };
     }
     if (!pageInfo?.hasNextPage) break;
     after = pageInfo.endCursor || null;
@@ -276,27 +313,37 @@ async function listFindContato({ phoneCandidate, emailCandidate, maxPages = 100,
   return null;
 }
 async function resolveContatoFromMarcaRecord(marcaRecord) {
-  const conn = (marcaRecord?.record_fields || []).find(f => f?.field?.id === 'contatos' || String(f?.name||'').toLowerCase().includes('contato'));
-  if (!conn) return { email: '', telefone: '' };
+  const conn = (marcaRecord?.record_fields || []).find(f =>
+    f?.field?.id === 'contatos' || String(f?.name||'').toLowerCase().includes('contato')
+  );
+  if (!conn) return { nome:'', email: '', telefone: '' };
 
+  // IDs no value
   if (Array.isArray(conn.value)) {
     const first = conn.value[0];
     if (first) {
       const contato = await getTableRecord(first);
-      return extractEmailPhoneFromRecord(contato);
+      return extractNameEmailPhoneFromRecord(contato);
     }
   }
-  const mirrored = parseMaybeJsonArray(conn.value);
-  let email = mirrored.find(x => String(x).includes('@')) || '';
-  let telefone = mirrored.find(x => normalizePhone(x).length >= 10) || '';
-  if (email && telefone) return { email: String(email), telefone: String(telefone) };
 
-  const found = await listFindContato({ phoneCandidate: telefone, emailCandidate: email });
-  if (found?.record) {
-    const { email: em, telefone: tel } = extractEmailPhoneFromRecord(found.record);
-    return { email: em || email, telefone: tel || telefone };
+  // Espelho em string JSON
+  const mirrored = parseMaybeJsonArray(conn.value);
+  let nome = '', email = '', telefone = '';
+  for (const v of mirrored) {
+    const s = String(v);
+    if (!email && s.includes('@')) email = s;
+    if (!telefone && normalizePhone(s).length >= 10) telefone = s;
+    if (!nome && s && !s.includes('@') && normalizePhone(s).length < 10) nome = s;
   }
-  return { email: String(email || ''), telefone: String(telefone || '') };
+  if (email || telefone) {
+    const found = await listFindContato({ phoneCandidate: telefone, emailCandidate: email });
+    if (found?.record) {
+      const ex = extractNameEmailPhoneFromRecord(found.record);
+      return { nome: ex.nome || nome, email: ex.email || email, telefone: ex.telefone || telefone };
+    }
+  }
+  return { nome, email, telefone };
 }
 
 // ===== Documento & Classe =====
@@ -316,35 +363,73 @@ function pickDocumento(card) {
   if (cnpjStart) return { tipo: 'CNPJ', valor: cnpjStart };
   return { tipo: '', valor: '' };
 }
+
+// Classe: tenta conector direto (FIELD_ID_CONNECT_CLASSES) -> record da classes inpi -> título;
+// caso não exista, usa marcas_2 -> record -> procura campo que tenha "classe" (conector/espelho) -> resolve título
 async function resolveClasseFromCard(card, marcaRecordFallback) {
   const by = toByIdFromCard(card);
 
-  // 1) Conector de CLASSE na fase (marcas_2)
-  const v = by[FIELD_ID_CONNECT_CLASSE];
-  const arr = Array.isArray(v) ? v : v ? [v] : [];
-  if (arr.length) {
-    const first = String(arr[0]);
+  // 1) Conector DIRETO para "classes inpi" na fase (se existir)
+  if (FIELD_ID_CONNECT_CLASSES) {
+    const v = by[FIELD_ID_CONNECT_CLASSES];
+    const arr = Array.isArray(v) ? v : v ? [v] : [];
+    if (arr.length) {
+      const first = String(arr[0]);
+      if (/^\d+$/.test(first)) {
+        try {
+          const rec = await getTableRecord(first);
+          return rec?.title || '';
+        } catch {}
+      }
+      try {
+        const mirrored = Array.isArray(v) ? v : JSON.parse(v);
+        if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
+      } catch {}
+    }
+  }
+
+  // 2) Conector "Marcas e serviços" (marcas_2) → dentro do record procurar campo que contenha “classe”
+  const v2 = by[FIELD_ID_CONNECT_CLASSE];
+  const arr2 = Array.isArray(v2) ? v2 : v2 ? [v2] : [];
+  if (arr2.length) {
+    const first = String(arr2[0]);
     if (/^\d+$/.test(first)) {
       try {
-        const rec = await getTableRecord(first); // record no DB 306572615
+        const rec = await getTableRecord(first);
+        // tentar localizar um campo conector/espelho para classe
         const classeField = (rec.record_fields || []).find(f =>
           String(f?.name || '').toLowerCase().includes('classe')
         );
-        if (classeField?.value) return String(classeField.value);
+        if (classeField) {
+          // pode ser id de record da classes inpi
+          const val = classeField.value;
+          if (Array.isArray(val)) {
+            const id0 = String(val[0] || '');
+            if (/^\d+$/.test(id0)) {
+              const recClasse = await getTableRecord(id0);
+              return recClasse?.title || '';
+            }
+          } else {
+            try {
+              const arr = JSON.parse(val);
+              if (Array.isArray(arr) && arr.length) return String(arr[0] || '');
+            } catch {
+              if (val) return String(val);
+            }
+          }
+        }
+        // fallback: título do próprio record
         if (rec?.title) return String(rec.title);
-      } catch { /* espelho */ }
+      } catch {}
+    } else {
+      try {
+        const mirrored = Array.isArray(v2) ? v2 : JSON.parse(v2);
+        if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
+      } catch {}
     }
-    try {
-      const mirrored = Array.isArray(v) ? v : JSON.parse(v);
-      if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
-    } catch {}
   }
 
-  // 2) Campo de fase com label “classe”
-  const fromPhase = getFirstByNames(card, ['classe', 'classes', 'classificação']);
-  if (fromPhase) return String(fromPhase);
-
-  // 3) Fallback: marcaRecord antigo (se existir)
+  // 3) Fallback: classe no DB da marca (caso exista no marcas_1)
   if (marcaRecordFallback) {
     const classeField = (marcaRecordFallback.record_fields || []).find(f =>
       String(f?.name || '').toLowerCase().includes('classe')
@@ -363,12 +448,12 @@ async function buildTemplateVariablesAsync(card) {
   const by = toByIdFromCard(card);
   const np = nowParts();
 
-  // Marca & Nome da Marca
-  const marcaRecordNomeContato = await resolveMarcaRecordFromCard(card); // via marcas_1
+  // Marca & Nome da Marca (o título do card é o nome da marca, como você definiu)
+  const marcaRecord = await resolveMarcaRecordFromCard(card); // via marcas_1
   const nomeMarca = card.title || '';
 
   // Contato — prioridade: conector de contatos na fase
-  let contatoEmail = '', contatoTelefone = '';
+  let contatoNome = '', contatoEmail = '', contatoTelefone = '';
   const contatoConnectorOnPhase = (card.fields || []).find(f =>
     (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
     String(f.name || '').toLowerCase().includes('contato')
@@ -381,20 +466,22 @@ async function buildTemplateVariablesAsync(card) {
       const first = arr && arr[0];
       if (first && /^\d+$/.test(String(first))) {
         const rec = await getTableRecord(first);
-        const ex = extractEmailPhoneFromRecord(rec);
+        const ex = extractNameEmailPhoneFromRecord(rec);
+        contatoNome = ex.nome || '';
         contatoEmail = ex.email || '';
         contatoTelefone = ex.telefone || '';
       } else if (Array.isArray(arr)) {
         const em = arr.find(s => String(s).includes('@'));
         const ph = arr.find(s => normalizePhone(s).length >= 10);
-        if (em) contatoEmail = String(em);
-        if (ph) contatoTelefone = String(ph);
+        contatoEmail = em ? String(em) : '';
+        contatoTelefone = ph ? String(ph) : '';
       }
-    } catch { /* segue */ }
+    } catch {}
   }
-  // Fallback 1: marcas_1
-  if ((!contatoEmail || !contatoTelefone) && marcaRecordNomeContato) {
-    const contato = await resolveContatoFromMarcaRecord(marcaRecordNomeContato);
+  // Fallback 1: marcas_1 (DB com contato dentro)
+  if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
+    const contato = await resolveContatoFromMarcaRecord(marcaRecord);
+    contatoNome     = contatoNome     || contato.nome || '';
     contatoEmail    = contatoEmail    || contato.email || '';
     contatoTelefone = contatoTelefone || contato.telefone || '';
   }
@@ -402,13 +489,16 @@ async function buildTemplateVariablesAsync(card) {
   if (!contatoEmail)    contatoEmail    = getFirstByNames(card, ['email','e-mail']);
   if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
 
+  // >>> Contratante vem do NOME DO CONTATO <<<
+  const contratante = contatoNome || by['r_social_ou_n_completo'] || getFirstByNames(card, ['razão social','nome completo','nome do cliente']) || '';
+
   // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
   const cpf  = doc.tipo === 'CPF'  ? doc.valor : '';
   const cnpj = doc.tipo === 'CNPJ' ? doc.valor : '';
 
-  // Classe via marcas_2 (fase)
-  const classe = await resolveClasseFromCard(card, marcaRecordNomeContato);
+  // Classe — prioriza conector/classes inpi
+  const classe = await resolveClasseFromCard(card, marcaRecord);
 
   // Endereço
   const rua    = by['rua']      || getFirstByNames(card, ['rua','logradouro','endereço']);
@@ -435,7 +525,7 @@ async function buildTemplateVariablesAsync(card) {
 
   return {
     // Identificação / endereço
-    contratante_1: by['r_social_ou_n_completo'] || getFirstByNames(card, ['razão social','nome completo','nome do cliente']) || '',
+    contratante_1: contratante,
     cpf, cnpj,
     rg: by['rg'] || getFirstByNames(card, ['rg']) || '',
 
@@ -473,55 +563,35 @@ async function buildTemplateVariablesAsync(card) {
   };
 }
 
+// ===== Cofre do responsável — robusto com fallback =====
 function stripDiacritics(s) {
-  return String(s || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
-function normalizeName(s) {
-  return stripDiacritics(String(s || '').trim()).toLowerCase();
-}
+function normalizeName(s) { return stripDiacritics(String(s || '').trim()).toLowerCase(); }
 function extractAssigneeNames(raw) {
-  // Pode vir como: "NOME", ["NOME"], [{name:"NOME"}], {name:"NOME"}, JSON string, etc.
   const out = [];
   const push = v => { if (v) out.push(String(v)); };
-
   const tryParse = v => {
-    if (typeof v === 'string') {
-      try { const j = JSON.parse(v); return j; } catch { /* ignore */ }
-    }
+    if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } }
     return v;
   };
-
   const val = tryParse(raw);
-
   if (Array.isArray(val)) {
     for (const it of val) {
       if (!it) continue;
-      if (typeof it === 'string') {
-        push(it);
-      } else if (typeof it === 'object') {
-        push(it.name || it.username || it.email || it.value);
-      }
+      if (typeof it === 'string') push(it);
+      else if (typeof it === 'object') push(it.name || it.username || it.email || it.value);
     }
   } else if (typeof val === 'object' && val) {
     push(val.name || val.username || val.email || val.value);
   } else if (typeof val === 'string') {
-    // Pode ser "['NOME']" ou "NOME"
     const m = val.match(/^\s*\[.*\]\s*$/) ? tryParse(val) : null;
-    if (m && Array.isArray(m)) {
-      m.forEach(x => push(typeof x === 'string' ? x : (x?.name || x?.email)));
-    } else {
-      push(val);
-    }
+    if (m && Array.isArray(m)) m.forEach(x => push(typeof x === 'string' ? x : (x?.name || x?.email)));
+    else push(val);
   }
-
-  // limpa vazios/duplicados
   return [...new Set(out.filter(Boolean))];
 }
-
 function buildEmailMapFromEnv(env) {
-  // Procura envs no formato COFRE_UUID_EMAIL_* com valor "email:uuid"
   const map = {};
   Object.keys(env).forEach(k => {
     if (k.startsWith('COFRE_UUID_EMAIL_')) {
@@ -532,144 +602,38 @@ function buildEmailMapFromEnv(env) {
   });
   return map;
 }
-
-function stripDiacritics(s) {
-  return String(s || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-}
-function normalizeName(s) {
-  return stripDiacritics(String(s || '').trim()).toLowerCase();
-}
-function extractAssigneeNames(raw) {
-  // Pode vir como: "NOME", ["NOME"], [{name:"NOME"}], {name:"NOME"}, JSON string, etc.
-  const out = [];
-  const push = v => { if (v) out.push(String(v)); };
-
-  const tryParse = v => {
-    if (typeof v === 'string') {
-      try { const j = JSON.parse(v); return j; } catch { /* ignore */ }
-    }
-    return v;
-  };
-
-  const val = tryParse(raw);
-
-  if (Array.isArray(val)) {
-    for (const it of val) {
-      if (!it) continue;
-      if (typeof it === 'string') {
-        push(it);
-      } else if (typeof it === 'object') {
-        push(it.name || it.username || it.email || it.value);
-      }
-    }
-  } else if (typeof val === 'object' && val) {
-    push(val.name || val.username || val.email || val.value);
-  } else if (typeof val === 'string') {
-    // Pode ser "['NOME']" ou "NOME"
-    const m = val.match(/^\s*\[.*\]\s*$/) ? tryParse(val) : null;
-    if (m && Array.isArray(m)) {
-      m.forEach(x => push(typeof x === 'string' ? x : (x?.name || x?.email)));
-    } else {
-      push(val);
-    }
-  }
-
-  // limpa vazios/duplicados
-  return [...new Set(out.filter(Boolean))];
-}
-
-function buildEmailMapFromEnv(env) {
-  // Procura envs no formato COFRE_UUID_EMAIL_* com valor "email:uuid"
-  const map = {};
-  Object.keys(env).forEach(k => {
-    if (k.startsWith('COFRE_UUID_EMAIL_')) {
-      const val = String(env[k] || '');
-      const [email, uuid] = val.split(':').map(x => x?.trim());
-      if (email && uuid) map[email.toLowerCase()] = uuid;
-    }
-  });
-  return map;
-}
-
-// ===== Cofre por responsável (vendedor_respons_vel) =====
 function resolveCofreUuidByCard(card) {
   const by = toByIdFromCard(card);
-
-  // 1) colete valores de possíveis campos de responsável
   const candidatosBrutos = [];
   if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
-  if (by['respons_vel_5'])       candidatosBrutos.push(by['respons_vel_5']); // fallback antigo
-  if (by['representante'])       candidatosBrutos.push(by['representante']); // fallback antigo
+  if (by['respons_vel_5'])       candidatosBrutos.push(by['respons_vel_5']);
+  if (by['representante'])       candidatosBrutos.push(by['representante']);
+  const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
 
-  // 2) extraia lista de nomes/emails em texto
-  let nomesOuEmails = [];
-  candidatosBrutos.forEach(v => { nomesOuEmails = nomesOuEmails.concat(extractAssigneeNames(v)); });
-
-  // 3) tente casar por NOME com COFRES_UUIDS (tira acentos e ignora caixa)
+  // por nome (normalizado)
   const normKeys = Object.keys(COFRES_UUIDS || {}).reduce((acc, k) => {
     acc[normalizeName(k)] = COFRES_UUIDS[k];
     return acc;
   }, {});
-
   for (const s of nomesOuEmails) {
     const n = normalizeName(s);
     if (normKeys[n]) return normKeys[n];
   }
 
-  // 4) tente casar por E-MAIL (se houver) via envs COFRE_UUID_EMAIL_* (email:uuid)
+  // por e-mail (se configurado)
   const emailMap = buildEmailMapFromEnv(process.env);
   for (const s of nomesOuEmails) {
     const maybeEmail = String(s || '').toLowerCase();
-    if (maybeEmail.includes('@') && emailMap[maybeEmail]) {
-      return emailMap[maybeEmail];
-    }
+    if (maybeEmail.includes('@') && emailMap[maybeEmail]) return emailMap[maybeEmail];
   }
 
-  // 5) debug: loga o que veio e o que existe
-  console.warn('[COFRE][NAO_ENCONTRADO]', {
-    recebidos: nomesOuEmails,
-    chavesCofres: Object.keys(COFRES_UUIDS || {}),
-  });
-
-  // 6) fallback global para não travar o fluxo
-  if (process.env.DEFAULT_COFRE_UUID) {
+  console.warn('[COFRE][NAO_ENCONTRADO]', { recebidos: nomesOuEmails, chavesCofres: Object.keys(COFRES_UUIDS || {}) });
+  if (DEFAULT_COFRE_UUID) {
     console.warn('[COFRE][FALLBACK] usando DEFAULT_COFRE_UUID');
-    return process.env.DEFAULT_COFRE_UUID;
+    return DEFAULT_COFRE_UUID;
   }
-
-  return null; // mantém comportamento atual (gera erro acima)
+  return null;
 }
-
-app.get('/debug/cofre', async (req, res) => {
-  try {
-    const { cardId } = req.query;
-    if (!cardId) return res.status(400).send('cardId obrigatório');
-    const card = await getCardFields(cardId);
-
-    const by = toByIdFromCard(card);
-    const candidatosBrutos = [];
-    if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
-    if (by['respons_vel_5'])       candidatosBrutos.push(by['respons_vel_5']);
-    if (by['representante'])       candidatosBrutos.push(by['representante']);
-
-    const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
-    const escolhido = resolveCofreUuidByCard(card);
-
-    res.json({
-      pipe: card?.pipe,
-      phase: card?.current_phase,
-      candidatosBrutos,
-      nomesOuEmails,
-      cofreEscolhido: escolhido,
-      possuiFallback: Boolean(process.env.DEFAULT_COFRE_UUID),
-      chavesCofres: Object.keys(COFRES_UUIDS || {}),
-    });
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
 
 // ===== D4Sign =====
 const D4_BASE = 'https://api.d4sign.com.br/v2';
@@ -847,7 +811,7 @@ app.get('/contratos/:documentKey', async (req, res) => {
 app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
   try {
     const { documentKey } = req.params;
-    const { cardId, sig } = req.body;
+    aconst { cardId, sig } = req.body;
     if (!cardId) return res.status(400).send('Faltou cardId');
     if (!sig) return res.status(401).send('assinatura ausente');
 
@@ -867,7 +831,6 @@ app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
       <p><a href="${back}">Voltar</a></p>
     </body></html>`);
   } catch (e) {
-    // <<<<<< CORRIGIDO o parêntese aqui >>>>>>
     res.status(500).send(String(e.message || e));
   }
 });
@@ -908,10 +871,38 @@ app.get('/debug/marca-contato', async (req, res) => {
     if (!cardId) return res.status(400).send('cardId obrigatório');
     const card = await getCardFields(cardId);
     const marcaRecord = await resolveMarcaRecordFromCard(card);
-    let contato = { email:'', telefone:'' };
+    let contato = { nome:'', email:'', telefone:'' };
     if (marcaRecord) contato = await resolveContatoFromMarcaRecord(marcaRecord);
     const classe = await resolveClasseFromCard(card, marcaRecord);
     res.json({ cardTitle: card.title, marcaRecord, contato, classe });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+app.get('/debug/cofre', async (req, res) => {
+  try {
+    const { cardId } = req.query;
+    if (!cardId) return res.status(400).send('cardId obrigatório');
+    const card = await getCardFields(cardId);
+
+    const by = toByIdFromCard(card);
+    const candidatosBrutos = [];
+    if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
+    if (by['respons_vel_5'])       candidatosBrutos.push(by['respons_vel_5']);
+    if (by['representante'])       candidatosBrutos.push(by['representante']);
+
+    const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
+    const escolhido = resolveCofreUuidByCard(card);
+
+    res.json({
+      pipe: card?.pipe,
+      phase: card?.current_phase,
+      candidatosBrutos,
+      nomesOuEmails,
+      cofreEscolhido: escolhido,
+      possuiFallback: Boolean(DEFAULT_COFRE_UUID),
+      chavesCofres: Object.keys(COFRES_UUIDS || {}),
+    });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
@@ -941,3 +932,51 @@ app.listen(PORT, () => {
   console.log('[rotas-registradas]');
   list.sort().forEach(r => console.log('  -', r));
 });
+
+/*
+.env — exemplo mínimo
+---------------------
+PORT=3000
+
+PIPE_API_KEY=xxxxx
+PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
+
+D4SIGN_CRYPT_KEY=xxxxx
+D4SIGN_TOKEN=xxxxx
+TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+PUBLIC_BASE_URL=https://provincia-vendas.lnghgu.easypanel.host
+PUBLIC_LINK_SECRET=um-segredo-forte
+EMAIL_ASSINATURA_EMPRESA=assinaturas@seu-dominio.com
+
+# Campo para gravar link no card
+PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
+
+# Conectores / Tabelas
+FIELD_ID_CONNECT_MARCA_NOME=marcas_1           # Nome da marca + Contatos
+FIELD_ID_CONNECT_CLASSE=marcas_2               # (apoio) Marcas e serviços
+# Se houver conector direto para classes inpi, informe:
+# FIELD_ID_CONNECT_CLASSES=classes_inpi
+CLASSES_TABLE_ID=306521337                     # DB classes inpi
+# CONTACTS_TABLE_ID=...                        # se quiser varrer contatos
+# MARCAS_TABLE_ID=...                          # se precisar varrer títulos do marcas_1
+
+# Cofres por vendedor (nomes)
+COFRE_UUID_EDNA=...
+COFRE_UUID_GREYCE=...
+COFRE_UUID_MARIANA=...
+COFRE_UUID_VALDEIR=...
+COFRE_UUID_DEBORA=...
+COFRE_UUID_MAYKON=...
+COFRE_UUID_JEFERSON=...
+COFRE_UUID_RONALDO=...
+COFRE_UUID_BRENDA=...
+COFRE_UUID_MAURO=...
+
+# (Opcional) fallback global
+# DEFAULT_COFRE_UUID=...
+
+# (Opcional) map por e-mail (formato email:uuid), ex.:
+# COFRE_UUID_EMAIL_EDNA=edna@empresa.com:f2810606-e496-4955-bb65-a7f6218bc116
+*/
+
