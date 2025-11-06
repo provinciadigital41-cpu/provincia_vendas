@@ -2,7 +2,6 @@
 
 /**
  * server.js — Provincia Vendas (Pipefy + D4Sign via secure.d4sign.com.br)
- * Requisitos: npm i express
  * Node 18+ (fetch global)
  */
 
@@ -120,10 +119,24 @@ function onlyNumberBR(s){
 // Datas — meses por extenso (capitalizados) e formatações auxiliares
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function monthNamePt(mIndex1to12) { return MESES_PT[(Math.max(1, Math.min(12, Number(mIndex1to12))) - 1)]; }
-function fmtDMY2(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d)) return '';
+
+// Aceita "DD/MM/YYYY" (Pipefy) ou ISO; devolve Date válido ou null
+function parsePipeDateToDate(value){
+  if (!value) return null;
+  const s = String(value).trim();
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m){
+    const dd = Number(m[1]), mm = Number(m[2]), yyyy = Number(m[3]);
+    const d = new Date(yyyy, mm-1, dd);
+    return isNaN(d) ? null : d;
+  }
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+// Retorna "DD/MM/YY"
+function fmtDMY2(value){
+  const d = value instanceof Date ? value : parsePipeDateToDate(value);
+  if (!d) return '';
   const dd = String(d.getDate()).padStart(2,'0');
   const mm = String(d.getMonth()+1).padStart(2,'0');
   const yy = String(d.getFullYear()).slice(-2);
@@ -272,7 +285,6 @@ async function resolveMarcaRecordFromCard(card){
     try { return await getTableRecord(first); } catch { return null; }
   }
 
-  // Título -> procurar em MARCAS_TABLE_ID
   if (!MARCAS_TABLE_ID) return null;
   let after=null;
   for (let i=0;i<50;i++){
@@ -289,12 +301,10 @@ async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMi
   let after=null;
   for (let i=0;i<100;i++){
     const {records, pageInfo} = await listTableRecords(contactsTableId, 200, after);
-    // title
     if (titleMirror){
       const r = records.find(x => String(x.title||'').trim() === String(titleMirror).trim());
       if (r) return r;
     }
-    // email/phone
     for (const r of records){
       for (const f of r.record_fields||[]){
         const t = (f?.field?.type||'').toLowerCase();
@@ -361,18 +371,16 @@ async function resolveClasseFromCard(card, marcaRecordFallback){
 
   const by = toById(card);
 
-  // por env direto, se existir
   if (FIELD_ID_CONNECT_CLASSES){
     const v = by[FIELD_ID_CONNECT_CLASSES];
     const arr = parseMaybeJsonArray(v);
     if (arr.length){
       const first = String(arr[0]);
       if (/^\d+$/.test(first)){ try { const rec = await getTableRecord(first); return rec?.title||''; } catch{} }
-      try { const mirrored = Array.isArray(v)? v : JSON.parse(v); if (Array.isArray(mirrored)&&mirrored.length) return String(mirrored[0]||''); } catch{}
+      try { const a = Array.isArray(v)? v : JSON.parse(v); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch{}
     }
   }
 
-  // "marcas_2"
   const v2 = by[FIELD_ID_CONNECT_CLASSE];
   const arr2 = parseMaybeJsonArray(v2);
   if (arr2.length){
@@ -415,7 +423,7 @@ async function resolveClasseFromCard(card, marcaRecordFallback){
           after = pageInfo.endCursor || null;
         }
       } else {
-        try { const mirrored = Array.isArray(v2)? v2 : JSON.parse(v2); if (Array.isArray(mirrored)&&mirrored.length) return String(mirrored[0]||''); } catch{}
+        try { const a = Array.isArray(v2)? v2 : JSON.parse(v2); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch{}
       }
     }
   }
@@ -467,10 +475,8 @@ function resolveCofreUuidByCard(card){
 }
 
 /* =========================
- * Regras novas solicitadas
+ * Regras específicas: Taxa e Classe
  * =======================*/
-
-// Extrai o valor da Taxa seguindo a sua regra (440 / 880) a partir de d.taxa_faixa
 function computeValorTaxaBRLFromFaixa(d){
   let valorTaxaSemRS = '';
   const taxa = String(d.taxa_faixa||'');
@@ -478,11 +484,8 @@ function computeValorTaxaBRLFromFaixa(d){
   else if (taxa.includes('880')) valorTaxaSemRS = '880,00';
   return valorTaxaSemRS ? `R$ ${valorTaxaSemRS}` : '';
 }
-
-// Deixa apenas dígitos na classe; se houver várias, junta por vírgula
 function normalizeClasseToNumbersOnly(classeStr){
   if (!classeStr) return '';
-  // pega todos os blocos numéricos (35, 41, etc)
   const nums = String(classeStr).match(/\d+/g) || [];
   return nums.join(', ');
 }
@@ -511,12 +514,12 @@ function pickValorAssessoria(card){
 async function montarDados(card){
   const by = toById(card);
 
-  // === Classe / Marca / Contato (como já estava) ===
+  // === Classe / Marca / Contato
   const marcaRecord = await resolveMarcaRecordFromCard(card);
   let classe = await resolveClasseFromCard(card, marcaRecord);
   classe = normalizeClasseToNumbersOnly(classe);
 
-  // contato: prioriza conector "contato" na fase; senão, marcas_1
+  // contato
   let contatoNome='', contatoEmail='', contatoTelefone='';
   const contatoConn = (card.fields||[]).find(f => (f.field?.type==='connector'||f.field?.type==='table_connection') && String(f.name||'').toLowerCase().includes('contat'));
   if (contatoConn?.value){
@@ -547,36 +550,31 @@ async function montarDados(card){
   if (!contatoEmail)   contatoEmail   = getFirstByNames(card, ['email','e-mail']);
   if (!contatoTelefone)contatoTelefone= getFirstByNames(card, ['telefone','celular','whatsapp','whats']);
 
-  // === Documento (CPF/CNPJ) ===
+  // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
   const cpfDoc  = doc.tipo==='CPF'?  doc.valor : '';
   const cnpjDoc = doc.tipo==='CNPJ'? doc.valor : '';
-
-  // Além do doc “livre”, também pegar os campos específicos que você criou
   const cpfCampo  = by['cpf']    || '';
   const cnpjCampo = by['cnpj_1'] || '';
 
-  // === Parcelas / Assessoria ===
+  // Parcelas / Assessoria
   const nParcelas = pickParcelas(card);
   const valorAssessoria = pickValorAssessoria(card);
-
-  // forma pagamento assessoria (novo id que você informou)
   const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
 
-  // === Serviços / quantidade de marca (sua regra) ===
+  // Serviços / quantidade de marca
   const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
   const temMarca = Boolean(getFirstByNames(card, ['marca']) || by['marca'] || by['marcas_1'] || card.title);
   const qtdMarca = temMarca ? '1' : '';
   const servicos = [serv1].filter(Boolean);
 
-  // === TAXA ===
-  // manter no d.taxa_faixa o texto do campo taxa (ex. "MEI/ME/EPP/PF (R$440,00)")
+  // TAXA
   const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
   const valorTaxaBRL = computeValorTaxaBRLFromFaixa({ taxa_faixa: taxaFaixaRaw });
   const formaPagtoTaxa = by['tipo_de_pagamento'] || '';
-  const dataPagtoTaxa = ''; // ainda não existe no pipe → manter vazio
+  const dataPagtoTaxa = fmtDMY2(by['data_de_pagamento_taxa'] || ''); // NOVO
 
-  // === ENDEREÇO (CNPJ) ===
+  // ENDEREÇO (CNPJ)
   const cepCnpj    = by['cep_do_cnpj']     || '';
   const ruaCnpj    = by['rua_av_do_cnpj']  || '';
   const bairroCnpj = by['bairro_do_cnpj']  || '';
@@ -584,13 +582,15 @@ async function montarDados(card){
   const ufCnpj     = by['estado_do_cnpj']  || '';
   const numeroCnpj = by['n_mero_1']        || getFirstByNames(card, ['numero','número','nº']) || '';
 
-  // === Vendedor (para cofre) ===
+  // Vendedor (cofre)
   const vendedor = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'])[0] || '';
 
-  // === Campos extras solicitados ===
+  // Extras
   const riscoMarca = by['risco_da_marca'] || '';
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
+  const estadoCivil = by['estado_civ_l'] || ''; // NOVO
+  const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || ''); // NOVO
 
   return {
     cardId: card.id,
@@ -601,8 +601,9 @@ async function montarDados(card){
     cpf: cpfDoc, 
     cnpj: cnpjDoc,
     rg: by['rg'] || '',
+    estado_civil: estadoCivil, // NOVO
 
-    // Também entregar campos específicos para o template
+    // Campos específicos doc
     cpf_campo: cpfCampo,
     cnpj_campo: cnpjCampo,
 
@@ -619,8 +620,9 @@ async function montarDados(card){
     parcelas: nParcelas,
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
+    data_pagto_assessoria: dataPagtoAssessoria, // NOVO
 
-    // TAXA (mapeado)
+    // TAXA
     taxa_faixa: taxaFaixaRaw || '',
     valor_taxa_brl: valorTaxaBRL,
     forma_pagto_taxa: formaPagtoTaxa,
@@ -646,17 +648,14 @@ async function montarDados(card){
 
 // Variáveis para Template Word (ADD)
 function montarADDWord(d, nowInfo){
-  // valores de assessoria (mantém cálculo de parcela)
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
 
-  // Pesquisa: 99% Isenta
   const valorPesquisa = 'R$ 00,00';
   const formaPesquisa = '---';
   const dataPesquisa  = '00/00/00';
 
-  // Endereço (CNPJ) — usa campos do d
   const rua    = d.rua_cnpj || '';
   const bairro = d.bairro_cnpj || '';
   const numero = d.numero_cnpj || '';
@@ -664,14 +663,13 @@ function montarADDWord(d, nowInfo){
   const uf     = d.uf_cnpj || '';
   const cep    = d.cep_cnpj || '';
 
-  // Taxa — seguindo sua regra (440/880)
-  const valorDaTaxa = d.valor_taxa_brl || '';                  // e.g. "R$ 440,00"
+  const valorDaTaxa = d.valor_taxa_brl || '';
   const formaDaTaxa = d.forma_pagto_taxa || '';
   const dataDaTaxa  = d.data_pagto_taxa || '';
 
   // Data atual (mês por extenso capitalizado)
   const dia = String(nowInfo.dia).padStart(2,'0');
-  const mes = String(nowInfo.mes).padStart(2,'0');
+  const mesNum = String(nowInfo.mes).padStart(2,'0');
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
@@ -681,8 +679,10 @@ function montarADDWord(d, nowInfo){
     cpf: d.cpf || '',
     cnpj: d.cnpj || '',
     rg: d.rg || '',
+    'Estado Civíl': d.estado_civil || '', // NOVO
+    'Estado Civil': d.estado_civil || '', // tolerância
 
-    // Campos adicionais de doc (como você pediu)
+    // Doc adicionais
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
     'CNPJ': d.cnpj_campo || '',
@@ -700,7 +700,7 @@ function montarADDWord(d, nowInfo){
     'E-mail': d.email || '',
     telefone: d.telefone || '',
 
-    // Marca / Classe / Quantidade de marca / Risco
+    // Marca / Classe / Qtd marca / Risco
     nome_da_marca: d.titulo || '',
     classe: d.classe || '',
     qtd_marca: d.qtd_marca || '',
@@ -713,33 +713,33 @@ function montarADDWord(d, nowInfo){
     numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
     valor_da_parcela_da_assessoria: toBRL(valorParcela),
     forma_de_pagamento_da_assessoria: d.forma_pagto_assessoria || '',
-    data_de_pagamento_da_assessoria: '',
+    data_de_pagamento_da_assessoria: d.data_pagto_assessoria || '', // NOVO
+    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '', // NOVO
 
     // Pesquisa
     valor_da_pesquisa: valorPesquisa,
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    // Taxa (snake_case)
+    // Taxa
     valor_da_taxa: valorDaTaxa,
     forma_de_pagamento_da_taxa: formaDaTaxa,
     data_de_pagamento_da_taxa: dataDaTaxa,
+    'Valor da Taxa': valorDaTaxa,
+    'Forma de pagamento da Taxa': formaDaTaxa,
+    'Data de pagamento da Taxa': dataDaTaxa,
 
-    // Datas
+    // Datas (numérico E por extenso)
     dia,
-    mes,
+    mes: mesNum,
     ano,
     mes_extenso: mesExtenso,
+    'Mês': mesExtenso,  // <- para seu template
+    'Mes': mesExtenso,  // tolerância
 
     // Template
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
-
-  // Também expõe as chaves exatamente como no seu template:
-  // "Valor da Taxa", "Forma de pagamento da Taxa", "Data de pagamento da Taxa"
-  baseVars['Valor da Taxa'] = valorDaTaxa;
-  baseVars['Forma de pagamento da Taxa'] = formaDaTaxa;
-  baseVars['Data de pagamento da Taxa'] = dataDaTaxa;
 
   return baseVars;
 }
@@ -748,7 +748,6 @@ function montarSigners(d){
   const list = [];
   if (d.email) list.push({ email: d.email, name: d.nome || d.titulo || d.email, act:'1', foreign:'0', send_email:'1' });
   if (EMAIL_ASSINATURA_EMPRESA) list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
-  // dedup
   const seen={}; return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
 }
 
@@ -855,16 +854,7 @@ async function moveCardToPhaseSafe(cardId, phaseId){
 app.get('/lead/:token', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
-    const data = await gql(
-      `query($cardId: ID!) {
-        card(id: $cardId) {
-          id title assignees { name }
-          fields { name value field { id } }
-        }
-      }`,
-      { cardId }
-    );
-    const card = data.card;
+    const card = await getCard(cardId);
     const d = await montarDados(card);
 
     const html = `
@@ -892,6 +882,7 @@ app.get('/lead/:token', async (req, res) => {
     <div class="grid">
       <div><div class="label">Nome</div><div>${d.nome||'-'}</div></div>
       <div><div class="label">Nacionalidade</div><div>${d.nacionalidade||'-'}</div></div>
+      <div><div class="label">Estado Civíl</div><div>${d.estado_civil||'-'}</div></div>
       <div><div class="label">CPF/CNPJ (seleção)</div><div>${d.selecao_cnpj_ou_cpf||'-'}</div></div>
       <div><div class="label">CPF (campo)</div><div>${d.cpf_campo||'-'}</div></div>
       <div><div class="label">CNPJ (campo)</div><div>${d.cnpj_campo||'-'}</div></div>
@@ -920,6 +911,7 @@ app.get('/lead/:token', async (req, res) => {
       <div><div class="label">Valor total</div><div>${d.valor_total||'-'}</div></div>
       <div><div class="label">Parcelas</div><div>${String(d.parcelas||'1')}</div></div>
       <div><div class="label">Forma de pagamento</div><div>${d.forma_pagto_assessoria||'-'}</div></div>
+      <div><div class="label">Data de pagamento (Assessoria)</div><div>${d.data_pagto_assessoria||'-'}</div></div>
     </div>
 
     <h2>Taxa</h2>
@@ -967,23 +959,20 @@ app.post('/lead/:token/generate', async (req, res) => {
     const d = await montarDados(card);
 
     const now = new Date();
-    const nowInfo = { dia: now.getDate(), mes: now.getMonth()+1, ano: now.getFullYear(), mesNome: monthNamePt(now.getMonth()+1) };
+    const nowInfo = { dia: now.getDate(), mes: now.getMonth()+1, ano: now.getFullYear() };
     const add = montarADDWord(d, nowInfo);
     const signers = montarSigners(d);
 
     const uuidSafe = COFRES_UUIDS[d.vendedor] || DEFAULT_COFRE_UUID;
     if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
 
-    // 1) Cria doc e 2) cadastra signatários (AINDA NÃO envia para assinatura)
     const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, card.title, add);
     await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
 
-    // mover fase se configurado
     await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
 
     releaseLock(lockKey);
 
-    // 3) Página com duas ações: Download PDF e Enviar para assinatura
     const token = req.params.token;
     const html = `
 <!doctype html><meta charset="utf-8"><title>Contrato gerado</title>
