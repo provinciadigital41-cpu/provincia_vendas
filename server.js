@@ -703,7 +703,7 @@ function montarADDWord(d, nowInfo){
     // Marca / Classe / Qtd marca / Risco
     nome_da_marca: d.titulo || '',
     classe: d.classe || '',
-    qtd_marca: d.qtd_marca || '',
+    'Quantidade depósitos/processos de MARCA': d.qtd_marca || '',
     risco_da_marca: d.risco_marca || '',
 
     // Dados pessoais adicionais
