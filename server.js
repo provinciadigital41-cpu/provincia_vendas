@@ -249,29 +249,33 @@ function firstFromValue(value) {
   if (value && typeof value === 'object') return String(value.name || value.username || value.email || value.value || '');
   return '';
 }
+
 async function resolveClasseFromLabelOnCard(card) {
-  // Procura um campo de CONECTOR cujo label contenha "classes inpi"
-  const f = (card.fields || []).find(ff =>
-    (ff?.field?.type === 'connector' || ff?.field?.type === 'table_connection') &&
-    String(ff?.name || '').toLowerCase().includes('classes inpi')
-  );
+  // Prioriza um campo de CONECTOR cujo id seja 'classes_inpi' OU label contenha 'classes inpi'
+  const f = (card.fields || []).find(ff => {
+    const isConn = (ff?.field?.type === 'connector' || ff?.field?.type === 'table_connection');
+    const idOk  = String(ff?.field?.id || '').toLowerCase() === 'classes_inpi';
+    const lblOk = String(ff?.name || '').toLowerCase().includes('classes inpi');
+    return isConn && (idOk || lblOk);
+  });
   if (!f || !f.value) return '';
 
-  // value pode ser [id], "[\"id\"]" ou espelho ["CLASSE 20"]
+  // value pode ser: [123], "[\"123\"]", ["CLASSE 20"], "[\"CLASSE 20\"]"
   let arr = [];
-  try { arr = Array.isArray(f.value) ? f.value : JSON.parse(f.value); } catch { arr = [f.value]; }
+  try { arr = Array.isArray(f.value) ? f.value : JSON.parse(f.value); }
+  catch { arr = [f.value]; }
+
   const first = arr && arr[0];
   if (!first) return '';
 
-  // Se for id numérico, abre o record e usa o título (CLASSE 20)
+  // Se for id numérico -> abre o record e usa o título (ex. "CLASSE 20")
   if (/^\d+$/.test(String(first))) {
     try {
       const rec = await getTableRecord(String(first));
       return rec?.title || '';
-    } catch { /* segue fallback */ }
+    } catch { /* segue pro fallback */ }
   }
-
-  // Se for espelho, normalmente o primeiro item já é o título
+  // Caso seja espelho (texto), retorna direto
   return String(first || '');
 }
 
@@ -478,7 +482,7 @@ async function buildTemplateVariablesAsync(card) {
 const marcaRecord = await resolveMarcaRecordFromCard(card); // via marcas_1
 const nomeMarca = card.title || '';
 
-// 1) Contato via conector "Contatos" da FASE (se existir)
+// 1) Contato via conector na FASE (se existir; campo com "contato" no label)
 let contatoNome = '', contatoEmail = '', contatoTelefone = '';
 const contatoConnectorOnPhase = (card.fields || []).find(f =>
   (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
@@ -492,7 +496,7 @@ if (contatoConnectorOnPhase?.value) {
     const first = arr && arr[0];
     if (first && /^\d+$/.test(String(first))) {
       const rec = await getTableRecord(first);
-      const ex = extractNameEmailPhoneFromRecord(rec);
+      const ex = extractNameEmailPhoneFromRecord(rec); // lê "nome_do_contato" por id ou "nome" por label
       contatoNome = ex.nome || '';
       contatoEmail = ex.email || '';
       contatoTelefone = ex.telefone || '';
@@ -513,12 +517,16 @@ if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
   contatoTelefone = contatoTelefone || contato.telefone || '';
 }
 
-// 3) Fallback: campos soltos do card (se faltar email/telefone)
+// 3) Fallback: tenta achar por nome de campo no próprio card
+if (!contatoNome) contatoNome = getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']);
+
+// 4) Fallback de e-mail/telefone por campos soltos
 if (!contatoEmail)    contatoEmail    = getFirstByNames(card, ['email','e-mail']);
 if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
 
-// >>> Contratante vem do NOME DO CONTATO <<<
+// >>> Contratante DEVE ser o nome de contato (não o título/marca)
 const contratante = contatoNome || by['r_social_ou_n_completo'] || getFirstByNames(card, ['razão social','nome completo','nome do cliente']) || '';
+
 
   // Fallback 1: marcas_1 (DB com contato dentro)
   if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
