@@ -252,10 +252,10 @@ function extractNameEmailPhoneFromRecord(record) {
 async function resolveMarcaRecordFromCard(card) {
   const by = toByIdFromCard(card);
   const v = by[FIELD_ID_CONNECT_MARCA_NOME]; // 'marcas_1'
-  const arr = Array.isArray(v) ? v : v ? [v] : [];
+  const arr = parseMaybeJsonArray(v);           // <<— faz o parse do espelho "[\"Teste D4\"]"
   if (!arr.length) return null;
 
-  const first = String(arr[0]);
+  const first = String(arr[0]).trim();
 
   if (/^\d+$/.test(first)) {
     try { return await getTableRecord(first); } catch { /* fallback título */ }
@@ -345,9 +345,9 @@ async function resolveClasseFromCard(card, marcaRecordFallback) {
   const by = toByIdFromCard(card);
 
   // 1) conector direto configurado por env (FIELD_ID_CONNECT_CLASSES)
-  if (FIELD_ID_CONNECT_CLASSES) {
-    const v = by[FIELD_ID_CONNECT_CLASSES];
-    const arr = Array.isArray(v) ? v : v ? [v] : [];
+if (FIELD_ID_CONNECT_CLASSES) {
+  const v = by[FIELD_ID_CONNECT_CLASSES];
+  const arr = parseMaybeJsonArray(v); 
     if (arr.length) {
       const first = String(arr[0]);
       if (/^\d+$/.test(first)) {
@@ -364,10 +364,10 @@ async function resolveClasseFromCard(card, marcaRecordFallback) {
   }
 
   // 2) Conector "Marcas e serviços" (marcas_2)
-  const v2 = by[FIELD_ID_CONNECT_CLASSE];
-  const arr2 = Array.isArray(v2) ? v2 : v2 ? [v2] : [];
-  if (arr2.length) {
-    const first = String(arr2[0]);
+const v2 = by[FIELD_ID_CONNECT_CLASSE];
+const arr2 = parseMaybeJsonArray(v2);     // <<— parse do espelho "[\"Teste D4\"]"
+if (arr2.length) {
+  const first = String(arr2[0]).trim();
 
     // 2.1) veio ID numérico
     if (/^\d+$/.test(first)) {
