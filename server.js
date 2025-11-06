@@ -1,62 +1,59 @@
 'use strict';
 
 /**
- * server.js — Provincia Vendas (Pipefy + D4Sign) — Node 18+
+ * server.js — Provincia Vendas (Pipefy + D4Sign via secure.d4sign.com.br)
  * Requisitos: npm i express
+ * Node 18+ (fetch global)
  */
 
 const express = require('express');
 const crypto = require('crypto');
 
 const app = express();
-
-// ===== Middlewares =====
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', true);
 
-// Logger simples
+// Log básico
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ua="${req.get('user-agent')}" ip=${req.ip}`);
   next();
 });
 
-// ===== Variáveis de ambiente =====
+/* =========================
+ * ENV
+ * =======================*/
 let {
   PORT,
-  PIPE_API_KEY,
-  PIPE_GRAPHQL_ENDPOINT,
-
-  D4SIGN_CRYPT_KEY,
-  D4SIGN_TOKEN,
-
-  TEMPLATE_UUID_CONTRATO,
-
-  NOVO_PIPE_ID,
-  FASE_VISITA_ID,
-
-  // campo do card onde gravamos o link público
-  PIPEFY_FIELD_LINK_CONTRATO,
-
-  // conectores (ids de campos no card)
-  FIELD_ID_CONNECT_MARCA_NOME, // marcas_1 (Nome da marca + Contatos / DB Marcas - Captação)
-  FIELD_ID_CONNECT_CLASSE,     // marcas_2 (DB Marcas (Visita))
-  FIELD_ID_CONNECT_CLASSES,    // conector direto no card para "Classes INPI" (se existir)
-
-  // tabelas (ids de database)
-  MARCAS_TABLE_ID,             // ex.: MmqLNaPk  (Marcas - Captação)
-  CONTACTS_TABLE_ID,           // ex.: 306505297 (Contatos)
-  MARCAS2_TABLE_ID,            // ex.: tnDAtg7l  (Marcas (Visita))
-  CLASSES_TABLE_ID,            // ex.: 306521337 (Classes INPI)
-
-  // app pública
   PUBLIC_BASE_URL,
   PUBLIC_LINK_SECRET,
 
-  // e-mail institucional para assinatura
+  PIPE_API_KEY,
+  PIPE_GRAPHQL_ENDPOINT,
+
+  // IDs de tabelas / campos
+  FIELD_ID_CONNECT_MARCA_NOME, // marcas_1 (Marcas - Captação)
+  FIELD_ID_CONNECT_CLASSE,     // marcas_2 (Marcas (Visita))
+  FIELD_ID_CONNECT_CLASSES,    // classes_inpi (se existir no card)
+  MARCAS_TABLE_ID,             // MmqLNaPk (Marcas - Captação)
+  CONTACTS_TABLE_ID,           // 306505297 (Contatos)
+  MARCAS2_TABLE_ID,            // tnDAtg7l (Marcas - Visita)
+  CLASSES_TABLE_ID,            // 306521337 (Classes INPI)
+
+  PIPEFY_FIELD_LINK_CONTRATO,  // d4_contrato
+  NOVO_PIPE_ID,
+  FASE_VISITA_ID,
+  PHASE_ID_CONTRATO_ENVIADO,
+
+  // D4Sign
+  D4SIGN_TOKEN,
+  D4SIGN_CRYPT_KEY,
+  TEMPLATE_UUID_CONTRATO,
+
+  // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
 
-  // cofres
+  // Cofres
   COFRE_UUID_EDNA,
   COFRE_UUID_GREYCE,
   COFRE_UUID_MARIANA,
@@ -68,27 +65,21 @@ let {
   COFRE_UUID_BRENDA,
   COFRE_UUID_MAURO,
 
-  // fallback opcional
-  DEFAULT_COFRE_UUID,
-
-  // base da API do D4 (mantemos via API; não abrimos secure)
-  D4_API_BASE
+  DEFAULT_COFRE_UUID
 } = process.env;
 
-// Defaults / sane defaults
 PORT = PORT || 3000;
 PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql';
+PIPEFY_FIELD_LINK_CONTRATO = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 FIELD_ID_CONNECT_MARCA_NOME = FIELD_ID_CONNECT_MARCA_NOME || 'marcas_1';
 FIELD_ID_CONNECT_CLASSE     = FIELD_ID_CONNECT_CLASSE     || 'marcas_2';
-PIPEFY_FIELD_LINK_CONTRATO  = PIPEFY_FIELD_LINK_CONTRATO  || 'd4_contrato';
-CLASSES_TABLE_ID            = CLASSES_TABLE_ID            || '306521337';
-D4_API_BASE                 = D4_API_BASE || 'https://api.d4sign.com.br/v2';
+CLASSES_TABLE_ID            = CLASSES_TABLE_ID || '306521337';
 
-if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY não definido');
-if (!D4SIGN_CRYPT_KEY || !D4SIGN_TOKEN) console.warn('[AVISO] D4SIGN_* não definidos');
-if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Defina PUBLIC_BASE_URL e PUBLIC_LINK_SECRET nas envs');
+if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
+if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
+if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
 
-// Cofres mapeados por nome (exatos)
+// Cofres mapeados por responsável
 const COFRES_UUIDS = {
   'EDNA BERTO DA SILVA': COFRE_UUID_EDNA,
   'Greyce Maria Candido Souza': COFRE_UUID_GREYCE,
@@ -99,544 +90,424 @@ const COFRES_UUIDS = {
   'Jeferson Andrade Siqueira': COFRE_UUID_JEFERSON,
   'RONALDO SCARIOT DA SILVA': COFRE_UUID_RONALDO,
   'BRENDA ROSA DA SILVA': COFRE_UUID_BRENDA,
-  'Mauro Furlan Neto': COFRE_UUID_MAURO,
+  'Mauro Furlan Neto': COFRE_UUID_MAURO
 };
 
-// ===== Assinatura de links (HMAC) =====
-function makeSignedURL(path, params) {
-  const url = new URL(path, PUBLIC_BASE_URL);
-  Object.entries(params || {}).forEach(([k, v]) => url.searchParams.set(k, String(v)));
-  const payload = [...url.searchParams.entries()].map(([k, v]) => `${k}=${v}`).sort().join('&');
-  const sig = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(payload).digest('hex');
-  url.searchParams.set('sig', sig);
-  return url.toString();
-}
-function validateSignature(req) {
-  const full = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
-  const gotSig = full.searchParams.get('sig') || '';
-  full.searchParams.delete('sig');
-  const payload = [...full.searchParams.entries()].map(([k, v]) => `${k}=${v}`).sort().join('&');
-  const expected = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(payload).digest('hex');
-  return gotSig === expected;
-}
-
-// ===== Pipefy GraphQL =====
-async function pipefyGraphQL(query, variables) {
-  const res = await fetch(PIPE_GRAPHQL_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${PIPE_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await res.json();
-  if (!res.ok || json.errors) {
-    throw new Error(`Pipefy GraphQL error: ${res.status} ${JSON.stringify(json.errors || {})}`);
-  }
-  return json.data;
-}
-
-async function getCardFields(cardId) {
-  const q = `
-    query($id: ID!) {
-      card(id: $id) {
-        id
-        title
-        fields { name value field { id type } }
-        current_phase { id name }
-        pipe { id name }
-      }
-    }`;
-  const data = await pipefyGraphQL(q, { id: cardId });
-  return data.card;
-}
-
-async function updateCardField(cardId, fieldId, newValue) {
-  const m = `
-    mutation($input: UpdateCardFieldInput!) {
-      updateCardField(input: $input) { card { id } }
-    }`;
-  await pipefyGraphQL(m, { input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue } });
-}
-
-async function getTableRecord(recordId) {
-  const q = `
-    query($id: ID!) {
-      table_record(id: $id) {
-        id
-        title
-        record_fields { name value field { id type } }
-      }
-    }`;
-  const data = await pipefyGraphQL(q, { id: recordId });
-  return data.table_record;
-}
-
-async function listTableRecords(tableId, first = 100, after = null) {
-  const q = `
-    query($tableId: ID!, $first: Int!, $after: String) {
-      table(id: $tableId) {
-        id
-        table_records(first: $first, after: $after) {
-          edges {
-            node {
-              id
-              title
-              record_fields { name value field { id type } }
-            }
-          }
-          pageInfo { hasNextPage endCursor }
-        }
-      }
-    }`;
-  const data = await pipefyGraphQL(q, { tableId, first, after });
-  const edges = data?.table?.table_records?.edges || [];
-  const pageInfo = data?.table?.table_records?.pageInfo || {};
-  return { records: edges.map(e => e.node), pageInfo };
-}
-
-// ===== Utils =====
-function toByIdFromCard(card) {
-  const by = {};
-  for (const f of card?.fields || []) if (f?.field?.id) by[f.field.id] = f.value;
-  return by;
-}
-function normalizePhone(s) { return String(s || '').replace(/\D/g, ''); }
-function onlyDigits(s) { return String(s||'').replace(/\D/g,''); }
-function parseMaybeJsonArray(value) {
-  try { return Array.isArray(value) ? value : JSON.parse(value); }
-  catch { return value ? [String(value)] : []; }
-}
-function getValueByName(card, nameSubstr) {
-  const target = String(nameSubstr).toLowerCase();
-  const hit = (card.fields || []).find(f => String(f?.name || '').toLowerCase().includes(target));
-  return hit?.value ?? '';
-}
-function getFirstByNames(card, names=[]) {
-  for (const n of names) {
-    const v = getValueByName(card, n);
-    if (v) return v;
-  }
-  return '';
-}
-function parseNumberBR(v) {
-  if (v == null) return NaN;
+/* =========================
+ * Helpers gerais
+ * =======================*/
+function onlyDigits(s){ return String(s||'').replace(/\D/g,''); }
+function normalizePhone(s){ return onlyDigits(s); }
+function toBRL(n){ return isNaN(n)?'':Number(n).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function parseNumberBR(v){
+  if (v==null) return NaN;
   const s = String(v).trim();
   if (!s) return NaN;
-  const br = s.match(/^\d{1,3}(\.\d{3})*,\d{2}$/);
-  if (br) return Number(s.replace(/\./g,'').replace(',','.'));
-  const en = s.match(/^\d+(\.\d+)?$/);
-  if (en) return Number(s);
+  if (/^\d{1,3}(\.\d{3})*,\d{2}$/.test(s)) return Number(s.replace(/\./g,'').replace(',','.'));
+  if (/^\d+(\.\d+)?$/.test(s)) return Number(s);
   return Number(s.replace(/[^\d.,-]/g,'').replace(/\./g,'').replace(',','.'));
 }
-function toBRL(n) { return (n==null || isNaN(n)) ? '' : n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
-function pickParcelas(card) {
-  const by = toByIdFromCard(card);
-  let raw = by['sele_o_de_lista'] || by['quantidade_de_parcelas'] || by['numero_de_parcelas'] || '';
-  if (!raw) raw = getFirstByNames(card, ['parcela', 'parcelas', 'nº parcelas', 'numero de parcelas', 'número de parcelas']);
-  const m = String(raw||'').match(/(\d+)/);
-  return m ? m[1] : '1';
+function moneyBRNoSymbol(n){
+  const num = typeof n==='number'? n : parseNumberBR(n);
+  if (isNaN(num)) return '';
+  return num.toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
 }
-function pickValorAssessoria(card) {
-  const by = toByIdFromCard(card);
-  let raw = by['valor_da_assessoria'] || by['valor_assessoria'] || '';
-  if (!raw) raw = getFirstByNames(card, ['valor da assessoria', 'assessoria']);
-  if (!raw) {
-    const hit = (card.fields||[]).find(f => String(f?.field?.type||'').toLowerCase()==='currency');
-    raw = hit?.value || '';
+function onlyNumberBR(s){
+  const n = parseNumberBR(s);
+  return isNaN(n)? 0 : n;
+}
+function monthNamePt(m){ // 1..12
+  const arr = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  return arr[(m-1)%12];
+}
+
+// Retry com timeout exponencial
+async function fetchWithRetry(url, init={}, opts={}){
+  const attempts = opts.attempts || 3;
+  const baseDelayMs = opts.baseDelayMs || 500;
+  const timeoutMs = opts.timeoutMs || 15000;
+
+  for (let i=0;i<attempts;i++){
+    try{
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok && i < attempts-1) {
+        await new Promise(r => setTimeout(r, baseDelayMs * (i+1)));
+        continue;
+      }
+      return res;
+    } catch(e){
+      if (i === attempts-1) throw e;
+      await new Promise(r => setTimeout(r, baseDelayMs * (i+1)));
+    }
   }
-  const n = parseNumberBR(raw);
-  return isNaN(n) ? null : n;
+  throw new Error('fetchWithRetry: esgotou tentativas');
 }
-function extractNameEmailPhoneFromRecord(record) {
-  let nome = '', email = '', telefone = '';
-  for (const f of record?.record_fields || []) {
-    const t = (f?.field?.type || '').toLowerCase();
-    const id = (f?.field?.id || '').toLowerCase();
-    const label = (f?.name || '').toLowerCase();
-    if (!nome && (id === 'nome_do_contato' || label.includes('nome'))) nome = String(f.value || '');
-    if (!email && (t === 'email' || id.includes('email') || label.includes('email'))) email = String(f.value || '');
-    if (!telefone && (t === 'phone' || label.includes('telefone') || label.includes('celular') || label.includes('whats'))) telefone = String(f.value || '');
+
+/* =========================
+ * Token público (/lead/:token)
+ * =======================*/
+function makeLeadToken(payload){ // {cardId, ts}
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+function parseLeadToken(token){
+  const [body, sig] = String(token||'').split('.');
+  if (!body || !sig) throw new Error('token inválido');
+  const expected = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(body).digest('base64url');
+  if (sig !== expected) throw new Error('assinatura inválida');
+  const json = JSON.parse(Buffer.from(body,'base64url').toString('utf8'));
+  if (!json.cardId) throw new Error('payload inválido');
+  return json;
+}
+
+/* =========================
+ * Pipefy GraphQL
+ * =======================*/
+async function gql(query, variables){
+  const r = await fetch(PIPE_GRAPHQL_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${PIPE_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables })
+  });
+  const j = await r.json();
+  if (!r.ok || j.errors) throw new Error(`Pipefy GQL: ${r.status} ${JSON.stringify(j.errors||{})}`);
+  return j.data;
+}
+async function getCard(cardId){
+  const data = await gql(`query($id: ID!){
+    card(id:$id){
+      id title
+      current_phase{ id name }
+      pipe{ id name }
+      fields{ name value field{ id type } }
+      assignees{ name email }
+    }
+  }`, { id: cardId });
+  return data.card;
+}
+async function updateCardField(cardId, fieldId, newValue){
+  await gql(`mutation($input: UpdateCardFieldInput!){
+    updateCardField(input:$input){ card{ id } }
+  }`, { input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue } });
+}
+async function getTableRecord(recordId){
+  const data = await gql(`query($id: ID!){
+    table_record(id:$id){
+      id title
+      record_fields{ name value field{ id type } }
+    }
+  }`, { id: recordId });
+  return data.table_record;
+}
+async function listTableRecords(tableId, first=100, after=null){
+  const data = await gql(`query($tableId: ID!, $first: Int!, $after: String){
+    table(id:$tableId){
+      id
+      table_records(first:$first, after:$after){
+        edges{ node{ id title record_fields{ name value field{ id type } } } }
+        pageInfo{ hasNextPage endCursor }
+      }
+    }
+  }`, { tableId, first, after });
+  const edges = data?.table?.table_records?.edges || [];
+  const pageInfo = data?.table?.table_records?.pageInfo || {};
+  return { records: edges.map(e=>e.node), pageInfo };
+}
+
+/* =========================
+ * Parsing de campos do card
+ * =======================*/
+function toById(card){
+  const by={}; for (const f of card?.fields||[]) if (f?.field?.id) by[f.field.id]=f.value;
+  return by;
+}
+function getByName(card, nameSub){
+  const t = String(nameSub).toLowerCase();
+  const f = (card.fields||[]).find(ff=> String(ff?.name||'').toLowerCase().includes(t));
+  return f?.value || '';
+}
+function getFirstByNames(card, arr){
+  for (const k of arr){ const v = getByName(card, k); if (v) return v; }
+  return '';
+}
+function parseMaybeJsonArray(v){
+  try { return Array.isArray(v)? v : JSON.parse(v); }
+  catch { return v? [String(v)] : []; }
+}
+function extractNameEmailPhoneFromRecord(record){
+  let nome='', email='', telefone='';
+  for (const f of record?.record_fields||[]){
+    const t = (f?.field?.type||'').toLowerCase();
+    const id = (f?.field?.id||'').toLowerCase();
+    const label = (f?.name||'').toLowerCase();
+    if (!nome && (id==='nome_do_contato' || label.includes('nome'))) nome = String(f.value||'');
+    if (!email && (t==='email' || id.includes('email') || label.includes('email'))) email = String(f.value||'');
+    if (!telefone && (t==='phone' || label.includes('telefone') || label.includes('whats') || label.includes('celular'))) telefone = String(f.value||'');
   }
   return { nome, email, telefone };
 }
 
-// ===== Marca (nome/contato) via marcas_1 =====
-async function resolveMarcaRecordFromCard(card) {
-  const by = toByIdFromCard(card);
+// Resolve record de “marcas_1” (espelho por título ou id)
+async function resolveMarcaRecordFromCard(card){
+  const by = toById(card);
   const v = by[FIELD_ID_CONNECT_MARCA_NOME]; // 'marcas_1'
-  const arr = parseMaybeJsonArray(v);        // parse espelho "[\"Teste D4\"]" -> ["Teste D4"]
+  const arr = parseMaybeJsonArray(v);
   if (!arr.length) return null;
-
   const first = String(arr[0]).trim();
 
-  // Se vier ID numérico
-  if (/^\d+$/.test(first)) {
-    try { return await getTableRecord(first); } catch { /* segue */ }
+  if (/^\d+$/.test(first)){ // ID
+    try { return await getTableRecord(first); } catch { return null; }
   }
 
-  // Se vier TÍTULO, procurar na tabela MARCAS_TABLE_ID
+  // Título -> procurar em MARCAS_TABLE_ID
   if (!MARCAS_TABLE_ID) return null;
-  let after = null;
-  for (let i = 0; i < 50; i++) {
-    const { records, pageInfo } = await listTableRecords(MARCAS_TABLE_ID, 100, after);
-    const hit = records.find(r => String(r.title || '').trim().toLowerCase() === first.toLowerCase());
+  let after=null;
+  for (let i=0;i<50;i++){
+    const {records, pageInfo} = await listTableRecords(MARCAS_TABLE_ID, 100, after);
+    const hit = records.find(r=> String(r.title||'').trim().toLowerCase() === first.toLowerCase());
     if (hit) return hit;
     if (!pageInfo?.hasNextPage) break;
     after = pageInfo.endCursor || null;
   }
   return null;
 }
-
-async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMirror, phoneMirrorDigits }) {
+async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMirror, phoneMirrorDigits }){
   if (!contactsTableId) return null;
-
-  let after = null;
-  for (let i = 0; i < 100; i++) {
-    const { records, pageInfo } = await listTableRecords(contactsTableId, 200, after);
-
-    // 1) Bate por TITLE (no seu contato, o title é o telefone completo)
-    if (titleMirror) {
-      const byTitle = records.find(r => String(r.title || '').trim() === String(titleMirror).trim());
-      if (byTitle) return byTitle;
+  let after=null;
+  for (let i=0;i<100;i++){
+    const {records, pageInfo} = await listTableRecords(contactsTable_ID_or_CONTACTS_TABLE_ID(), 200, after);
+    // title
+    if (titleMirror){
+      const r = records.find(x => String(x.title||'').trim() === String(titleMirror).trim());
+      if (r) return r;
     }
-
-    // 2) Bate por EMAIL / PHONE em record_fields
-    for (const r of records) {
-      let emailMatch = false, phoneMatch = false;
-      for (const f of r.record_fields || []) {
-        const t = (f?.field?.type || '').toLowerCase();
-        const val = String(f?.value || '');
-        if (!emailMatch && emailMirror && t === 'email' && val.toLowerCase() === String(emailMirror).toLowerCase()) {
-          emailMatch = true;
-        }
-        if (!phoneMatch && phoneMirrorDigits && t === 'phone' && normalizePhone(val) === phoneMirrorDigits) {
-          phoneMatch = true;
-        }
-        if (emailMatch || phoneMatch) return r;
+    // email/phone
+    for (const r of records){
+      for (const f of r.record_fields||[]){
+        const t = (f?.field?.type||'').toLowerCase();
+        const val = String(f?.value||'');
+        if (emailMirror && t==='email' && val.toLowerCase()===String(emailMirror).toLowerCase()) return r;
+        if (phoneMirrorDigits && t==='phone' && normalizePhone(val)===phoneMirrorDigits) return r;
       }
     }
-
     if (!pageInfo?.hasNextPage) break;
     after = pageInfo.endCursor || null;
   }
   return null;
 }
+// Alguns ambientes passam CONTACTS_TABLE_ID como número → normalizar para string
+function contacts_table_id(){ return String(CONTACTS_TABLE_ID||'').trim(); }
+function contactsTable_ID_or_CONTACTS_TABLE_ID(){ return contacts_table_id(); }
 
-async function resolveContatoFromMarcaRecord(marcaRecord) {
-  // Campo conector "Contatos" dentro do record da marca
-  const campo = (marcaRecord?.record_fields || []).find(f =>
-    f?.field?.id === 'contatos' || String(f?.name||'').toLowerCase().includes('contato')
-  );
+async function resolveContatoFromMarcaRecord(marcaRecord){
+  const campo = (marcaRecord?.record_fields||[]).find(f=> f?.field?.id==='contatos' || String(f?.name||'').toLowerCase().includes('contato'));
   if (!campo) return { nome:'', email:'', telefone:'' };
 
   const arr = parseMaybeJsonArray(campo.value);
   const first = arr && arr[0];
   if (!first) return { nome:'', email:'', telefone:'' };
 
-  // Caso 1: já veio ID de record de Contato
-  if (/^\d+$/.test(String(first))) {
-    try {
-      const contatoRec = await getTableRecord(String(first));
-      return extractNameEmailPhoneFromRecord(contatoRec);
-    } catch {
-      // cai para o espelho
-    }
+  if (/^\d+$/.test(String(first))){
+    try { const rec = await getTableRecord(String(first)); return extractNameEmailPhoneFromRecord(rec); }
+    catch { /* espelho */ }
   }
-
-  // Caso 2: espelho — usar title/email/phone para localizar na tabela de Contatos
-  const titleMirror = String(first || '').trim();  // muitas vezes é o telefone como título
-  let emailMirror = '';
-  let phoneMirrorDigits = '';
-  for (const s of arr.map(String)) {
+  const titleMirror = String(first||'').trim();
+  let emailMirror='', phoneMirrorDigits='';
+  for (const s of arr.map(String)){
     if (!emailMirror && s.includes('@')) emailMirror = s;
-    const dig = normalizePhone(s);
-    if (!phoneMirrorDigits && dig.length >= 10) phoneMirrorDigits = dig;
+    const d = normalizePhone(s);
+    if (!phoneMirrorDigits && d.length>=10) phoneMirrorDigits = d;
   }
-
   const found = await findContatoRecordByMirror({
-    contactsTableId: CONTACTS_TABLE_ID,
-    titleMirror,
-    emailMirror,
-    phoneMirrorDigits
+    contactsTableId: contacts_table_id(),
+    titleMirror, emailMirror, phoneMirrorDigits
   });
-
   if (found) return extractNameEmailPhoneFromRecord(found);
 
-  // Fallback: devolve os espelhos
-  let nome = '';
-  if (arr.length) {
-    nome = arr.find(s => s && !String(s).includes('@') && normalizePhone(s).length < 10) || '';
-  }
-  return { nome, email: emailMirror || '', telefone: phoneMirrorDigits || '' };
+  let nome='';
+  if (arr.length) nome = arr.find(s => s && !String(s).includes('@') && normalizePhone(s).length<10) || '';
+  return { nome, email: emailMirror||'', telefone: phoneMirrorDigits||'' };
 }
 
-// ===== Documento (CPF/CNPJ) =====
-function pickDocumento(card) {
-  const prefer = ['cpf', 'cnpj', 'documento', 'doc', 'cpf/cnpj', 'cpf cnpj', 'cnpj/cpf'];
-  for (const key of prefer) {
-    const v = getFirstByNames(card, [key]);
-    const digits = onlyDigits(v);
-    if (digits.length === 11 || digits.length === 14) {
-      return { tipo: digits.length === 11 ? 'CPF' : 'CNPJ', valor: v || '' };
-    }
-  }
-  const by = toByIdFromCard(card);
-  const cnpjStart = by['cnpj'] || getFirstByNames(card, ['cnpj']);
-  if (cnpjStart) return { tipo: 'CNPJ', valor: cnpjStart };
-  return { tipo: '', valor: '' };
-}
-
-// ===== Classe =====
-async function resolveClasseFromLabelOnCard(card) {
-  const f = (card.fields || []).find(ff => {
-    const isConn = (ff?.field?.type === 'connector' || ff?.field?.type === 'table_connection');
-    const idOk  = String(ff?.field?.id || '').toLowerCase() === 'classes_inpi';
-    const lblOk = String(ff?.name || '').toLowerCase().includes('classes inpi');
-    return isConn && (idOk || lblOk);
+async function resolveClasseFromLabelOnCard(card){
+  const f = (card.fields||[]).find(ff=>{
+    const isConn = (ff?.field?.type==='connector' || ff?.field?.type==='table_connection');
+    const idOk = String(ff?.field?.id||'').toLowerCase()==='classes_inpi';
+    const lblOk = String(ff?.name||'').toLowerCase().includes('classes inpi');
+    return isConn && (idOk||lblOk);
   });
-  if (!f || !f.value) return '';
-
-  let arr = [];
-  try { arr = Array.isArray(f.value) ? f.value : JSON.parse(f.value); }
-  catch { arr = [f.value]; }
-  const first = arr && arr[0];
-  if (!first) return '';
-
-  if (/^\d+$/.test(String(first))) {
-    try { const rec = await getTableRecord(String(first)); return rec?.title || ''; }
-    catch {}
+  if (!f||!f.value) return '';
+  let arr=[]; try { arr = Array.isArray(f.value)? f.value : JSON.parse(f.value); } catch { arr=[f.value]; }
+  const first = arr && arr[0]; if (!first) return '';
+  if (/^\d+$/.test(String(first))){
+    try { const rec = await getTableRecord(String(first)); return rec?.title || ''; } catch {}
   }
-  return String(first || '');
+  return String(first||'');
 }
-
-async function resolveClasseFromCard(card, marcaRecordFallback) {
-  // 0) prioridade: conector "Classes INPI" no card
+async function resolveClasseFromCard(card, marcaRecordFallback){
   const fromCard = await resolveClasseFromLabelOnCard(card);
   if (fromCard) return fromCard;
 
-  const by = toByIdFromCard(card);
+  const by = toById(card);
 
-  // 1) conector direto configurado por env (FIELD_ID_CONNECT_CLASSES)
-  if (FIELD_ID_CONNECT_CLASSES) {
+  // por env direto, se existir
+  if (FIELD_ID_CONNECT_CLASSES){
     const v = by[FIELD_ID_CONNECT_CLASSES];
     const arr = parseMaybeJsonArray(v);
-    if (arr.length) {
+    if (arr.length){
       const first = String(arr[0]);
-      if (/^\d+$/.test(first)) {
-        try { const rec = await getTableRecord(first); return rec?.title || ''; } catch {}
-      }
-      try {
-        const mirrored = Array.isArray(v) ? v : JSON.parse(v);
-        if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
-      } catch {}
+      if (/^\d+$/.test(first)){ try { const rec = await getTableRecord(first); return rec?.title||''; } catch{} }
+      try { const mirrored = Array.isArray(v)? v : JSON.parse(v); if (Array.isArray(mirrored)&&mirrored.length) return String(mirrored[0]||''); } catch{}
     }
   }
 
-  // 2) Conector "Marcas e serviços" (marcas_2)
+  // "marcas_2"
   const v2 = by[FIELD_ID_CONNECT_CLASSE];
   const arr2 = parseMaybeJsonArray(v2);
-  if (arr2.length) {
+  if (arr2.length){
     const first = String(arr2[0]).trim();
-
-    // 2.1) veio ID numérico
-    if (/^\d+$/.test(first)) {
-      try {
+    if (/^\d+$/.test(first)){
+      try{
         const rec = await getTableRecord(first);
-        const classeField = (rec.record_fields || []).find(f =>
-          String(f?.name || '').toLowerCase().includes('classe')
-        );
-        if (classeField?.value) {
+        const classeField = (rec.record_fields||[]).find(f => String(f?.name||'').toLowerCase().includes('classe'));
+        if (classeField?.value){
           const val = classeField.value;
-          if (Array.isArray(val)) {
-            const id0 = String(val[0] || '');
-            if (/^\d+$/.test(id0)) {
-              const recClasse = await getTableRecord(id0);
-              return recClasse?.title || '';
-            }
+          if (Array.isArray(val)){
+            const id0 = String(val[0]||'');
+            if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return recClasse?.title || ''; }
           } else {
-            try {
-              const a = JSON.parse(val);
-              if (Array.isArray(a) && a.length) return String(a[0] || '');
-            } catch {
-              if (val) return String(val);
-            }
+            try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch { if (val) return String(val); }
           }
         }
         if (rec?.title) return String(rec.title);
       } catch {}
     } else {
-      // 2.2) veio TÍTULO -> procurar pelo título na tabela "Marcas (Visita)"
-      if (MARCAS2_TABLE_ID) {
-        let after = null;
-        for (let i = 0; i < 50; i++) {
-          const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
-          const rec = records.find(r => String(r.title || '').trim().toLowerCase() === first.trim().toLowerCase());
-          if (rec) {
-            const classeField = (rec.record_fields || []).find(f =>
-              String(f?.name || '').toLowerCase().includes('classe')
-            );
-            if (classeField?.value) {
+      if (MARCAS2_TABLE_ID){
+        let after=null;
+        for (let i=0;i<50;i++){
+          const {records,pageInfo} = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
+          const rec = records.find(r => String(r.title||'').trim().toLowerCase() === first.trim().toLowerCase());
+          if (rec){
+            const classeField = (rec.record_fields||[]).find(f => String(f?.name||'').toLowerCase().includes('classe'));
+            if (classeField?.value){
               const val = classeField.value;
-              if (Array.isArray(val)) {
-                const id0 = String(val[0] || '');
-                if (/^\d+$/.test(id0)) {
-                  const recClasse = await getTableRecord(id0);
-                  return recClasse?.title || '';
-                }
+              if (Array.isArray(val)){
+                const id0 = String(val[0]||'');
+                if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return recClasse?.title || ''; }
               } else {
-                try {
-                  const a = JSON.parse(val);
-                  if (Array.isArray(a) && a.length) return String(a[0] || '');
-                } catch {
-                  if (val) return String(val);
-                }
+                try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch { if (val) return String(val); }
               }
             }
-            // fallback: título do próprio record
-            return String(rec.title || '');
+            return String(rec.title||'');
           }
           if (!pageInfo?.hasNextPage) break;
           after = pageInfo.endCursor || null;
         }
       } else {
-        // Sem MARCAS2_TABLE_ID, usa o texto espelhado
-        try {
-          const mirrored = Array.isArray(v2) ? v2 : JSON.parse(v2);
-          if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
-        } catch {}
+        try { const mirrored = Array.isArray(v2)? v2 : JSON.parse(v2); if (Array.isArray(mirrored)&&mirrored.length) return String(mirrored[0]||''); } catch{}
       }
     }
   }
-
-  // 3) fallback em marcas_1 (se existir algo com "classe" ali)
-  if (marcaRecordFallback) {
-    const classeField = (marcaRecordFallback.record_fields || []).find(f =>
-      String(f?.name || '').toLowerCase().includes('classe')
-    );
+  if (marcaRecordFallback){
+    const classeField = (marcaRecordFallback.record_fields||[]).find(f=> String(f?.name||'').toLowerCase().includes('classe'));
     if (classeField?.value) return String(classeField.value);
   }
-
   return '';
 }
 
-// ===== Cofre do responsável =====
-function stripDiacritics(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
-function normalizeName(s) { return stripDiacritics(String(s || '').trim()).toLowerCase(); }
-function extractAssigneeNames(raw) {
-  const out = [];
-  const push = v => { if (v) out.push(String(v)); };
-  const tryParse = v => { if (typeof v === 'string') { try { return JSON.parse(v); } catch { return v; } } return v; };
-  const val = tryParse(raw);
-  if (Array.isArray(val)) {
-    for (const it of val) push(typeof it === 'string' ? it : (it?.name || it?.username || it?.email || it?.value));
-  } else if (typeof val === 'object' && val) {
-    push(val.name || val.username || val.email || val.value);
-  } else if (typeof val === 'string') {
-    const m = val.match(/^\s*\[.*\]\s*$/) ? tryParse(val) : null;
-    if (m && Array.isArray(m)) m.forEach(x => push(typeof x === 'string' ? x : (x?.name || x?.email)));
-    else push(val);
+// Documento (CPF/CNPJ)
+function pickDocumento(card){
+  const prefer = ['cpf','cnpj','documento','doc','cpf/cnpj','cnpj/cpf'];
+  for (const k of prefer){
+    const v = getFirstByNames(card, [k]);
+    const d = onlyDigits(v);
+    if (d.length===11) return { tipo:'CPF', valor:v };
+    if (d.length===14) return { tipo:'CNPJ', valor:v };
   }
+  const by = toById(card);
+  const cnpjStart = by['cnpj'] || getFirstByNames(card, ['cnpj']);
+  if (cnpjStart) return { tipo:'CNPJ', valor:cnpjStart };
+  return { tipo:'', valor:'' };
+}
+
+// Assignee parsing (para cofre)
+function stripDiacritics(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function normalizeName(s){ return stripDiacritics(String(s||'').trim()).toLowerCase(); }
+function extractAssigneeNames(raw){
+  const out=[]; const push=v=>{ if(v) out.push(String(v)); }; const tryParse=v=>{ if(typeof v==='string'){ try{return JSON.parse(v);} catch{return v;} } return v; };
+  const val = tryParse(raw);
+  if (Array.isArray(val)){ for (const it of val) push(typeof it==='string'? it : (it?.name||it?.username||it?.email||it?.value)); }
+  else if (typeof val==='object'&&val){ push(val.name||val.username||val.email||val.value); }
+  else if (typeof val==='string'){ const m = val.match(/^\s*\[.*\]\s*$/)? tryParse(val) : null; if (m && Array.isArray(m)) m.forEach(x=>push(typeof x==='string'? x : (x?.name||x?.email))); else push(val); }
   return [...new Set(out.filter(Boolean))];
 }
-function buildEmailMapFromEnv(env) {
-  const map = {};
-  Object.keys(env).forEach(k => {
-    if (k.startsWith('COFRE_UUID_EMAIL_')) {
-      const val = String(env[k] || '');
-      const [email, uuid] = val.split(':').map(x => x?.trim());
-      if (email && uuid) map[email.toLowerCase()] = uuid;
-    }
-  });
-  return map;
-}
-function resolveCofreUuidByCard(card) {
-  const by = toByIdFromCard(card);
+function resolveCofreUuidByCard(card){
+  const by = toById(card);
   const candidatosBrutos = [];
   if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
   if (by['vendedor_respons_vel_1']) candidatosBrutos.push(by['vendedor_respons_vel_1']);
   if (by['respons_vel_5']) candidatosBrutos.push(by['respons_vel_5']);
   if (by['representante']) candidatosBrutos.push(by['representante']);
-
   const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
-
-  const normKeys = Object.keys(COFRES_UUIDS || {}).reduce((acc, k) => { acc[normalizeName(k)] = COFRES_UUIDS[k]; return acc; }, {});
-  for (const s of nomesOuEmails) { const n = normalizeName(s); if (normKeys[n]) return normKeys[n]; }
-
-  const emailMap = buildEmailMapFromEnv(process.env);
-  for (const s of nomesOuEmails) { const maybeEmail = String(s || '').toLowerCase(); if (maybeEmail.includes('@') && emailMap[maybeEmail]) return emailMap[maybeEmail]; }
-
-  console.warn('[COFRE][NAO_ENCONTRADO]', { recebidos: nomesOuEmails, chavesCofres: Object.keys(COFRES_UUIDS || {}) });
-  if (DEFAULT_COFRE_UUID) { console.warn('[COFRE][FALLBACK] usando DEFAULT_COFRE_UUID'); return DEFAULT_COFRE_UUID; }
+  const normKeys = Object.keys(COFRES_UUIDS||{}).reduce((acc,k)=>{ acc[normalizeName(k)] = COFRES_UUIDS[k]; return acc; },{});
+  for (const s of nomesOuEmails){ const n=normalizeName(s); if (normKeys[n]) return normKeys[n]; }
+  if (DEFAULT_COFRE_UUID) return DEFAULT_COFRE_UUID;
   return null;
 }
 
-// ===== D4Sign (API) =====
-async function d4Fetch(path, method, payload) {
-  const url = `${D4_API_BASE}${path}?tokenAPI=${D4SIGN_TOKEN}&cryptKey=${D4SIGN_CRYPT_KEY}`;
-  const res = await fetch(url, {
-    method,
-    headers: { 'Content-Type': 'application/json' },
-    body: payload ? JSON.stringify(payload) : undefined
-  });
-  if (!res.ok) throw new Error(`D4 error ${res.status}: ${await res.text()}`);
-  return res.json();
+/* =========================
+ * Montagem de dados do contrato
+ * =======================*/
+function pickParcelas(card){
+  const by = toById(card);
+  let raw = by['sele_o_de_lista'] || by['quantidade_de_parcelas'] || by['numero_de_parcelas'] || '';
+  if (!raw) raw = getFirstByNames(card, ['parcelas','quantidade de parcelas','nº parcelas']);
+  const m = String(raw||'').match(/(\d+)/);
+  return m ? m[1] : '1';
 }
-async function d4CreateFromTemplateUUID({ templateUuid, fileName, variables, safeUuid }) {
-  const payload = { template: templateUuid, name: fileName, data: variables, safe: safeUuid };
-  const created = await d4Fetch('/documents/create', 'POST', payload);
-  if (!created?.uuid && safeUuid) {
-    const alt = await d4Fetch(`/documents/create/${safeUuid}`, 'POST', { template: templateUuid, name: fileName, data: variables });
-    return alt;
+function pickValorAssessoria(card){
+  const by = toById(card);
+  let raw = by['valor_da_assessoria'] || by['valor_assessoria'] || '';
+  if (!raw) raw = getFirstByNames(card, ['valor da assessoria','assessoria']);
+  if (!raw){
+    const hit = (card.fields||[]).find(f => String(f?.field?.type||'').toLowerCase()==='currency'); raw = hit?.value||'';
   }
-  return created;
-}
-async function d4AddSigners(documentKey, signers) {
-  const payload = { signers: signers.map(s => ({ email: s.email, act: '1', foreign: '0', certificadoicpbr: '0', name: s.name || s.email })) };
-  return d4Fetch(`/documents/${documentKey}/signers`, 'POST', payload);
-}
-async function d4SendToSign(documentKey, message = 'Contrato para assinatura') {
-  return d4Fetch(`/documents/${documentKey}/sendto`, 'POST', { message, emails: [], workflow: '0' });
+  const n = parseNumberBR(raw);
+  return isNaN(n)? null : n;
 }
 
-// ===== Tokens / Datas =====
-function nowParts() { const d = new Date(); return { dd: String(d.getDate()).padStart(2, '0'), MM: String(d.getMonth() + 1).padStart(2, '0'), yyyy: String(d.getFullYear()) }; }
+async function montarDados(card){
+  const by = toById(card);
 
-// ===== Montagem de variáveis do template =====
-async function buildTemplateVariablesAsync(card) {
-  const by = toByIdFromCard(card);
-  const np = nowParts();
-
-  // Marca & Nome da Marca
   const marcaRecord = await resolveMarcaRecordFromCard(card);
-  const nomeMarca = card.title || '';
+  const classe = await resolveClasseFromCard(card, marcaRecord);
 
-  // CONTATO (prioriza conector de contato na fase; fallback marcas_1; depois campos soltos)
-  let contatoNome = '', contatoEmail = '', contatoTelefone = '';
-  const contatoConnectorOnPhase = (card.fields || []).find(f =>
-    (f.field?.type === 'connector' || f.field?.type === 'table_connection') &&
-    String(f.name || '').toLowerCase().includes('contat') // "contato"/"contatos"
-  );
-  if (contatoConnectorOnPhase?.value) {
-    try {
-      const arr = Array.isArray(contatoConnectorOnPhase.value) ? contatoConnectorOnPhase.value : JSON.parse(contatoConnectorOnPhase.value);
+  // contato: prioriza conector "contato" na fase; senão, marcas_1
+  let contatoNome='', contatoEmail='', contatoTelefone='';
+  const contatoConn = (card.fields||[]).find(f => (f.field?.type==='connector'||f.field?.type==='table_connection') && String(f.name||'').toLowerCase().includes('contat'));
+  if (contatoConn?.value){
+    try{
+      const arr = Array.isArray(contatoConn.value)? contatoConn.value : JSON.parse(contatoConn.value);
       const first = arr && arr[0];
-      if (first && /^\d+$/.test(String(first))) {
+      if (first && /^\d+$/.test(String(first))){
         const rec = await getTableRecord(first);
         const ex = extractNameEmailPhoneFromRecord(rec);
         contatoNome = ex.nome || '';
         contatoEmail = ex.email || '';
         contatoTelefone = ex.telefone || '';
-      } else if (Array.isArray(arr)) {
+      } else if (Array.isArray(arr)){
         const em = arr.find(s => String(s).includes('@'));
-        const ph = arr.find(s => normalizePhone(s).length >= 10);
+        const ph = arr.find(s => normalizePhone(s).length>=10);
         contatoEmail = em ? String(em) : '';
         contatoTelefone = ph ? String(ph) : '';
       }
-    } catch (e) { console.warn('[contatoConnectorOnPhase][parse-error]', e); }
+    } catch {}
   }
-  if (marcaRecord && (!contatoNome || !contatoEmail || !contatoTelefone)) {
+  if (marcaRecord && (!contatoNome||!contatoEmail||!contatoTelefone)){
     const contato = await resolveContatoFromMarcaRecord(marcaRecord);
     contatoNome     = contatoNome     || contato.nome || '';
     contatoEmail    = contatoEmail    || contato.email || '';
@@ -644,273 +515,415 @@ async function buildTemplateVariablesAsync(card) {
   }
   if (!contatoNome)    contatoNome    = getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']);
   if (!contatoEmail)   contatoEmail   = getFirstByNames(card, ['email','e-mail']);
-  if (!contatoTelefone)contatoTelefone= getFirstByNames(card, ['telefone','celular','whats','whatsapp']);
+  if (!contatoTelefone)contatoTelefone= getFirstByNames(card, ['telefone','celular','whatsapp','whats']);
 
-  const contratante = contatoNome
-    || by['r_social_ou_n_completo']
-    || getFirstByNames(card, ['razão social','nome completo','nome do cliente'])
-    || '';
-
-  // Documento
   const doc = pickDocumento(card);
-  const cpf  = doc.tipo === 'CPF'  ? doc.valor : '';
-  const cnpj = doc.tipo === 'CNPJ' ? doc.valor : '';
+  const cpf  = doc.tipo==='CPF'?  doc.valor : '';
+  const cnpj = doc.tipo==='CNPJ'? doc.valor : '';
 
-  // Classe
-  const classe = await resolveClasseFromCard(card, marcaRecord);
+  const nParcelas = pickParcelas(card);
+  const valorAssessoria = pickValorAssessoria(card);
 
-  // Endereço
-  const rua    = by['rua']      || getFirstByNames(card, ['rua','logradouro','endereço']);
-  const numero = by['n_mero_1'] || getFirstByNames(card, ['numero','número','nº']);
-  const bairro = by['bairro']   || getFirstByNames(card, ['bairro']);
-  const cidade = by['cidade']   || getFirstByNames(card, ['cidade','município']);
-  const uf     = by['uf']       || getFirstByNames(card, ['uf','estado']);
-  const cep    = by['cep']      || getFirstByNames(card, ['cep']);
+  // serviços
+  const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
+  const servicos = [serv1].filter(Boolean);
 
-  // Assessoria
-  const nParc = pickParcelas(card);
-  const valorAssess = pickValorAssessoria(card);
-  const valorParcelaAssess = (valorAssess && Number(nParc)>0) ? toBRL(valorAssess/Number(nParc)) : '';
+  // forma pagamento assessoria
+  const formaAss = by['adiantamento_da_primeira_parcela'] || getFirstByNames(card, ['forma de pagamento','adiantamento']) || '';
 
-  // Pesquisa
-  const pesquisa = by['pesquisa'] || by['pesquisaa'] || getFirstByNames(card, ['pesquisa']);
-  const valorPesquisa = (pesquisa === 'Isenta') ? 'R$ 00,00' : '';
-  const formaPesquisa = (pesquisa === 'Isenta') ? '---' : '';
-  const dataPesquisa  = (pesquisa === 'Isenta') ? '00/00/00' : '';
-
-  const formaAssess = by['adiantamento_da_primeira_parcela'] || getFirstByNames(card, ['forma de pagamento','adiantamento']);
-  const dataAssess  = by['data_da_venda_1'] || getFirstByNames(card, ['data da venda','data de pagamento']);
+  // vendedor (para cofre)
+  const vendedor = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'])[0] || '';
 
   return {
-    // Identificação / contato
-    contratante_1: contratante,
+    cardId: card.id,
+    titulo: card.title,
+    nome: contatoNome || (by['r_social_ou_n_completo']||''),
     cpf, cnpj,
-    rg: by['rg'] || getFirstByNames(card, ['rg']) || '',
-
-    // Endereço
-    rua, bairro, numero, nome_da_cidade: cidade, cidade, uf, cep,
-
-    // Contato
-    'E-mail': contatoEmail || '',
+    rg: by['rg'] || '',
+    email: contatoEmail || '',
     telefone: contatoTelefone || '',
+    classe: classe || '',
+    servicos,
+    parcelas: nParcelas,
+    valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
+    forma_pagto_assessoria: formaAss,
+    vendedor
+  };
+}
 
-    // Marca
-    nome_da_marca: nomeMarca,
-    classe: String(classe || ''),
+// Variáveis para Template Word (ADD)
+function montarADDWord(d, nowInfo){
+  const valorTotalNum = onlyNumberBR(d.valor_total);
+  const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
+  const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
 
-    // Assessoria
-    numero_de_parcelas_da_assessoria: nParc,
-    valor_da_parcela_da_assessoria: valorParcelaAssess,
-    forma_de_pagamento_da_assessoria: formaAssess || '',
-    data_de_pagamento_da_assessoria: dataAssess || '',
+  // Pesquisa (regra: 99% Isenta)
+  const valorPesquisa = 'R$ 00,00';
+  const formaPesquisa = '---';
+  const dataPesquisa  = '00/00/00';
 
-    // Pesquisa
+  return {
+    contratante_1: d.nome || '',
+    cpf: d.cpf || '',
+    cnpj: d.cnpj || '',
+    rg: d.rg || '',
+
+    rua: getFieldFromText(d, 'rua') || '', // se quiser, preencha via montarDados com endereço completo
+    bairro: getFieldFromText(d, 'bairro') || '',
+    numero: getFieldFromText(d, 'numero') || '',
+    nome_da_cidade: getFieldFromText(d, 'cidade') || '',
+    cidade: getFieldFromText(d, 'cidade') || '',
+    uf: getFieldFromText(d, 'uf') || '',
+    cep: getFieldFromText(d, 'cep') || '',
+
+    'E-mail': d.email || '',
+    telefone: d.telefone || '',
+
+    nome_da_marca: d.titulo || '',
+    classe: d.classe || '',
+
+    numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
+    valor_da_parcela_da_assessoria: toBRL(valorParcela),
+    forma_de_pagamento_da_assessoria: d.forma_pagto_assessoria || '',
+    data_de_pagamento_da_assessoria: '',
+
     valor_da_pesquisa: valorPesquisa,
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    // Taxa (placeholders)
     valor_da_taxa: '',
-    forma_de_pagamento_da_taxa: by['tipo_de_pagamento_benef_cio'] || by['tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento']) || '',
+    forma_de_pagamento_da_taxa: '',
     data_de_pagamento_da_taxa: '',
 
-    // Datas
-    dia: np.dd, mes: np.MM, ano: np.yyyy,
-
-    // Template
-    TEMPLATE_UUID_CONTRATO: by['TEMPLATE_UUID_CONTRATO'] || TEMPLATE_UUID_CONTRATO || '',
+    dia: String(nowInfo.dia).padStart(2,'0'),
+    mes: String(nowInfo.mes).padStart(2,'0'),
+    ano: String(nowInfo.ano),
+    TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
 }
+function getFieldFromText(){ return ''; } // placeholder (endereços detalhados podem ser adicionados se necessário)
 
-// ===== Rotas de fluxo =====
-async function handleCriarLinkConfirmacao(req, res) {
+function montarSigners(d){
+  const list = [];
+  if (d.email) list.push({ email: d.email, name: d.nome || d.titulo || d.email, act:'1', foreign:'0', send_email:'1' });
+  if (EMAIL_ASSINATURA_EMPRESA) list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
+  // dedup
+  const seen={}; return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
+}
+
+/* =========================
+ * Locks e preflight
+ * =======================*/
+const locks = new Set();
+function acquireLock(key){ if (locks.has(key)) return false; locks.add(key); return true; }
+function releaseLock(key){ locks.delete(key); }
+async function preflightDNS(){ /* opcional: warmup */ }
+
+/* =========================
+ * D4Sign via secure.d4sign.com.br (validados)
+ * =======================*/
+async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplateword`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+  const body = { name_document: title, templates: { [templateId]: varsObj } };
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch { json = null; }
+  if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
+    console.error('[ERRO D4SIGN WORD]', res.status, text);
+    throw new Error(`Falha D4Sign(WORD): ${res.status}`);
+  }
+  return json.uuid || json.uuid_document;
+}
+async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidDocument}/createlist`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+  const body = { signers: signers.map(s => ({ email: s.email, name: s.name, act: s.act || '1', foreign: s.foreign || '0', send_email: s.send_email || '1' })) };
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  const text = await res.text();
+  if (!res.ok) { console.error('[ERRO D4SIGN createlist]', res.status, text); throw new Error(`Falha ao cadastrar signatários: ${res.status}`); }
+  return text;
+}
+async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', language = 'pt' } = {}) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidDocument}/download`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+  const body = { type, language, document: 'false' };
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  const text = await res.text();
+  let json; try { json = JSON.parse(text); } catch { json = null; }
+  if (!res.ok || !json?.url) {
+    console.error('[ERRO D4SIGN download]', res.status, text);
+    throw new Error(`Falha ao gerar URL de download: ${res.status}`);
+  }
+  return json; // { url, name }
+}
+async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
+  message = '',
+  skip_email = '0',
+  workflow = '0'
+} = {}) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
+  url.searchParams.set('cryptKey', cryptKey);
+  const body = { message, skip_email, workflow, tokenAPI };
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  const text = await res.text();
+  if (!res.ok) {
+    console.error('[ERRO D4SIGN sendtosigner]', res.status, text);
+    throw new Error(`Falha ao enviar para assinatura: ${res.status}`);
+  }
+  return text;
+}
+
+/* =========================
+ * Fase Pipefy (mover após gerar)
+ * =======================*/
+async function moveCardToPhaseSafe(cardId, phaseId){
+  if (!phaseId) return;
+  await gql(`mutation($input: MoveCardToPhaseInput!){
+    moveCardToPhase(input:$input){ card{ id } }
+  }`, { input: { card_id: Number(cardId), destination_phase_id: Number(phaseId) } }).catch(e=>{
+    console.warn('[WARN] moveCardToPhaseSafe', e.message||e);
+  });
+}
+
+/* =========================
+ * Rotas — VENDEDOR (UX bonita)
+ * =======================*/
+// Página de revisão
+app.get('/lead/:token', async (req, res) => {
   try {
-    const cardId = req.method === 'GET' ? (req.query.cardId || req.query.card_id) : (req.body.cardId || req.body.card_id);
+    const { cardId } = parseLeadToken(req.params.token);
+    const data = await gql(
+      `query($cardId: ID!) {
+        card(id: $cardId) {
+          id title assignees { name }
+          fields { name value field { id } }
+        }
+      }`,
+      { cardId }
+    );
+    const card = data.card;
+    const d = await montarDados(card);
+
+    const html = `
+<!doctype html><html lang="pt-BR"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Revisar contrato</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:0;background:#f7f7f7;color:#111}
+  .wrap{max-width:860px;margin:24px auto;padding:0 16px}
+  .card{background:#fff;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:24px;margin-bottom:16px}
+  h1{font-size:22px;margin:0 0 12px}
+  h2{font-size:16px;margin:24px 0 8px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600;cursor:pointer}
+  .muted{color:#666}
+  .label{font-weight:700}
+</style>
+<div class="wrap">
+  <div class="card">
+    <h1>Revisar dados do contrato</h1>
+    <div class="muted">Card #${card.id}</div>
+
+    <h2>Contratante(s)</h2>
+    <div class="grid">
+      <div><div class="label">Nome</div><div>${d.nome||'-'}</div></div>
+      <div><div class="label">CPF</div><div>${d.cpf||'-'}</div></div>
+      <div><div class="label">RG</div><div>${d.rg||'-'}</div></div>
+    </div>
+
+    <h2>Contato</h2>
+    <div class="grid">
+      <div><div class="label">E-mail</div><div>${d.email||'-'}</div></div>
+      <div><div class="label">Telefone</div><div>${d.telefone||'-'}</div></div>
+    </div>
+
+    <h2>Serviços</h2>
+    <div>${(d.servicos||[]).join(', ') || '-'}</div>
+
+    <h2>Remuneração</h2>
+    <div class="grid">
+      <div><div class="label">Parcelas</div><div>${String(d.parcelas||'1')}</div></div>
+      <div><div class="label">Valor total</div><div>${moneyBRNoSymbol(onlyNumberBR(d.valor_total))}</div></div>
+      <div><div class="label">Forma de pagamento</div><div>${d.forma_pagto_assessoria||'-'}</div></div>
+    </div>
+
+    <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
+      <button class="btn" type="submit">Gerar contrato</button>
+    </form>
+    <p class="muted" style="margin-top:12px">Ao clicar, o documento será criado no D4Sign e o card poderá ser movido para "Contrato enviado".</p>
+  </div>
+</div>
+`;
+    res.setHeader('content-type','text/html; charset=utf-8');
+    return res.status(200).send(html);
+  } catch (e) {
+    console.error('[ERRO /lead]', e.message||e);
+    return res.status(400).send('Link inválido ou expirado.');
+  }
+});
+
+// Gera o documento e mostra botões de Baixar PDF e Enviar para assinatura
+app.post('/lead/:token/generate', async (req, res) => {
+  try {
+    const { cardId } = parseLeadToken(req.params.token);
+    const lockKey = `lead:${cardId}`;
+    if (!acquireLock(lockKey)) return res.status(200).send('Processando, tente novamente em instantes.');
+
+    preflightDNS().catch(()=>{});
+
+    const card = await getCard(cardId);
+    const d = await montarDados(card);
+
+    const now = new Date();
+    const nowInfo = { dia: now.getDate(), mes: now.getMonth()+1, ano: now.getFullYear(), mesNome: monthNamePt(now.getMonth()+1) };
+    const add = montarADDWord(d, nowInfo);
+    const signers = montarSigners(d);
+
+    const uuidSafe = COFRES_UUIDS[d.vendedor] || DEFAULT_COFRE_UUID;
+    if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
+
+    // 1) Cria doc e 2) cadastra signatários (AINDA NÃO envia para assinatura)
+    const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, card.title, add);
+    await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
+
+    // mover fase se configurado
+    await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
+
+    releaseLock(lockKey);
+
+    // 3) Página com duas ações: Download PDF e Enviar para assinatura
+    const token = req.params.token;
+    const html = `
+<!doctype html><meta charset="utf-8"><title>Contrato gerado</title>
+<style>
+  body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;color:#111;margin:0}
+  .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:640px;width:92%}
+  h2{margin:0 0 12px}
+  .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+  .btn{display:inline-block;padding:12px 16px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600}
+  .muted{color:#666}
+</style>
+<div class="box">
+  <h2>Contrato gerado com sucesso</h2>
+  <p class="muted">UUID do documento: ${uuidDoc}</p>
+  <div class="row">
+    <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF</a>
+    <form method="POST" action="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/send" style="display:inline">
+      <button class="btn" type="submit">Enviar para assinatura</button>
+    </form>
+    <a class="btn" href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(token)}">Voltar</a>
+  </div>
+</div>`;
+    return res.status(200).send(html);
+
+  } catch (e) {
+    console.error('[ERRO LEAD-GENERATE]', e.message || e);
+    return res.status(400).send('Falha ao gerar o contrato.');
+  }
+});
+
+// Download (redirect para URL temporária do D4Sign)
+app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
+  try {
+    const { cardId } = parseLeadToken(req.params.token);
+    if (!cardId) throw new Error('token inválido');
+    const uuidDoc = req.params.uuid;
+
+    const { url: downloadUrl } = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, { type: 'PDF', language: 'pt' });
+    return res.redirect(302, downloadUrl);
+  } catch (e) {
+    console.error('[ERRO lead download]', e.message || e);
+    return res.status(400).send('Falha ao gerar link de download.');
+  }
+});
+
+// Enviar para assinatura
+app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
+  try {
+    const { cardId } = parseLeadToken(req.params.token);
+    if (!cardId) throw new Error('token inválido');
+    const uuidDoc = req.params.uuid;
+
+    await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
+      message: 'Olá! Há um documento aguardando sua assinatura.',
+      skip_email: '0',
+      workflow: '0'
+    });
+
+    const okHtml = `
+<!doctype html><meta charset="utf-8"><title>Documento enviado</title>
+<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px}</style>
+<div class="box">
+  <h2>Documento enviado para assinatura</h2>
+  <p>Os signatários foram notificados.</p>
+  <p><a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}">Voltar</a></p>
+</div>`;
+    return res.status(200).send(okHtml);
+
+  } catch (e) {
+    console.error('[ERRO sendtosigner]', e.message || e);
+    return res.status(400).send('Falha ao enviar para assinatura.');
+  }
+});
+
+/* =========================
+ * Geração do link no Pipefy (ao marcar checkbox)
+ * =======================*/
+app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
+  try {
+    const cardId = req.body.cardId || req.body.card_id || req.query.cardId || req.query.card_id;
     if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
 
-    const confirmUrl = makeSignedURL('/novo-pipe/confirmar', { cardId });
-    console.log('[link-confirmacao]', { cardId, confirmUrl, PUBLIC_BASE_URL });
-
-    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, confirmUrl);
-    return res.json({ ok: true, link: confirmUrl });
-  } catch (e) {
-    return res.status(500).json({ error: String(e.message || e) });
-  }
-}
-app.post('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao);
-app.get('/novo-pipe/criar-link-confirmacao', handleCriarLinkConfirmacao);
-
-app.get('/novo-pipe/confirmar', async (req, res) => {
-  try {
-    if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
-    const { cardId } = req.query;
-    if (!cardId) return res.status(400).send('Faltou cardId');
-
-    const card = await getCardFields(cardId);
-    if (NOVO_PIPE_ID && String(card?.pipe?.id) !== String(NOVO_PIPE_ID)) return res.status(400).send('Card não pertence ao pipe configurado');
-    if (FASE_VISITA_ID && String(card?.current_phase?.id) !== String(FASE_VISITA_ID)) return res.status(400).send('Card não está na fase esperada');
-
-    const vars = await buildTemplateVariablesAsync(card);
-
-    const resumo = `
-      <h2>Confirmar dados do cliente</h2>
-      <p><b>Contratante:</b> ${vars.contratante_1 || ''}</p>
-      <p><b>CPF:</b> ${vars.cpf || ''} &nbsp; <b>CNPJ:</b> ${vars.cnpj || ''} &nbsp; <b>RG:</b> ${vars.rg || ''}</p>
-      <p><b>Endereço:</b> ${vars.rua || ''}, ${vars.numero || ''} - ${vars.bairro || ''} - ${vars.cidade || ''}/${vars.uf || ''} - ${vars.cep || ''}</p>
-      <p><b>Contato:</b> ${vars['E-mail'] || ''} &nbsp; ${vars.telefone || ''}</p>
-      <p><b>Marca:</b> ${vars.nome_da_marca || ''} &nbsp; <b>Classe:</b> ${vars.classe || ''}</p>
-      <p><b>Assessoria:</b> ${vars.numero_de_parcelas_da_assessoria || ''} x ${vars.valor_da_parcela_da_assessoria || ''}</p>
-      <p><b>Pesquisa:</b> ${vars.valor_da_pesquisa} via ${vars.forma_de_pagamento_da_pesquisa} em ${vars.data_de_pagamento_da_pesquisa}</p>
-      <form method="POST" action="/novo-pipe/gerar">
-        <input type="hidden" name="cardId" value="${cardId}"/>
-        <input type="hidden" name="sig" value="${new URL(req.originalUrl, PUBLIC_BASE_URL).searchParams.get('sig')||''}"/>
-        <button type="submit">Gerar contrato</button>
-      </form>
-    `;
-    res.send(`<!doctype html><html><body>${resumo}</body></html>`);
-  } catch (e) {
-    res.status(500).send(String(e.message || e));
-  }
-});
-
-app.post('/novo-pipe/gerar', async (req, res) => {
-  try {
-    const { cardId, sig } = req.body;
-    if (!cardId) return res.status(400).send('Faltou cardId');
-    if (!sig) return res.status(401).send('assinatura ausente');
-
-    const card = await getCardFields(cardId);
-    const vars = await buildTemplateVariablesAsync(card);
-
-    const templateUuid = vars.TEMPLATE_UUID_CONTRATO || TEMPLATE_UUID_CONTRATO;
-    if (!templateUuid) throw new Error('TEMPLATE_UUID_CONTRATO não encontrado (card/env)');
-
-    const safeUuid = resolveCofreUuidByCard(card);
-    if (!safeUuid) throw new Error('Não foi possível resolver o cofre pelo responsável do card');
-
-    const fileName = `Contrato_${card.title || card.id}.docx`;
-    const created = await d4CreateFromTemplateUUID({ templateUuid, fileName, variables: vars, safeUuid });
-    const documentKey = created.uuid || created.documentKey || created.key;
-    if (!documentKey) throw new Error('Não foi possível obter documentKey do D4');
-
-    const nextUrl = makeSignedURL(`/contratos/${documentKey}`, { cardId });
-    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, nextUrl);
-
-    res.redirect(nextUrl);
-  } catch (e) {
-    res.status(500).send(String(e.message || e));
-  }
-});
-
-// Tela pós-geração — baixar e enviar por API (sem abrir portal)
-app.get('/contratos/:documentKey', async (req, res) => {
-  try {
-    if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
-    const { documentKey } = req.params;
-    const { cardId } = req.query;
-
-    const card = await getCardFields(cardId);
-    const vars = await buildTemplateVariablesAsync(card);
-    const downloadUrl = makeSignedURL(`/download/${documentKey}`, { cardId });
-
-    const emailCliente = vars['E-mail'] || '';
-    const emailInterno = process.env.EMAIL_ASSINATURA_EMPRESA || '';
-
-    const html = `<!doctype html>
-<html>
-  <body>
-    <h2>Contrato gerado</h2>
-    <p><b>DocumentKey:</b> ${documentKey}</p>
-    <p><a href="${downloadUrl}">Baixar documento (PDF)</a></p>
-
-    <hr/>
-    <h3>Enviar para assinatura</h3>
-    <form method="POST" action="/contratos/${documentKey}/enviar-assinatura">
-      <input type="hidden" name="cardId" value="${cardId || ''}"/>
-      <input type="hidden" name="sig" value="${new URL(req.originalUrl, PUBLIC_BASE_URL).searchParams.get('sig')||''}"/>
-
-      <p><label>E-mails dos signatários (separe por vírgula):<br/>
-        <input name="emails" type="text" style="width:420px"
-               value="${[emailCliente, emailInterno].filter(Boolean).join(', ')}" />
-      </label></p>
-
-      <button type="submit">Enviar para assinatura (API)</button>
-    </form>
-  </body>
-</html>`;
-    res.send(html);
-  } catch (e) {
-    res.status(500).send(String(e.message || e));
-  }
-});
-
-app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
-  try {
-    const { documentKey } = req.params;
-    const { cardId, sig, emails } = req.body;
-    if (!cardId) return res.status(400).send('Faltou cardId');
-    if (!sig) return res.status(401).send('assinatura ausente');
-
-    const card = await getCardFields(cardId);
-    const vars = await buildTemplateVariablesAsync(card);
-
-    // Monta lista de e-mails: prioridade ao que veio do formulário
-    let list = String(emails || '')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-
-    // Se vazio, cai para os defaults (cliente + interno)
-    if (!list.length) {
-      if (vars['E-mail']) list.push(vars['E-mail']);
-      if (process.env.EMAIL_ASSINATURA_EMPRESA) list.push(process.env.EMAIL_ASSINATURA_EMPRESA);
+    const card = await getCard(cardId);
+    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
+      return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
+    }
+    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
+      return res.status(400).json({ error: 'Card não está na fase esperada' });
     }
 
-    // Dedup simples
-    list = [...new Set(list.map(s => s.toLowerCase()))];
+    const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
+    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
 
-    if (!list.length) throw new Error('Nenhum e-mail de assinatura informado ou configurado');
+    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
 
-    // Adiciona signatários e envia pelo D4 API
-    const signers = list.map(email => ({ email }));
-    await d4AddSigners(documentKey, signers);
-    await d4SendToSign(documentKey, 'Contrato para assinatura');
-
-    const back = makeSignedURL(`/contratos/${documentKey}`, { cardId });
-    const html = `<!doctype html>
-<html>
-  <body>
-    <h2>Contrato enviado para assinatura</h2>
-    <p><b>DocumentKey:</b> ${documentKey}</p>
-    <p><b>Assinantes:</b> ${list.join(', ')}</p>
-    <p><a href="${back}">Voltar</a></p>
-  </body>
-</html>`;
-    res.send(html);
+    return res.json({ ok:true, link:url });
   } catch (e) {
-    res.status(500).send(String(e.message || e));
+    console.error('[ERRO criar-link]', e.message||e);
+    return res.status(500).json({ error: String(e.message||e) });
   }
 });
-
-// ===== Download do PDF via API (sem redirecionar ao portal) =====
-app.get('/download/:documentKey', async (req, res) => {
-  try {
-    if (!validateSignature(req)) return res.status(401).send('assinatura inválida');
-    const { documentKey } = req.params;
-
-    const url = `${D4_API_BASE}/documents/${documentKey}/download?tokenAPI=${D4SIGN_TOKEN}&cryptKey=${D4SIGN_CRYPT_KEY}`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`D4 download ${r.status}`);
-
-    res.setHeader('Content-Disposition', `attachment; filename="Contrato_${documentKey}.pdf"`);
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/pdf');
-    r.body.pipe(res);
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
+app.get('/novo-pipe/criar-link-confirmacao', async (req,res)=>{ // opcional GET
+  req.body = req.body || {};
+  req.body.cardId = req.query.cardId || req.query.card_id;
+  return app._router.handle(req, res, ()=>{});
 });
 
-// ===== Debug =====
+/* =========================
+ * Debug / Health
+ * =======================*/
 app.get('/_echo/*', (req, res) => {
   res.json({
     method: req.method,
@@ -923,104 +936,74 @@ app.get('/_echo/*', (req, res) => {
     query: req.query,
   });
 });
-
-app.get('/debug/card', async (req, res) => {
-  try {
+app.get('/debug/card', async (req,res)=>{
+  try{
     const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
-    const card = await getCardFields(cardId);
+    const card = await getCard(cardId);
     res.json({
       id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
-      fields: (card.fields || []).map(f => ({ name: f.name, id: f.field?.id, type: f.field?.type, value: f.value }))
+      fields: (card.fields||[]).map(f => ({ name:f.name, id:f.field?.id, type:f.field?.type, value:f.value }))
     });
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+  }catch(e){ res.status(500).json({ error:String(e.message||e) }); }
 });
+app.get('/health', (_req,res)=> res.json({ ok:true }));
 
-app.get('/debug/vars', async (req, res) => {
-  try {
-    const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
-    const card = await getCardFields(cardId); const vars = await buildTemplateVariablesAsync(card); res.json(vars);
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-});
-
-app.get('/debug/marca-contato', async (req, res) => {
-  try {
-    const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
-    const card = await getCardFields(cardId);
-    const marcaRecord = await resolveMarcaRecordFromCard(card);
-    let contato = { nome:'', email:'', telefone:'' };
-    if (marcaRecord) contato = await resolveContatoFromMarcaRecord(marcaRecord);
-    const classe = await resolveClasseFromCard(card, marcaRecord);
-    res.json({ cardTitle: card.title, marcaRecord, contato, classe });
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-});
-
-app.get('/debug/cofre', async (req, res) => {
-  try {
-    const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
-    const card = await getCardFields(cardId);
-    const by = toByIdFromCard(card);
-    const candidatosBrutos = [];
-    if (by['vendedor_respons_vel'])   candidatosBrutos.push(by['vendedor_respons_vel']);
-    if (by['vendedor_respons_vel_1']) candidatosBrutos.push(by['vendedor_respons_vel_1']);
-    if (by['respons_vel_5'])          candidatosBrutos.push(by['respons_vel_5']);
-    if (by['representante'])          candidatosBrutos.push(by['representante']);
-    const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
-    const escolhido = resolveCofreUuidByCard(card);
-    res.json({ pipe: card?.pipe, phase: card?.current_phase, candidatosBrutos, nomesOuEmails, cofreEscolhido: escolhido,
-      possuiFallback: Boolean(DEFAULT_COFRE_UUID), chavesCofres: Object.keys(COFRES_UUIDS || {}) });
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-});
-
-// ===== Health =====
-app.get('/health', (_req, res) => res.json({ ok: true }));
-
-// ===== Start + dump de rotas =====
+/* =========================
+ * Start
+ * =======================*/
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
-  const list = [];
-  app._router.stack.forEach(m => {
-    if (m.route && m.route.path) {
-      const methods = Object.keys(m.route.methods).map(x => x.toUpperCase()).join(',');
+  const list=[];
+  app._router.stack.forEach(m=>{
+    if (m.route && m.route.path){
+      const methods = Object.keys(m.route.methods).map(x=>x.toUpperCase()).join(',');
       list.push(`${methods} ${m.route.path}`);
-    } else if (m.name === 'router' && m.handle.stack) {
-      m.handle.stack.forEach(h => {
+    } else if (m.name==='router' && m.handle?.stack){
+      m.handle.stack.forEach(h=>{
         const route = h.route;
-        if (route) {
-          const methods = Object.keys(route.methods).map(x => x.toUpperCase()).join(',');
+        if (route){
+          const methods = Object.keys(route.methods).map(x=>x.toUpperCase()).join(',');
           list.push(`${methods} ${route.path}`);
         }
       });
     }
   });
-  console.log('[rotas-registradas]'); list.sort().forEach(r => console.log('  -', r));
+  console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
 });
 
 /**
- * Checklist de ENV (EasyPanel):
+ * Checklist de ENV (EasyPanel)
  *
  * PUBLIC_BASE_URL=https://seu-dominio.com
  * PUBLIC_LINK_SECRET=um-segredo-forte
+ *
  * PIPE_API_KEY=...
  * PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
- * D4SIGN_CRYPT_KEY=...
- * D4SIGN_TOKEN=...
- * D4_API_BASE=https://api.d4sign.com.br/v2
- * TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
  *
- * # campo do card para gravar link
+ * # Campos/Tabelas
  * PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
- *
- * # conectores/tabelas
  * FIELD_ID_CONNECT_MARCA_NOME=marcas_1
  * FIELD_ID_CONNECT_CLASSE=marcas_2
- * FIELD_ID_CONNECT_CLASSES=classes_inpi      # (se existir no card)
+ * FIELD_ID_CONNECT_CLASSES=classes_inpi
+ * MARCAS_TABLE_ID=MmqLNaPk
+ * CONTACTS_TABLE_ID=306505297
+ * MARCAS2_TABLE_ID=tnDAtg7l
+ * CLASSES_TABLE_ID=306521337
  *
- * MARCAS_TABLE_ID=MmqLNaPk                   # Marcas - Captação
- * CONTACTS_TABLE_ID=306505297                # Contatos
- * MARCAS2_TABLE_ID=tnDAtg7l                  # Marcas (Visita)
- * CLASSES_TABLE_ID=306521337                 # Classes INPI
+ * # D4Sign
+ * D4SIGN_TOKEN=...
+ * D4SIGN_CRYPT_KEY=...
+ * TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
  *
- * # cofres (exemplos)
+ * # Fases (opcional)
+ * NOVO_PIPE_ID=306505295
+ * FASE_VISITA_ID=339299691
+ * PHASE_ID_CONTRATO_ENVIADO=XXXXXXXX
+ *
+ * # Assinatura
+ * EMAIL_ASSINATURA_EMPRESA=contratos@empresa.com.br
+ *
+ * # Cofres
  * COFRE_UUID_EDNA=...
  * COFRE_UUID_GREYCE=...
  * COFRE_UUID_MARIANA=...
@@ -1031,8 +1014,5 @@ app.listen(PORT, () => {
  * COFRE_UUID_RONALDO=...
  * COFRE_UUID_BRENDA=...
  * COFRE_UUID_MAURO=...
- * DEFAULT_COFRE_UUID=...   # (opcional)
- *
- * # assinatura
- * EMAIL_ASSINATURA_EMPRESA=contratos@empresa.com.br
+ * DEFAULT_COFRE_UUID=... (opcional)
  */
