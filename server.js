@@ -811,7 +811,7 @@ app.get('/contratos/:documentKey', async (req, res) => {
 app.post('/contratos/:documentKey/enviar-assinatura', async (req, res) => {
   try {
     const { documentKey } = req.params;
-    aconst { cardId, sig } = req.body;
+    const { cardId, sig } = req.body;
     if (!cardId) return res.status(400).send('Faltou cardId');
     if (!sig) return res.status(401).send('assinatura ausente');
 
