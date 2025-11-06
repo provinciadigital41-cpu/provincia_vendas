@@ -329,108 +329,128 @@ async function resolveClasseFromLabelOnCard(card) {
   if (!first) return '';
 
   if (/^\d+$/.test(String(first))) {
-    try { const rec = await getTableRecord(String(first)); return rec?.title || ''; }
-    catch { /* ignore */ }
+    try {
+      const rec = await getTableRecord(String(first));
+      return rec?.title || '';
+    } catch {}
   }
   return String(first || '');
 }
 
 async function resolveClasseFromCard(card, marcaRecordFallback) {
-  // prioridade: conector "Classes INPI" no card
+  // 0) prioridade: conector "Classes INPI" no card
   const fromCard = await resolveClasseFromLabelOnCard(card);
   if (fromCard) return fromCard;
 
   const by = toByIdFromCard(card);
 
-  // conector direto configurado por env
+  // 1) conector direto configurado por env (FIELD_ID_CONNECT_CLASSES)
   if (FIELD_ID_CONNECT_CLASSES) {
     const v = by[FIELD_ID_CONNECT_CLASSES];
     const arr = Array.isArray(v) ? v : v ? [v] : [];
     if (arr.length) {
       const first = String(arr[0]);
       if (/^\d+$/.test(first)) {
-        try { const rec = await getTableRecord(first); return rec?.title || ''; } catch {}
+        try {
+          const rec = await getTableRecord(first);
+          return rec?.title || '';
+        } catch {}
       }
-      try { const mirrored = Array.isArray(v) ? v : JSON.parse(v); if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || ''); } catch {}
-    }
-  }
-
-  // 2) Conector "Marcas e serviços" (marcas_2) → se vier TÍTULO, abre na tabela MARCAS2_TABLE_ID
-const v2 = by[FIELD_ID_CONNECT_CLASSE];
-const arr2 = Array.isArray(v2) ? v2 : v2 ? [v2] : [];
-if (arr2.length) {
-  const first = String(arr2[0]);
-
-  // Caso 2.1: veio ID numérico (mantém como já estava)
-  if (/^\d+$/.test(first)) {
-    try {
-      const rec = await getTableRecord(first);
-      // procurar um campo que contenha "classe" e seguir o conector
-      const classeField = (rec.record_fields || []).find(f =>
-        String(f?.name || '').toLowerCase().includes('classe')
-      );
-      if (classeField?.value) {
-        const val = classeField.value;
-        if (Array.isArray(val)) {
-          const id0 = String(val[0] || '');
-          if (/^\d+$/.test(id0)) {
-            const recClasse = await getTableRecord(id0);
-            return recClasse?.title || '';
-          }
-        } else {
-          try {
-            const a = JSON.parse(val);
-            if (Array.isArray(a) && a.length) return String(a[0] || '');
-          } catch {
-            if (val) return String(val);
-          }
-        }
-      }
-      if (rec?.title) return String(rec.title);
-    } catch {}
-  } else {
-    // Caso 2.2: veio TÍTULO (espelho) -> procurar pelo título na tabela Marcas (Visita)
-    if (MARCAS2_TABLE_ID) {
-      let after = null;
-      for (let i = 0; i < 50; i++) {
-        const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
-        const rec = records.find(r => String(r.title || '').trim().toLowerCase() === first.trim().toLowerCase());
-        if (rec) {
-          // dentro do record, achar um campo que contenha “classe” e seguir o conector
-          const classeField = (rec.record_fields || []).find(f =>
-            String(f?.name || '').toLowerCase().includes('classe')
-          );
-          if (classeField?.value) {
-            const val = classeField.value;
-            if (Array.isArray(val)) {
-              const id0 = String(val[0] || '');
-              if (/^\d+$/.test(id0)) {
-                const recClasse = await getTableRecord(id0);
-                return recClasse?.title || '';
-              }
-            } else {
-              try {
-                const a = JSON.parse(val);
-                if (Array.isArray(a) && a.length) return String(a[0] || '');
-              } catch {
-                if (val) return String(val);
-              }
-            }
-          }
-          // fallback: título do próprio record
-          return String(rec.title || '');
-        }
-        if (!pageInfo?.hasNextPage) break;
-        after = pageInfo.endCursor || null;
-      }
-    } else {
-      // Sem MARCAS2_TABLE_ID, última tentativa: usar o texto que veio
       try {
-        const mirrored = Array.isArray(v2) ? v2 : JSON.parse(v2);
+        const mirrored = Array.isArray(v) ? v : JSON.parse(v);
         if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
       } catch {}
     }
   }
+
+  // 2) Conector "Marcas e serviços" (marcas_2)
+  const v2 = by[FIELD_ID_CONNECT_CLASSE];
+  const arr2 = Array.isArray(v2) ? v2 : v2 ? [v2] : [];
+  if (arr2.length) {
+    const first = String(arr2[0]);
+
+    // 2.1) veio ID numérico
+    if (/^\d+$/.test(first)) {
+      try {
+        const rec = await getTableRecord(first);
+        const classeField = (rec.record_fields || []).find(f =>
+          String(f?.name || '').toLowerCase().includes('classe')
+        );
+        if (classeField?.value) {
+          const val = classeField.value;
+          if (Array.isArray(val)) {
+            const id0 = String(val[0] || '');
+            if (/^\d+$/.test(id0)) {
+              const recClasse = await getTableRecord(id0);
+              return recClasse?.title || '';
+            }
+          } else {
+            try {
+              const a = JSON.parse(val);
+              if (Array.isArray(a) && a.length) return String(a[0] || '');
+            } catch {
+              if (val) return String(val);
+            }
+          }
+        }
+        if (rec?.title) return String(rec.title);
+      } catch {}
+    } else {
+      // 2.2) veio TÍTULO -> procurar pelo título na tabela "Marcas (Visita)"
+      const { MARCAS2_TABLE_ID } = process.env;
+      if (MARCAS2_TABLE_ID) {
+        let after = null;
+        for (let i = 0; i < 50; i++) {
+          const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
+          const rec = records.find(r =>
+            String(r.title || '').trim().toLowerCase() === first.trim().toLowerCase()
+          );
+          if (rec) {
+            const classeField = (rec.record_fields || []).find(f =>
+              String(f?.name || '').toLowerCase().includes('classe')
+            );
+            if (classeField?.value) {
+              const val = classeField.value;
+              if (Array.isArray(val)) {
+                const id0 = String(val[0] || '');
+                if (/^\d+$/.test(id0)) {
+                  const recClasse = await getTableRecord(id0);
+                  return recClasse?.title || '';
+                }
+              } else {
+                try {
+                  const a = JSON.parse(val);
+                  if (Array.isArray(a) && a.length) return String(a[0] || '');
+                } catch {
+                  if (val) return String(val);
+                }
+              }
+            }
+            // fallback: título do próprio record
+            return String(rec.title || '');
+          }
+          if (!pageInfo?.hasNextPage) break;
+          after = pageInfo.endCursor || null;
+        }
+      } else {
+        // Sem MARCAS2_TABLE_ID, usa o texto espelhado
+        try {
+          const mirrored = Array.isArray(v2) ? v2 : JSON.parse(v2);
+          if (Array.isArray(mirrored) && mirrored.length) return String(mirrored[0] || '');
+        } catch {}
+      }
+    }
+  }
+
+  // 3) fallback em marcas_1 (se existir algo com "classe" ali)
+  if (marcaRecordFallback) {
+    const classeField = (marcaRecordFallback.record_fields || []).find(f =>
+      String(f?.name || '').toLowerCase().includes('classe')
+    );
+    if (classeField?.value) return String(classeField.value);
+  }
+
+  return '';
 }
 
 // ===== Cofre do responsável =====
