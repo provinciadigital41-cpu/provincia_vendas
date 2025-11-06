@@ -525,9 +525,6 @@ async function montarDados(card){
   
   // TIPOS DE MARCA (card → fallback no registro de Marcas (Visita))
   let tipoMarca = '';
-  const by = toById(card);
-
-  // 1) pega direto do card (por id/label)
   tipoMarca = checklistToText(
     by['tipo_de_marca'] ||
     by['checklist_vertical'] ||          // se o id estiver genérico
