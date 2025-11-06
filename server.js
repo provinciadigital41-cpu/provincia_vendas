@@ -395,8 +395,8 @@ function pickDocumento(card) {
 
 async function resolveClasseFromCard(card, marcaRecordFallback) {
   // 0) prioridade: achar "Classes INPI" direto no card
-  const fromLabel = await resolveClasseFromLabelOnCard(card);
-  if (fromLabel) return fromLabel;
+  const fromCard = await resolveClasseFromLabelOnCard(card);
+  if (fromCard) return fromCard;
   // ... restante da função permanece igual (conector FIELD_ID_CONNECT_CLASSES, depois marcas_2 etc.)
 
   // 1) Conector DIRETO para "classes inpi" na fase (se existir)
