@@ -15,7 +15,7 @@ app.set('trust proxy', true);
 
 // Log básico
 app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ua="${req.get('user-agent')}" ip=${req.ip}`);
   next();
 });
 
@@ -30,25 +30,29 @@ let {
   PIPE_API_KEY,
   PIPE_GRAPHQL_ENDPOINT,
 
-  FIELD_ID_CONNECT_MARCA_NOME,
-  FIELD_ID_CONNECT_CLASSE,
-  FIELD_ID_CONNECT_CLASSES,
-  MARCAS_TABLE_ID,
-  CONTACTS_TABLE_ID,
-  MARCAS2_TABLE_ID,
-  CLASSES_TABLE_ID,
+  // IDs de tabelas / campos
+  FIELD_ID_CONNECT_MARCA_NOME, // marcas_1 (Marcas - Captação)
+  FIELD_ID_CONNECT_CLASSE,     // marcas_2 (Marcas (Visita))
+  FIELD_ID_CONNECT_CLASSES,    // classes_inpi (se existir no card)
+  MARCAS_TABLE_ID,             // MmqLNaPk (Marcas - Captação)
+  CONTACTS_TABLE_ID,           // 306505297 (Contatos)
+  MARCAS2_TABLE_ID,            // tnDAtg7l (Marcas - Visita)
+  CLASSES_TABLE_ID,            // 306521337 (Classes INPI)
 
-  PIPEFY_FIELD_LINK_CONTRATO,
+  PIPEFY_FIELD_LINK_CONTRATO,  // d4_contrato
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
 
+  // D4Sign
   D4SIGN_TOKEN,
   D4SIGN_CRYPT_KEY,
   TEMPLATE_UUID_CONTRATO,
 
+  // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
 
+  // Cofres
   COFRE_UUID_EDNA,
   COFRE_UUID_GREYCE,
   COFRE_UUID_MARIANA,
@@ -74,6 +78,7 @@ if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUB
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
 if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
 
+// Cofres mapeados por responsável
 const COFRES_UUIDS = {
   'EDNA BERTO DA SILVA': COFRE_UUID_EDNA,
   'Greyce Maria Candido Souza': COFRE_UUID_GREYCE,
@@ -88,29 +93,7 @@ const COFRES_UUIDS = {
 };
 
 /* =========================
- * Cache leve e índices
- * =======================*/
-const cache = new Map();
-function cacheGet(k){ const hit = cache.get(k); if (!hit) return null; if (hit.exp < Date.now()){ cache.delete(k); return null; } return hit.val; }
-function cacheSet(k, val, ttlMs=5*60*1000){ cache.set(k, { val, exp: Date.now()+ttlMs }); }
-const titleIndex = new Map();
-function idxKey(tableId){ return `idx:${tableId}`; }
-function titleNorm(s){ return String(s||'').trim().toLowerCase(); }
-function idxSet(tableId, title, id){
-  if (!tableId || !title || !id) return;
-  const k = idxKey(tableId);
-  const m = titleIndex.get(k) || new Map();
-  m.set(titleNorm(title), String(id));
-  titleIndex.set(k, m);
-}
-function idxGet(tableId, title){
-  if (!tableId || !title) return null;
-  const m = titleIndex.get(idxKey(tableId));
-  return m ? m.get(titleNorm(title)) : null;
-}
-
-/* =========================
- * Helpers
+ * Helpers gerais
  * =======================*/
 function onlyDigits(s){ return String(s||'').replace(/\D/g,''); }
 function normalizePhone(s){ return onlyDigits(s); }
@@ -123,9 +106,21 @@ function parseNumberBR(v){
   if (/^\d+(\.\d+)?$/.test(s)) return Number(s);
   return Number(s.replace(/[^\d.,-]/g,'').replace(/\./g,'').replace(',','.'));
 }
-function onlyNumberBR(s){ const n = parseNumberBR(s); return isNaN(n)? 0 : n; }
+function moneyBRNoSymbol(n){
+  const num = typeof n==='number'? n : parseNumberBR(n);
+  if (isNaN(num)) return '';
+  return num.toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function onlyNumberBR(s){
+  const n = parseNumberBR(s);
+  return isNaN(n)? 0 : n;
+}
+
+// Datas — meses por extenso (capitalizados) e formatações auxiliares
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function monthNamePt(mIndex1to12) { return MESES_PT[(Math.max(1, Math.min(12, Number(mIndex1to12))) - 1)]; }
+
+// Aceita "DD/MM/YYYY" (Pipefy) ou ISO; devolve Date válido ou null
 function parsePipeDateToDate(value){
   if (!value) return null;
   const s = String(value).trim();
@@ -138,6 +133,7 @@ function parsePipeDateToDate(value){
   const d = new Date(s);
   return isNaN(d) ? null : d;
 }
+// Retorna "DD/MM/YY"
 function fmtDMY2(value){
   const d = value instanceof Date ? value : parsePipeDateToDate(value);
   if (!d) return '';
@@ -146,10 +142,12 @@ function fmtDMY2(value){
   const yy = String(d.getFullYear()).slice(-2);
   return `${dd}/${mm}/${yy}`;
 }
+
+// Retry com timeout exponencial
 async function fetchWithRetry(url, init={}, opts={}){
   const attempts = opts.attempts || 3;
   const baseDelayMs = opts.baseDelayMs || 500;
-  const timeoutMs = opts.timeoutMs || 12000;
+  const timeoutMs = opts.timeoutMs || 15000;
 
   for (let i=0;i<attempts;i++){
     try{
@@ -171,9 +169,9 @@ async function fetchWithRetry(url, init={}, opts={}){
 }
 
 /* =========================
- * Token público
+ * Token público (/lead/:token)
  * =======================*/
-function makeLeadToken(payload){
+function makeLeadToken(payload){ // {cardId, ts}
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(body).digest('base64url');
   return `${body}.${sig}`;
@@ -192,19 +190,16 @@ function parseLeadToken(token){
  * Pipefy GraphQL
  * =======================*/
 async function gql(query, variables){
-  const r = await fetchWithRetry(PIPE_GRAPHQL_ENDPOINT, {
+  const r = await fetch(PIPE_GRAPHQL_ENDPOINT, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${PIPE_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables })
-  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 8000 });
+  });
   const j = await r.json();
   if (!r.ok || j.errors) throw new Error(`Pipefy GQL: ${r.status} ${JSON.stringify(j.errors||{})}`);
   return j.data;
 }
 async function getCard(cardId){
-  const ck = `card:${cardId}`;
-  const hit = cacheGet(ck);
-  if (hit) return hit;
   const data = await gql(`query($id: ID!){
     card(id:$id){
       id title
@@ -214,9 +209,7 @@ async function getCard(cardId){
       assignees{ name email }
     }
   }`, { id: cardId });
-  const card = data.card;
-  cacheSet(ck, card, 60_000);
-  return card;
+  return data.card;
 }
 async function updateCardField(cardId, fieldId, newValue){
   await gql(`mutation($input: UpdateCardFieldInput!){
@@ -224,17 +217,27 @@ async function updateCardField(cardId, fieldId, newValue){
   }`, { input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue } });
 }
 async function getTableRecord(recordId){
-  const ck = `rec:${recordId}`;
-  const hit = cacheGet(ck); if (hit) return hit;
   const data = await gql(`query($id: ID!){
     table_record(id:$id){
       id title
       record_fields{ name value field{ id type } }
     }
   }`, { id: recordId });
-  const rec = data.table_record;
-  cacheSet(ck, rec);
-  return rec;
+  return data.table_record;
+}
+async function listTableRecords(tableId, first=100, after=null){
+  const data = await gql(`query($tableId: ID!, $first: Int!, $after: String){
+    table(id:$tableId){
+      id
+      table_records(first:$first, after:$after){
+        edges{ node{ id title record_fields{ name value field{ id type } } } }
+        pageInfo{ hasNextPage endCursor }
+      }
+    }
+  }`, { tableId, first, after });
+  const edges = data?.table?.table_records?.edges || [];
+  const pageInfo = data?.table?.table_records?.pageInfo || {};
+  return { records: edges.map(e=>e.node), pageInfo };
 }
 
 /* =========================
@@ -257,50 +260,100 @@ function parseMaybeJsonArray(v){
   try { return Array.isArray(v)? v : JSON.parse(v); }
   catch { return v? [String(v)] : []; }
 }
-
-/* =========================
- * Conexões: extrair IDs
- * =======================*/
-function extractConnectedRecordIds(value){
-  const arr = parseMaybeJsonArray(value);
-  const out = [];
-  for (const item of arr){
-    if (!item) continue;
-    if (typeof item === 'object'){
-      const cand = item.id || item.record_id || item.recordId || item.value || (item.node && item.node.id);
-      if (cand && /^\d+$/.test(String(cand))) { out.push(String(cand)); continue; }
-    }
-    const s = String(item);
-    if (/^\d+$/.test(s)) { out.push(s); continue; }
-    const m = s.match(/(^|[^\d])(\d{3,})([^\d]|$)/);
-    if (m) out.push(String(m[2]));
-  }
-  return [...new Set(out)];
-}
 function checklistToText(v) {
   const arr = parseMaybeJsonArray(v);
   return Array.isArray(arr) ? arr.join(', ') : String(v || '');
 }
+function extractNameEmailPhoneFromRecord(record){
+  let nome='', email='', telefone='';
+  for (const f of record?.record_fields||[]){
+    const t = (f?.field?.type||'').toLowerCase();
+    const id = (f?.field?.id||'').toLowerCase();
+    const label = (f?.name||'').toLowerCase();
+    if (!nome && (id==='nome_do_contato' || label.includes('nome'))) nome = String(f.value||'');
+    if (!email && (t==='email' || id.includes('email') || label.includes('email'))) email = String(f.value||'');
+    if (!telefone && (t==='phone' || label.includes('telefone') || label.includes('whats') || label.includes('celular'))) telefone = String(f.value||'');
+  }
+  return { nome, email, telefone };
+}
 
-/* =========================
- * Marca — resolver a partir do card principal
- * =======================*/
+// Resolve record de “marcas_1” (espelho por título ou id)
 async function resolveMarcaRecordFromCard(card){
   const by = toById(card);
-  const v = by[FIELD_ID_CONNECT_MARCA_NOME];
-  const ids = extractConnectedRecordIds(v);
-  if (ids.length){
-    try{
-      const rec = await getTableRecord(ids[0]);
-      return rec;
-    } catch {}
+  const v = by[FIELD_ID_CONNECT_MARCA_NOME]; // 'marcas_1'
+  const arr = parseMaybeJsonArray(v);
+  if (!arr.length) return null;
+  const first = String(arr[0]).trim();
+
+  if (/^\d+$/.test(first)){ // ID
+    try { return await getTableRecord(first); } catch { return null; }
+  }
+
+  if (!MARCAS_TABLE_ID) return null;
+  let after=null;
+  for (let i=0;i<50;i++){
+    const {records, pageInfo} = await listTableRecords(MARCAS_TABLE_ID, 100, after);
+    const hit = records.find(r=> String(r.title||'').trim().toLowerCase() === first.toLowerCase());
+    if (hit) return hit;
+    if (!pageInfo?.hasNextPage) break;
+    after = pageInfo.endCursor || null;
   }
   return null;
 }
+async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMirror, phoneMirrorDigits }){
+  if (!contactsTableId) return null;
+  let after=null;
+  for (let i=0;i<100;i++){
+    const {records, pageInfo} = await listTableRecords(contactsTableId, 200, after);
+    if (titleMirror){
+      const r = records.find(x => String(x.title||'').trim() === String(titleMirror).trim());
+      if (r) return r;
+    }
+    for (const r of records){
+      for (const f of r.record_fields||[]){
+        const t = (f?.field?.type||'').toLowerCase();
+        const val = String(f?.value||'');
+        if (emailMirror && t==='email' && val.toLowerCase()===String(emailMirror).toLowerCase()) return r;
+        if (phoneMirrorDigits && t==='phone' && normalizePhone(val)===phoneMirrorDigits) return r;
+      }
+    }
+    if (!pageInfo?.hasNextPage) break;
+    after = pageInfo.endCursor || null;
+  }
+  return null;
+}
+function contacts_table_id(){ return String(CONTACTS_TABLE_ID||'').trim(); }
 
-/* =========================
- * Classe
- * =======================*/
+async function resolveContatoFromMarcaRecord(marcaRecord){
+  const campo = (marcaRecord?.record_fields||[]).find(f=> f?.field?.id==='contatos' || String(f?.name||'').toLowerCase().includes('contato'));
+  if (!campo) return { nome:'', email:'', telefone:'' };
+
+  const arr = parseMaybeJsonArray(campo.value);
+  const first = arr && arr[0];
+  if (!first) return { nome:'', email:'', telefone:'' };
+
+  if (/^\d+$/.test(String(first))){
+    try { const rec = await getTableRecord(String(first)); return extractNameEmailPhoneFromRecord(rec); }
+    catch { /* espelho */ }
+  }
+  const titleMirror = String(first||'').trim();
+  let emailMirror='', phoneMirrorDigits='';
+  for (const s of arr.map(String)){
+    if (!emailMirror && s.includes('@')) emailMirror = s;
+    const d = normalizePhone(s);
+    if (!phoneMirrorDigits && d.length>=10) phoneMirrorDigits = d;
+  }
+  const found = await findContatoRecordByMirror({
+    contactsTableId: contacts_table_id(),
+    titleMirror, emailMirror, phoneMirrorDigits
+  });
+  if (found) return extractNameEmailPhoneFromRecord(found);
+
+  let nome='';
+  if (arr.length) nome = arr.find(s => s && !String(s).includes('@') && normalizePhone(s).length<10) || '';
+  return { nome, email: emailMirror||'', telefone: phoneMirrorDigits||'' };
+}
+
 async function resolveClasseFromLabelOnCard(card){
   const f = (card.fields||[]).find(ff=>{
     const isConn = (ff?.field?.type==='connector' || ff?.field?.type==='table_connection');
@@ -309,65 +362,83 @@ async function resolveClasseFromLabelOnCard(card){
     return isConn && (idOk||lblOk);
   });
   if (!f||!f.value) return '';
-  const recIds = extractConnectedRecordIds(f.value);
-  if (recIds.length){
-    try { const rec = await getTableRecord(recIds[0]); return rec?.title || ''; } catch {}
+  let arr=[]; try { arr = Array.isArray(f.value)? f.value : JSON.parse(f.value); } catch { arr=[f.value]; }
+  const first = arr && arr[0]; if (!first) return '';
+  if (/^\d+$/.test(String(first))){
+    try { const rec = await getTableRecord(String(first)); return rec?.title || ''; } catch {}
   }
-  const first = parseMaybeJsonArray(f.value)[0];
   return String(first||'');
-}
-function normalizeClasseToNumbersOnly(classeStr){
-  if (!classeStr) return '';
-  const nums = String(classeStr).match(/\d+/g) || [];
-  return nums.join(', ');
 }
 async function resolveClasseFromCard(card, marcaRecordFallback){
   const fromCard = await resolveClasseFromLabelOnCard(card);
-  if (fromCard) return normalizeClasseToNumbersOnly(fromCard);
+  if (fromCard) return fromCard;
 
   const by = toById(card);
 
   if (FIELD_ID_CONNECT_CLASSES){
     const v = by[FIELD_ID_CONNECT_CLASSES];
-    const recIds = extractConnectedRecordIds(v);
-    if (recIds.length){
-      try { const rec = await getTableRecord(recIds[0]); return normalizeClasseToNumbersOnly(rec?.title||''); } catch{}
-    } else {
-      const first = parseMaybeJsonArray(v)[0];
-      if (first) return normalizeClasseToNumbersOnly(String(first));
+    const arr = parseMaybeJsonArray(v);
+    if (arr.length){
+      const first = String(arr[0]);
+      if (/^\d+$/.test(first)){ try { const rec = await getTableRecord(first); return rec?.title||''; } catch{} }
+      try { const a = Array.isArray(v)? v : JSON.parse(v); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch{}
     }
   }
 
   const v2 = by[FIELD_ID_CONNECT_CLASSE];
-  const recIds2 = extractConnectedRecordIds(v2);
-  if (recIds2.length){
-    try{
-      const rec = await getTableRecord(recIds2[0]);
-      const classeField = (rec.record_fields||[]).find(f => String(f?.name||'').toLowerCase().includes('classe'));
-      if (classeField?.value){
-        const innerIds = extractConnectedRecordIds(classeField.value);
-        if (innerIds.length){ const recClasse = await getTableRecord(innerIds[0]); return normalizeClasseToNumbersOnly(recClasse?.title || ''); }
-        const val = classeField.value;
-        if (Array.isArray(val)) return normalizeClasseToNumbersOnly(String(val[0]||''));
-        try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return normalizeClasseToNumbersOnly(String(a[0]||'')); } catch { if (val) return normalizeClasseToNumbersOnly(String(val)); }
+  const arr2 = parseMaybeJsonArray(v2);
+  if (arr2.length){
+    const first = String(arr2[0]).trim();
+    if (/^\d+$/.test(first)){
+      try{
+        const rec = await getTableRecord(first);
+        const classeField = (rec.record_fields||[]).find(f => String(f?.name||'').toLowerCase().includes('classe'));
+        if (classeField?.value){
+          const val = classeField.value;
+          if (Array.isArray(val)){
+            const id0 = String(val[0]||'');
+            if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return recClasse?.title || ''; }
+          } else {
+            try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch { if (val) return String(val); }
+          }
+        }
+        if (rec?.title) return String(rec.title);
+      } catch {}
+    } else {
+      if (MARCAS2_TABLE_ID){
+        let after=null;
+        for (let i=0;i<50;i++){
+          const {records,pageInfo} = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
+          const rec = records.find(r => String(r.title||'').trim().toLowerCase() === first.trim().toLowerCase());
+          if (rec){
+            const classeField = (rec.record_fields||[]).find(f => String(f?.name||'').toLowerCase().includes('classe'));
+            if (classeField?.value){
+              const val = classeField.value;
+              if (Array.isArray(val)){
+                const id0 = String(val[0]||'');
+                if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return recClasse?.title || ''; }
+              } else {
+                try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch { if (val) return String(val); }
+              }
+            }
+            return String(rec.title||'');
+          }
+          if (!pageInfo?.hasNextPage) break;
+          after = pageInfo.endCursor || null;
+        }
+      } else {
+        try { const a = Array.isArray(v2)? v2 : JSON.parse(v2); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch{}
       }
-      if (rec?.title) return normalizeClasseToNumbersOnly(String(rec.title));
-    } catch {}
-  } else {
-    const first2 = parseMaybeJsonArray(v2)[0];
-    if (first2) return normalizeClasseToNumbersOnly(String(first2));
+    }
   }
-
   if (marcaRecordFallback){
     const classeField = (marcaRecordFallback.record_fields||[]).find(f=> String(f?.name||'').toLowerCase().includes('classe'));
-    if (classeField?.value) return normalizeClasseToNumbersOnly(String(classeField.value));
+    if (classeField?.value) return String(classeField.value);
   }
   return '';
 }
 
-/* =========================
- * Documento
- * =======================*/
+// Documento (CPF/CNPJ)
 function pickDocumento(card){
   const prefer = ['cpf','cnpj','documento','doc','cpf/cnpj','cnpj/cpf'];
   for (const k of prefer){
@@ -382,8 +453,33 @@ function pickDocumento(card){
   return { tipo:'', valor:'' };
 }
 
+// Assignee parsing (para cofre)
+function stripDiacritics(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function normalizeName(s){ return stripDiacritics(String(s||'').trim()).toLowerCase(); }
+function extractAssigneeNames(raw){
+  const out=[]; const push=v=>{ if(v) out.push(String(v)); }; const tryParse=v=>{ if(typeof v==='string'){ try{return JSON.parse(v);} catch{return v;} } return v; };
+  const val = tryParse(raw);
+  if (Array.isArray(val)){ for (const it of val) push(typeof it==='string'? it : (it?.name||it?.username||it?.email||it?.value)); }
+  else if (typeof val==='object'&&val){ push(val.name||val.username||val.email||val.value); }
+  else if (typeof val==='string'){ const m = val.match(/^\s*\[.*\]\s*$/)? tryParse(val) : null; if (m && Array.isArray(m)) m.forEach(x=>push(typeof x==='string'? x : (x?.name||x?.email))); else push(val); }
+  return [...new Set(out.filter(Boolean))];
+}
+function resolveCofreUuidByCard(card){
+  const by = toById(card);
+  const candidatosBrutos = [];
+  if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
+  if (by['vendedor_respons_vel_1']) candidatosBrutos.push(by['vendedor_respons_vel_1']);
+  if (by['respons_vel_5']) candidatosBrutos.push(by['respons_vel_5']);
+  if (by['representante']) candidatosBrutos.push(by['representante']);
+  const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
+  const normKeys = Object.keys(COFRES_UUIDS||{}).reduce((acc,k)=>{ acc[normalizeName(k)] = COFRES_UUIDS[k]; return acc; },{});
+  for (const s of nomesOuEmails){ const n=normalizeName(s); if (normKeys[n]) return normKeys[n]; }
+  if (DEFAULT_COFRE_UUID) return DEFAULT_COFRE_UUID;
+  return null;
+}
+
 /* =========================
- * Taxa
+ * Regras específicas: Taxa e Classe
  * =======================*/
 function computeValorTaxaBRLFromFaixa(d){
   let valorTaxaSemRS = '';
@@ -392,9 +488,14 @@ function computeValorTaxaBRLFromFaixa(d){
   else if (taxa.includes('880')) valorTaxaSemRS = '880,00';
   return valorTaxaSemRS ? `R$ ${valorTaxaSemRS}` : '';
 }
+function normalizeClasseToNumbersOnly(classeStr){
+  if (!classeStr) return '';
+  const nums = String(classeStr).match(/\d+/g) || [];
+  return nums.join(', ');
+}
 
 /* =========================
- * Montagem de dados
+ * Montagem de dados do contrato
  * =======================*/
 function pickParcelas(card){
   const by = toById(card);
@@ -430,26 +531,25 @@ async function montarDados(card){
     getFirstByNames(card, ['tipo de marca'])
   );
 
+  // 2) se não achar no card, tenta no conector "marcas_2" (Marcas - Visita)
   if (!tipoMarca) {
-    // fallback 2: tenta extrair do registro conectado em FIELD_ID_CONNECT_CLASSE (quando ele é um registro de marca)
-    const v2 = by[FIELD_ID_CONNECT_CLASSE];
-    const first2 = parseMaybeJsonArray(v2)[0];
+    const v2 = by[FIELD_ID_CONNECT_CLASSE]; // 'marcas_2'
+    const arr2 = parseMaybeJsonArray(v2);
+    const first2 = arr2 && arr2[0];
     if (first2) {
       try {
         let rec = null;
         if (/^\d+$/.test(String(first2))) {
+          // veio ID numérico
           rec = await getTableRecord(String(first2));
         } else if (MARCAS2_TABLE_ID) {
-          const idIdx = idxGet(MARCAS2_TABLE_ID, String(first2));
-          if (idIdx) rec = await getTableRecord(idIdx);
-          else {
-            let after = null;
-            for (let i = 0; i < 10 && !rec; i++) {
-              const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 200, after);
-              rec = records.find(r => titleNorm(r.title)===titleNorm(String(first2)));
-              if (!pageInfo?.hasNextPage) break;
-              after = pageInfo.endCursor || null;
-            }
+          // veio título espelhado — procurar por título na tabela
+          let after = null;
+          for (let i = 0; i < 50; i++) {
+            const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
+            rec = records.find(r => String(r.title || '').trim().toLowerCase() === String(first2).trim().toLowerCase());
+            if (rec || !pageInfo?.hasNextPage) break;
+            after = pageInfo.endCursor || null;
           }
         }
         if (rec) {
@@ -476,12 +576,23 @@ async function montarDados(card){
         contatoNome = ex.nome || '';
         contatoEmail = ex.email || '';
         contatoTelefone = ex.telefone || '';
+      } else if (Array.isArray(arr)){
+        const em = arr.find(s => String(s).includes('@'));
+        const ph = arr.find(s => normalizePhone(s).length>=10);
+        contatoEmail = em ? String(em) : '';
+        contatoTelefone = ph ? String(ph) : '';
       }
-    }catch{}
+    } catch {}
   }
-  if (!contatoEmail) contatoEmail = getFirstByNames(card, ['email','e-mail']) || '';
-  if (!contatoTelefone) contatoTelefone = getFirstByNames(card, ['telefone','celular','whatsapp','whats']) || '';
-  if (!contatoNome) contatoNome = getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']) || '';
+  if (marcaRecord && (!contatoNome||!contatoEmail||!contatoTelefone)){
+    const contato = await resolveContatoFromMarcaRecord(marcaRecord);
+    contatoNome     = contatoNome     || contato.nome || '';
+    contatoEmail    = contatoEmail    || contato.email || '';
+    contatoTelefone = contatoTelefone || contato.telefone || '';
+  }
+  if (!contatoNome)    contatoNome    = getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']);
+  if (!contatoEmail)   contatoEmail   = getFirstByNames(card, ['email','e-mail']);
+  if (!contatoTelefone)contatoTelefone= getFirstByNames(card, ['telefone','celular','whatsapp','whats']);
 
   // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
@@ -490,22 +601,22 @@ async function montarDados(card){
   const cpfCampo  = by['cpf']    || '';
   const cnpjCampo = by['cnpj_1'] || '';
 
-  // Pagto assessoria
+  // Parcelas / Assessoria
   const nParcelas = pickParcelas(card);
   const valorAssessoria = pickValorAssessoria(card);
   const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
 
-  // Serviços simples (quando existir)
+  // Serviços / quantidade de marca
   const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
   const temMarca = Boolean(getFirstByNames(card, ['marca']) || by['marca'] || by['marcas_1'] || card.title);
   const qtdMarca = temMarca ? '1' : '';
   const servicos = [serv1].filter(Boolean);
 
-  // Taxa (INPI)
+  // TAXA
   const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
   const valorTaxaBRL = computeValorTaxaBRLFromFaixa({ taxa_faixa: taxaFaixaRaw });
   const formaPagtoTaxa = by['tipo_de_pagamento'] || '';
-  const dataPagtoTaxa = fmtDMY2(by['data_de_pagamento_taxa'] || ''); // NOVO
+  const dataPagtoTaxa = fmtDMY2(by['data_de_pagamento_taxa'] || '');
 
   // ENDEREÇO (CNPJ)
   const cepCnpj    = by['cep_do_cnpj']     || '';
@@ -522,10 +633,10 @@ async function montarDados(card){
   const riscoMarca = by['risco_da_marca'] || '';
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
-  const estadoCivil = by['estado_civ_l'] || ''; // NOVO
-  const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || ''); // NOVO
+  const estadoCivil = by['estado_civ_l'] || '';
+  const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || '');
 
-  // Campo de texto longo: CLASSES E ESPECIFICAÇÕES → ${"marcas-espec"}
+  // === NOVO: texto longo "CLASSES E ESPECIFICAÇÕES" (id: classe)
   const marcasEspec = by['classe'] || getFirstByNames(card, ['classes e especificações']) || '';
 
   return {
@@ -539,7 +650,7 @@ async function montarDados(card){
     rg: by['rg'] || '',
     estado_civil: estadoCivil,
 
-    // Seleção CPF/CNPJ e campos específicos
+    // Campos específicos doc
     cpf_campo: cpfCampo,
     cnpj_campo: cnpjCampo,
 
@@ -547,28 +658,27 @@ async function montarDados(card){
     email: contatoEmail || '',
     telefone: contatoTelefone || '',
 
-    // Marca / Classe / Quantidade
+    // Marca / Classe / Qtd marca
     classe: classe || '',
-    marcas_espec: marcasEspec || '',
     qtd_marca: qtdMarca,
     tipo_marca: tipoMarca || '',
+    // NOVO:
+    marcas_espec: marcasEspec || '',
 
-    // Serviços
+    // Serviços / Assessoria
     servicos,
-
-    // Remuneração (assessoria)
     parcelas: nParcelas,
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
     data_pagto_assessoria: dataPagtoAssessoria,
 
-    // Taxa (INPI)
+    // TAXA
     taxa_faixa: taxaFaixaRaw || '',
     valor_taxa_brl: valorTaxaBRL,
     forma_pagto_taxa: formaPagtoTaxa,
     data_pagto_taxa: dataPagtoTaxa,
 
-    // Endereço CNPJ
+    // Endereço (CNPJ)
     cep_cnpj: cepCnpj,
     rua_cnpj: ruaCnpj,
     bairro_cnpj: bairroCnpj,
@@ -581,14 +691,12 @@ async function montarDados(card){
     nacionalidade,
     selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
 
+    // Vendedor
     vendedor
   };
 }
 
-/* =========================
- * Template ADD
- * =======================*/
-function onlyNumberBR(s){ const n = parseNumberBR(s); return isNaN(n)? 0 : n; }
+// Variáveis para Template Word (ADD)
 function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
@@ -609,19 +717,20 @@ function montarADDWord(d, nowInfo){
   const formaDaTaxa = d.forma_pagto_taxa || '';
   const dataDaTaxa  = d.data_pagto_taxa || '';
 
+  // Data atual (mês por extenso capitalizado)
   const dia = String(nowInfo.dia).padStart(2,'0');
   const mesNum = String(nowInfo.mes).padStart(2,'0');
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
   const baseVars = {
-    // Contratante
+    // Identificação / contrato
     contratante_1: d.nome || '',
     cpf: d.cpf || '',
     cnpj: d.cnpj || '',
     rg: d.rg || '',
-    'Estado Civíl': d.estado_civil || '', // NOVO
-    'Estado Civil': d.estado_civil || '', // tolerância
+    'Estado Civíl': d.estado_civil || '',
+    'Estado Civil': d.estado_civil || '',
 
     // Doc adicionais
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
@@ -644,10 +753,12 @@ function montarADDWord(d, nowInfo){
     // Marca / Classe / Qtd marca / Risco
     nome_da_marca: d.titulo || '',
     classe: d.classe || '',
-    'marcas-espec': d.marcas_espec || '',
     'Quantidade depósitos/processos de MARCA': d.qtd_marca || '',
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
+
+    // ===== ALTERADO: agora usa o texto longo de d.marcas_espec
+    'marcas-espec': d.marcas_espec || '',
 
     // Dados pessoais adicionais
     Nacionalidade: d.nacionalidade || '',
@@ -656,8 +767,8 @@ function montarADDWord(d, nowInfo){
     numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
     valor_da_parcela_da_assessoria: toBRL(valorParcela),
     forma_de_pagamento_da_assessoria: d.forma_pagto_assessoria || '',
-    data_de_pagamento_da_assessoria: d.data_pagto_assessoria || '', // NOVO
-    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '', // NOVO
+    data_de_pagamento_da_assessoria: d.data_pagto_assessoria || '',
+    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
 
     // Pesquisa
     valor_da_pesquisa: valorPesquisa,
@@ -672,7 +783,7 @@ function montarADDWord(d, nowInfo){
     'Forma de pagamento da Taxa': formaDaTaxa,
     'Data de pagamento da Taxa': dataDaTaxa,
 
-    // Data
+    // Datas (numérico E por extenso)
     dia,
     mes: mesNum,
     ano,
@@ -680,23 +791,13 @@ function montarADDWord(d, nowInfo){
     'Mês': mesExtenso,
     'Mes': mesExtenso,
 
+    // Template
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
 
   return baseVars;
 }
 
-/* =========================
- * Assinantes (D4Sign)
- * =======================*/
-function extractAssigneeNames(raw){
-  const out=[]; const push=v=>{ if(v) out.push(String(v)); }; const tryParse=v=>{ if(typeof v==='string'){ try{return JSON.parse(v);} catch{return v;} } return v; };
-  const val = tryParse(raw);
-  if (Array.isArray(val)){ for (const it of val) push(typeof it==='string'? it : (it?.name||it?.username||it?.email||it?.value)); }
-  else if (typeof val==='object'&&val){ push(val.name||val.username||val.email||val.value); }
-  else if (typeof val==='string'){ const m = val.match(/^\s*\[.*\]\s*$/)? tryParse(val) : null; if (m && Array.isArray(m)) m.forEach(x=>push(typeof x==='string'? x : (x?.name||x?.email))); else push(val); }
-  return [...new Set(out.filter(Boolean))];
-}
 function montarSigners(d){
   const list = [];
   if (d.email) list.push({ email: d.email, name: d.nome || d.titulo || d.email, act:'1', foreign:'0', send_email:'1' });
@@ -705,7 +806,15 @@ function montarSigners(d){
 }
 
 /* =========================
- * D4Sign (APIs)
+ * Locks e preflight
+ * =======================*/
+const locks = new Set();
+function acquireLock(key){ if (locks.has(key)) return false; locks.add(key); return true; }
+function releaseLock(key){ locks.delete(key); }
+async function preflightDNS(){ /* opcional: warmup */ }
+
+/* =========================
+ * D4Sign via secure.d4sign.com.br (validados)
  * =======================*/
 async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
   const base = 'https://secure.d4sign.com.br';
@@ -716,7 +825,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = null; }
   if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
@@ -734,7 +843,7 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
   if (!res.ok) { console.error('[ERRO D4SIGN createlist]', res.status, text); throw new Error(`Falha ao cadastrar signatários: ${res.status}`); }
   return text;
@@ -749,14 +858,14 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = null; }
   if (!res.ok || !json?.url) {
     console.error('[ERRO D4SIGN download]', res.status, text);
     throw new Error(`Falha ao gerar URL de download: ${res.status}`);
   }
-  return json;
+  return json; // { url, name }
 }
 async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
   message = '',
@@ -771,7 +880,7 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
   if (!res.ok) {
     console.error('[ERRO D4SIGN sendtosigner]', res.status, text);
@@ -781,7 +890,7 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
 }
 
 /* =========================
- * Move fase
+ * Fase Pipefy (mover após gerar)
  * =======================*/
 async function moveCardToPhaseSafe(cardId, phaseId){
   if (!phaseId) return;
@@ -793,12 +902,12 @@ async function moveCardToPhaseSafe(cardId, phaseId){
 }
 
 /* =========================
- * Rotas
+ * Rotas — VENDEDOR (UX bonita)
  * =======================*/
+// Página de revisão
 app.get('/lead/:token', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
-
     const card = await getCard(cardId);
     const d = await montarDados(card);
 
@@ -823,7 +932,7 @@ app.get('/lead/:token', async (req, res) => {
   <div class="card">
     <h1>Revisar dados do contrato <span class="tag">Card #${card.id}</span></h1>
 
-    <h2>Contratante</h2>
+    <h2>Contratante(s)</h2>
     <div class="grid">
       <div><div class="label">Nome</div><div>${d.nome||'-'}</div></div>
       <div><div class="label">Nacionalidade</div><div>${d.nacionalidade||'-'}</div></div>
@@ -843,7 +952,7 @@ app.get('/lead/:token', async (req, res) => {
     <h2>Marca</h2>
     <div class="grid3">
       <div><div class="label">Nome da marca</div><div>${d.titulo||'-'}</div></div>
-      <div><div class="label">Classes</div><div>${d.classe||'-'}</div></div>
+      <div><div class="label">Classes (apenas números)</div><div>${d.classe||'-'}</div></div>
       <div><div class="label">CLASSES E ESPECIFICAÇÕES</div><div>${(d.marcas_espec||'').replace(/\n/g,'<br>')||'-'}</div></div>
       <div><div class="label">Risco da marca</div><div>${d.risco_marca||'-'}</div></div>
       <div><div class="label">Qtd. de marcas</div><div>${d.qtd_marca||'0'}</div></div>
@@ -857,20 +966,30 @@ app.get('/lead/:token', async (req, res) => {
       <div><div class="label">Valor total</div><div>${d.valor_total||'-'}</div></div>
       <div><div class="label">Parcelas</div><div>${String(d.parcelas||'1')}</div></div>
       <div><div class="label">Forma de pagamento</div><div>${d.forma_pagto_assessoria||'-'}</div></div>
-      <div><div class="label">Data de pagamento</div><div>${d.data_pagto_assessoria||'-'}</div></div>
+      <div><div class="label">Data de pagamento (Assessoria)</div><div>${d.data_pagto_assessoria||'-'}</div></div>
     </div>
 
     <h2>Taxa</h2>
     <div class="grid3">
       <div><div class="label">Valor da Taxa</div><div>${d.valor_taxa_brl || '-'}</div></div>
-      <div><div class="label">Forma de pagamento</div><div>${d.forma_pagto_taxa || '-'}</div></div>
-      <div><div class="label">Data de pagamento</div><div>${d.data_pagto_taxa || '-'}</div></div>
+      <div><div class="label">Forma de pagamento (Taxa)</div><div>${d.forma_pagto_taxa || '-'}</div></div>
+      <div><div class="label">Data de pagamento (Taxa)</div><div>${d.data_pagto_taxa || '-'}</div></div>
+    </div>
+
+    <h2>Endereço (CNPJ)</h2>
+    <div class="grid3">
+      <div><div class="label">CEP</div><div>${d.cep_cnpj || '-'}</div></div>
+      <div><div class="label">Rua/Av</div><div>${d.rua_cnpj || '-'}</div></div>
+      <div><div class="label">Número</div><div>${d.numero_cnpj || '-'}</div></div>
+      <div><div class="label">Bairro</div><div>${d.bairro_cnpj || '-'}</div></div>
+      <div><div class="label">Cidade</div><div>${d.cidade_cnpj || '-'}</div></div>
+      <div><div class="label">UF</div><div>${d.uf_cnpj || '-'}</div></div>
     </div>
 
     <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
       <button class="btn" type="submit">Gerar contrato</button>
     </form>
-    <p class="muted" style="margin-top:12px">Ao clicar, o documento será criado no D4Sign e o card poderá ser movido para Contrato enviado.</p>
+    <p class="muted" style="margin-top:12px">Ao clicar, o documento será criado no D4Sign e o card poderá ser movido para "Contrato enviado".</p>
   </div>
 </div>
 `;
@@ -882,9 +1001,14 @@ app.get('/lead/:token', async (req, res) => {
   }
 });
 
+// Gera o documento e mostra botões de Baixar PDF e Enviar para assinatura
 app.post('/lead/:token/generate', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
+    const lockKey = `lead:${cardId}`;
+    if (!acquireLock(lockKey)) return res.status(200).send('Processando, tente novamente em instantes.');
+
+    preflightDNS().catch(()=>{});
 
     const card = await getCard(cardId);
     const d = await montarDados(card);
@@ -898,9 +1022,11 @@ app.post('/lead/:token/generate', async (req, res) => {
     if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
 
     const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, card.title, add);
+    await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
 
-    await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers).catch(e => console.error('createlist erro', e));
-    await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO).catch(e => console.warn('move phase warn', e));
+    await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
+
+    releaseLock(lockKey);
 
     const token = req.params.token;
     const html = `
@@ -932,6 +1058,7 @@ app.post('/lead/:token/generate', async (req, res) => {
   }
 });
 
+// Download (redirect para URL temporária do D4Sign)
 app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
@@ -946,6 +1073,7 @@ app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
   }
 });
 
+// Enviar para assinatura
 app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
@@ -975,7 +1103,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 });
 
 /* =========================
- * Link no Pipefy
+ * Geração do link no Pipefy (ao marcar checkbox)
  * =======================*/
 app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
   try {
@@ -1001,14 +1129,14 @@ app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
     return res.status(500).json({ error: String(e.message||e) });
   }
 });
-app.get('/novo-pipe/criar-link-confirmacao', async (req,res)=>{
+app.get('/novo-pipe/criar-link-confirmacao', async (req,res)=>{ // opcional GET
   req.body = req.body || {};
   req.body.cardId = req.query.cardId || req.query.card_id;
   return app._router.handle(req, res, ()=>{});
 });
 
 /* =========================
- * Debug
+ * Debug / Health
  * =======================*/
 app.get('/_echo/*', (req, res) => {
   res.json({
@@ -1056,45 +1184,3 @@ app.listen(PORT, () => {
   });
   console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
 });
-
-/**
- * Checklist de ENV (EasyPanel)
- *
- * PUBLIC_BASE_URL=https://seu-dominio.com
- * PUBLIC_LINK_SECRET=um-segredo-forte
- *
- * PIPE_API_KEY=...
- * PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
- *
- * PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
- * FIELD_ID_CONNECT_MARCA_NOME=marcas_1
- * FIELD_ID_CONNECT_CLASSE=marcas_2
- * FIELD_ID_CONNECT_CLASSES=classes_inpi
- * MARCAS_TABLE_ID=MmqLNaPk
- * CONTACTS_TABLE_ID=Pbp9mARx
- * MARCAS2_TABLE_ID=tnDAtg7l
- * CLASSES_TABLE_ID=306521337
- *
- * D4SIGN_TOKEN=...
- * D4SIGN_CRYPT_KEY=...
- * TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
- *
- * NOVO_PIPE_ID=306505295
- * FASE_VISITA_ID=339299691
- * PHASE_ID_CONTRATO_ENVIADO=XXXXXXXX
- *
- * EMAIL_ASSINATURA_EMPRESA=contratos@empresa.com.br
- *
- * # Cofres
- * COFRE_UUID_EDNA=...
- * COFRE_UUID_GREYCE=...
- * COFRE_UUID_MARIANA=...
- * COFRE_UUID_VALDEIR=...
- * COFRE_UUID_DEBORA=...
- * COFRE_UUID_MAYKON=...
- * COFRE_UUID_JEFERSON=...
- * COFRE_UUID_RONALDO=...
- * COFRE_UUID_BRENDA=...
- * COFRE_UUID_MAURO=...
- * DEFAULT_COFRE_UUID=... (opcional)
- */
