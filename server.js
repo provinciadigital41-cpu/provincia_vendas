@@ -252,6 +252,36 @@ async function getTableRecord(recordId){
   cacheSet(ck, rec);
   return rec;
 }
+async function getCardShallow(cardId){
+  const ck = `cardsh:${cardId}`;
+  const hit = cacheGet(ck); if (hit) return hit;
+  const data = await gql(`query($id: ID!){
+    card(id:$id){
+      id title
+      fields{ name value field{ id type } }
+    }
+  }`, { id: cardId });
+  const c = data.card;
+  cacheSet(ck, c);
+  return c;
+}
+
+/**
+ * Tenta abrir um ID que pode ser tanto table_record quanto card.
+ * Retorna { kind: 'record'|'card', node }
+ */
+async function getAnyNode(id){
+  try {
+    const rec = await getTableRecord(id);
+    if (rec && rec.id) return { kind: 'record', node: rec };
+  } catch {}
+  try {
+    const c = await getCardShallow(id);
+    if (c && c.id) return { kind: 'card', node: c };
+  } catch {}
+  return { kind: null, node: null };
+}
+
 async function listTableRecords(tableId, first=200, after=null){
   const data = await gql(`query($tableId: ID!, $first: Int!, $after: String){
     table(id:$tableId){
@@ -290,24 +320,19 @@ function parseMaybeJsonArray(v){
 }
 
 /* =========================
- * Conexões: extrair IDs de registro (robusto)
+ * Conexões: extrair IDs
  * =======================*/
 function extractConnectedRecordIds(value){
   const arr = parseMaybeJsonArray(value);
   const out = [];
   for (const item of arr){
     if (!item) continue;
-
     if (typeof item === 'object'){
-      // formatos comuns: {id:"123"}, {record_id:"123"}, {value:"123"}, {node:{id:"123"}}
       const cand = item.id || item.record_id || item.recordId || item.value || (item.node && item.node.id);
       if (cand && /^\d+$/.test(String(cand))) { out.push(String(cand)); continue; }
     }
-
     const s = String(item);
     if (/^\d+$/.test(s)) { out.push(s); continue; }
-
-    // tenta extrair um bloco numérico (Pipefy record id costuma ser numérico)
     const m = s.match(/(^|[^\d])(\d{3,})([^\d]|$)/);
     if (m) out.push(String(m[2]));
   }
@@ -328,7 +353,6 @@ function extractNameEmailPhoneFromRecord(record){
     const tId = (f?.field?.id||'').toLowerCase();
     const lbl = String(f?.name||'').toLowerCase();
     const type = (f?.field?.type||'').toLowerCase();
-
     if (lbl.includes('nome da marca') || tId.includes('nome_da_marca') || lbl.includes('marca')) return false;
     if (tId === 'nome_do_contato') return true;
     if ((lbl.includes('nome') && lbl.includes('contat')) || lbl === 'nome do contato') return true;
@@ -340,7 +364,6 @@ function extractNameEmailPhoneFromRecord(record){
     const t = (f?.field?.type||'').toLowerCase();
     const id = (f?.field?.id||'').toLowerCase();
     const label = (f?.name||'').toLowerCase();
-
     if (!nome && isNomeContato(f)) nome = String(f.value||'');
     if (!email && (t==='email' || id==='email_do_contato' || label.includes('email'))) email = String(f.value||'');
     if (!telefone && (t==='phone' || id==='telefone_do_contato' || label.includes('telefone') || label.includes('whats') || label.includes('celular'))) telefone = String(f.value||'');
@@ -348,25 +371,62 @@ function extractNameEmailPhoneFromRecord(record){
   return { nome, email, telefone };
 }
 
+function extractNameEmailPhoneFromCard(card){
+  let nome='', email='', telefone='';
+  for (const f of (card?.fields||[])){
+    const t = (f?.field?.type||'').toLowerCase();
+    const id = (f?.field?.id||'').toLowerCase();
+    const label = String(f?.name||'').toLowerCase();
+
+    if (!nome){
+      if (id==='nome_do_contato' || label==='nome do contato' || (label.includes('nome') && label.includes('contat'))) {
+        nome = String(f.value||'');
+      }
+    }
+    if (!email && (t==='email' || id==='email_do_contato' || label.includes('email'))) {
+      email = String(f.value||'');
+    }
+    if (!telefone && (t==='phone' || id==='telefone_do_contato' || label.includes('telefone') || label.includes('whats') || label.includes('celular'))) {
+      telefone = String(f.value||'');
+    }
+  }
+  return { nome, email, telefone };
+}
+
 async function resolveContatoFromCardConnections(card){
   const out = { nome:'', email:'', telefone:'' };
-  for (const f of (card.fields||[])) {
+
+  // 1) Prioriza explicitamente o connector com id 'contato'
+  const connectors = (card.fields||[]).filter(f => {
     const type = String(f?.field?.type||'').toLowerCase();
-    if (type !== 'connector' && type !== 'table_connection') continue;
+    return type==='connector' || type==='table_connection';
+  });
 
+  const primary = connectors.filter(f => String(f?.field?.id||'').toLowerCase()==='contato');
+  const secondary = connectors.filter(f => {
+    const idLc = String(f?.field?.id||'').toLowerCase();
     const nameLc = String(f?.name||'').toLowerCase();
-    const idLc   = String(f?.field?.id||'').toLowerCase();
-    const looksLikeContato = ['contato','cliente','respons','contratante'].some(k => nameLc.includes(k) || idLc.includes(k));
-    if (!looksLikeContato) continue;
+    return idLc!=='contato' && (['contato','cliente','respons','contratante'].some(k => idLc.includes(k) || nameLc.includes(k)));
+  });
 
+  const ordered = [...primary, ...secondary];
+
+  for (const f of ordered) {
     const recIds = extractConnectedRecordIds(f.value);
     for (const id of recIds) {
       try {
-        const rec = await getTableRecord(id);
-        const { nome, email, telefone } = extractNameEmailPhoneFromRecord(rec);
-        if (nome && !out.nome) out.nome = nome;
-        if (email && !out.email) out.email = email;
-        if (telefone && !out.telefone) out.telefone = telefone;
+        const any = await getAnyNode(id);
+        if (any.kind === 'record') {
+          const { nome, email, telefone } = extractNameEmailPhoneFromRecord(any.node);
+          if (nome && !out.nome) out.nome = nome;
+          if (email && !out.email) out.email = email;
+          if (telefone && !out.telefone) out.telefone = telefone;
+        } else if (any.kind === 'card') {
+          const { nome, email, telefone } = extractNameEmailPhoneFromCard(any.node);
+          if (nome && !out.nome) out.nome = nome;
+          if (email && !out.email) out.email = email;
+          if (telefone && !out.telefone) out.telefone = telefone;
+        }
         if (out.email && out.telefone && out.nome) return out;
       } catch {}
     }
@@ -374,63 +434,8 @@ async function resolveContatoFromCardConnections(card){
   return out;
 }
 
-async function resolveMarcaRecordFromCard(card){
-  const by = toById(card);
-  const v = by[FIELD_ID_CONNECT_MARCA_NOME];
-  const ids = extractConnectedRecordIds(v);
-  if (ids.length){
-    try { return await getTableRecord(ids[0]); } catch { return null; }
-  }
-
-  const first = parseMaybeJsonArray(v)[0];
-  if (!first) return null;
-
-  if (/^\d+$/.test(String(first))){
-    try { return await getTableRecord(String(first)); } catch { return null; }
-  }
-
-  if (!MARCAS_TABLE_ID) return null;
-
-  const idByIdx = idxGet(MARCAS_TABLE_ID, first);
-  if (idByIdx) { try { return await getTableRecord(idByIdx); } catch {} }
-
-  let after=null;
-  for (let i=0;i<20;i++){
-    const {records, pageInfo} = await listTableRecords(MARCAS_TABLE_ID, 200, after);
-    const hit = records.find(r=> titleNorm(r.title) === titleNorm(first));
-    if (hit) return hit;
-    if (!pageInfo?.hasNextPage) break;
-    after = pageInfo.endCursor || null;
-  }
-  return null;
-}
-
-async function resolveContatoFromMarcaRecord(marcaRecord){
-  if (!marcaRecord) return { nome:'', email:'', telefone:'' };
-
-  const connField = (marcaRecord?.record_fields||[]).find(f=>{
-    const t = String(f?.field?.type||'').toLowerCase();
-    const lbl = String(f?.name||'').toLowerCase();
-    const id = String(f?.field?.id||'').toLowerCase();
-    return (t==='connector' || t==='table_connection' || lbl.includes('contato') || id.includes('contato'));
-  });
-
-  if (connField && connField.value) {
-    const recIds = extractConnectedRecordIds(connField.value);
-    for (const id of recIds) {
-      try {
-        const rec = await getTableRecord(id);
-        const ex = extractNameEmailPhoneFromRecord(rec);
-        if (ex.email || ex.telefone || ex.nome) return ex;
-      } catch {}
-    }
-  }
-
-  return extractNameEmailPhoneFromRecord(marcaRecord);
-}
-
 /* =========================
- * Classe
+ * Classe (mantida)
  * =======================*/
 async function resolveClasseFromLabelOnCard(card){
   const f = (card.fields||[]).find(ff=>{
@@ -712,7 +717,7 @@ async function montarDados(card){
 }
 
 /* =========================
- * Template ADD (variáveis do Word)
+ * Template ADD
  * =======================*/
 function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
@@ -755,7 +760,6 @@ function montarADDWord(d, nowInfo){
     uf,
     cep,
 
-    // Exatamente como no template
     'E-mail': d.email || '',
     'Telefone': d.telefone || '',
     telefone: d.telefone || '',
@@ -804,7 +808,7 @@ function montarSigners(d){
 }
 
 /* =========================
- * Locks / preflight
+ * Locks e preflight
  * =======================*/
 const locks = new Set();
 function acquireLock(key){ if (locks.has(key)) return false; locks.add(key); return true; }
@@ -865,7 +869,11 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
   }
   return json;
 }
-async function sendToSigner(tokenAPI, cryptKey, uuidDocument, { message = '', skip_email = '0', workflow = '0' } = {}) {
+async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
+  message = '',
+  skip_email = '0',
+  workflow = '0'
+} = {}) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
   url.searchParams.set('cryptKey', cryptKey);
