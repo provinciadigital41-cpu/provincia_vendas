@@ -23,7 +23,7 @@ try {
     pipelining: 1
   });
   setGlobalDispatcher(undiciAgent);
-} catch { /* ambiente sem undici disponível via require; usa defaults do Node 18 */ }
+} catch { /* ambiente sem undici via require; usa defaults do Node 18 */ }
 
 const app = express();
 app.use(express.json());
@@ -163,11 +163,9 @@ function onlyNumberBR(s){
   return isNaN(n)? 0 : n;
 }
 
-// Datas — meses por extenso (capitalizados) e formatações auxiliares
+// Datas
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function monthNamePt(mIndex1to12) { return MESES_PT[(Math.max(1, Math.min(12, Number(mIndex1to12))) - 1)]; }
-
-// Aceita "DD/MM/YYYY" (Pipefy) ou ISO; devolve Date válido ou null
 function parsePipeDateToDate(value){
   if (!value) return null;
   const s = String(value).trim();
@@ -180,7 +178,6 @@ function parsePipeDateToDate(value){
   const d = new Date(s);
   return isNaN(d) ? null : d;
 }
-// Retorna "DD/MM/YY"
 function fmtDMY2(value){
   const d = value instanceof Date ? value : parsePipeDateToDate(value);
   if (!d) return '';
@@ -190,7 +187,7 @@ function fmtDMY2(value){
   return `${dd}/${mm}/${yy}`;
 }
 
-// Retry com timeout exponencial (parâmetros afinados por destino)
+// Retry com timeout afinado
 async function fetchWithRetry(url, init={}, opts={}){
   const attempts = opts.attempts ?? 2;
   const baseDelayMs = opts.baseDelayMs ?? 300;
@@ -241,7 +238,7 @@ async function gql(query, variables){
     method: 'POST',
     headers: { 'Authorization': `Bearer ${PIPE_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables })
-  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 8000 }); // menor latência Pipefy
+  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 8000 });
   const j = await r.json();
   if (!r.ok || j.errors) throw new Error(`Pipefy GQL: ${r.status} ${JSON.stringify(j.errors||{})}`);
   return j.data;
@@ -260,7 +257,7 @@ async function getCard(cardId){
     }
   }`, { id: cardId });
   const card = data.card;
-  cacheSet(ck, card, 60_000); // 1 min para abrir rápido
+  cacheSet(ck, card, 60_000);
   return card;
 }
 async function updateCardField(cardId, fieldId, newValue){
@@ -278,7 +275,7 @@ async function getTableRecord(recordId){
     }
   }`, { id: recordId });
   const rec = data.table_record;
-  cacheSet(ck, rec); // TTL default 5 min
+  cacheSet(ck, rec);
   return rec;
 }
 async function listTableRecords(tableId, first=200, after=null){
@@ -292,7 +289,6 @@ async function listTableRecords(tableId, first=200, after=null){
     }
   }`, { tableId, first, after });
   const edges = data?.table?.table_records?.edges || [];
-  // alimentar índice de títulos
   for (const e of edges){ idxSet(tableId, e.node.title, e.node.id); }
   const pageInfo = data?.table?.table_records?.pageInfo || {};
   return { records: edges.map(e=>e.node), pageInfo };
@@ -335,26 +331,25 @@ function extractNameEmailPhoneFromRecord(record){
   return { nome, email, telefone };
 }
 
-// Resolve record de “marcas_1” (espelho por título ou id) — com índice
+// Resolve record de “marcas_1”
 async function resolveMarcaRecordFromCard(card){
   const by = toById(card);
-  const v = by[FIELD_ID_CONNECT_MARCA_NOME]; // 'marcas_1'
+  const v = by[FIELD_ID_CONNECT_MARCA_NOME];
   const arr = parseMaybeJsonArray(v);
   if (!arr.length) return null;
   const first = String(arr[0]).trim();
 
-  if (/^\d+$/.test(first)){ // ID
+  if (/^\d+$/.test(first)){
     try { return await getTableRecord(first); } catch { return null; }
   }
 
   if (!MARCAS_TABLE_ID) return null;
 
-  // Tenta por índice antes de varrer
   const idByIdx = idxGet(MARCAS_TABLE_ID, first);
   if (idByIdx) { try { return await getTableRecord(idByIdx); } catch {} }
 
   let after=null;
-  for (let i=0;i<20;i++){ // menos páginas
+  for (let i=0;i<20;i++){
     const {records, pageInfo} = await listTableRecords(MARCAS_TABLE_ID, 200, after);
     const hit = records.find(r=> titleNorm(r.title) === titleNorm(first));
     if (hit) return hit;
@@ -366,7 +361,6 @@ async function resolveMarcaRecordFromCard(card){
 
 async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMirror, phoneMirrorDigits }){
   if (!contactsTableId) return null;
-  // Tenta índice para título se existir
   const idByIdx = idxGet(contactsTableId, titleMirror);
   if (idByIdx){ try { return await getTableRecord(idByIdx); } catch {} }
 
@@ -439,7 +433,6 @@ async function resolveClasseFromLabelOnCard(card){
   return String(first||'');
 }
 async function resolveClasseFromCard(card, marcaRecordFallback){
-  // Tentativa rápida no próprio card
   const fromCard = await resolveClasseFromLabelOnCard(card);
   if (fromCard) return normalizeClasseToNumbersOnly(fromCard);
 
@@ -476,7 +469,6 @@ async function resolveClasseFromCard(card, marcaRecordFallback){
       } catch {}
     } else {
       if (MARCAS2_TABLE_ID){
-        // Índice antes da varredura
         const idIdx = idxGet(MARCAS2_TABLE_ID, first);
         if (idIdx){
           const rec = await getTableRecord(idIdx);
@@ -610,7 +602,7 @@ async function montarDados(card){
   const classePromise = resolveClasseFromCard(card, marcaRecord);
   const contatoFromMarcaPromise = resolveContatoFromMarcaRecord(marcaRecord);
 
-  // TIPOS DE MARCA (card → fallback no registro de Marcas (Visita))
+  // TIPOS DE MARCA
   let tipoMarca = checklistToText(
     by['tipo_de_marca'] ||
     by['checklist_vertical'] ||
@@ -618,7 +610,7 @@ async function montarDados(card){
   );
 
   if (!tipoMarca) {
-    const v2 = by[FIELD_ID_CONNECT_CLASSE]; // 'marcas_2'
+    const v2 = by[FIELD_ID_CONNECT_CLASSE];
     const arr2 = parseMaybeJsonArray(v2);
     const first2 = arr2 && arr2[0];
     if (first2) {
@@ -627,7 +619,6 @@ async function montarDados(card){
         if (/^\d+$/.test(String(first2))) {
           rec = await getTableRecord(String(first2));
         } else if (MARCAS2_TABLE_ID) {
-          // tentar índice
           const idIdx = idxGet(MARCAS2_TABLE_ID, String(first2));
           if (idIdx) {
             rec = await getTableRecord(idIdx);
@@ -654,9 +645,9 @@ async function montarDados(card){
 
   // contato completo (mescla local + fallback marca)
   const [classe, contatoFromMarca] = await Promise.all([classePromise, contatoFromMarcaPromise]);
-  let contatoNome     = contatoBasico.nome     || contatoFromMarca.nome     || '';
-  let contatoEmail    = contatoBasico.email    || contatoFromMarca.email    || '';
-  let contatoTelefone = contatoBasico.telefone || contatoFromMarca.telefone || '';
+  const contatoNome     = contatoBasico.nome     || contatoFromMarca.nome     || '';
+  const contatoEmail    = contatoBasico.email    || contatoFromMarca.email    || '';
+  const contatoTelefone = contatoBasico.telefone || contatoFromMarca.telefone || '';
 
   // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
@@ -700,6 +691,9 @@ async function montarDados(card){
   const estadoCivil = by['estado_civ_l'] || '';
   const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || '');
 
+  // CLASSES E ESPECIFICAÇÕES — campo de texto longo id "classe"
+  const marcasEspec = by['classe'] || getByName(card, 'classes e especificações') || '';
+
   return {
     cardId: card.id,
     titulo: card.title,
@@ -721,6 +715,7 @@ async function montarDados(card){
 
     // Marca / Classe / Qtd marca
     classe: classe || '',
+    marcas_espec: marcasEspec || '', // <<< texto longo
     qtd_marca: qtdMarca,
     tipo_marca: tipoMarca || '',
 
@@ -801,7 +796,11 @@ function montarADDWord(d, nowInfo){
     uf,
     cep,
 
+    // Variáveis exatamente como no template
     'E-mail': d.email || '',
+    'Telefone': d.telefone || '',
+
+    // Mantemos também em minúsculo caso o template tenha ambos
     telefone: d.telefone || '',
 
     nome_da_marca: d.titulo || '',
@@ -810,8 +809,8 @@ function montarADDWord(d, nowInfo){
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
 
-    // variável solicitada anteriormente
-    'marcas-espec': d.classe || '',
+    // Agora usa o texto longo do campo "classe"
+    'marcas-espec': d.marcas_espec || '',
 
     Nacionalidade: d.nacionalidade || '',
 
@@ -825,12 +824,12 @@ function montarADDWord(d, nowInfo){
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    valor_da_taxa: d.valor_taxa_brl || '',
-    forma_de_pagamento_da_taxa: d.forma_pagto_taxa || '',
-    data_de_pagamento_da_taxa: d.data_pagto_taxa || '',
-    'Valor da Taxa': d.valor_taxa_brl || '',
-    'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
-    'Data de pagamento da Taxa': d.data_pagto_taxa || '',
+    valor_da_taxa: valorDaTaxa,
+    forma_de_pagamento_da_taxa: formaDaTaxa,
+    data_de_pagamento_da_taxa: dataDaTaxa,
+    'Valor da Taxa': valorDaTaxa,
+    'Forma de pagamento da Taxa': formaDaTaxa,
+    'Data de pagamento da Taxa': dataDaTaxa,
 
     dia,
     mes: mesNum,
@@ -861,7 +860,7 @@ function releaseLock(key){ locks.delete(key); }
 async function preflightDNS(){ /* opcional: warmup */ }
 
 /* =========================
- * D4Sign via secure.d4sign.com.br
+ * D4Sign
  * =======================*/
 async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
   const base = 'https://secure.d4sign.com.br';
@@ -955,10 +954,7 @@ app.get('/lead/:token', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
 
-    // Busca do card cacheada
     const card = await getCard(cardId);
-
-    // Montagem de dados com cache/índices e paralelização
     const d = await montarDados(card);
 
     const html = `
@@ -1003,6 +999,7 @@ app.get('/lead/:token', async (req, res) => {
     <div class="grid3">
       <div><div class="label">Nome da marca</div><div>${d.titulo||'-'}</div></div>
       <div><div class="label">Classes (apenas números)</div><div>${d.classe||'-'}</div></div>
+      <div><div class="label">CLASSES E ESPECIFICAÇÕES</div><div>${(d.marcas_espec||'').replace(/\n/g,'<br>')||'-'}</div></div>
       <div><div class="label">Risco da marca</div><div>${d.risco_marca||'-'}</div></div>
       <div><div class="label">Qtd. de marcas</div><div>${d.qtd_marca||'0'}</div></div>
     </div>
@@ -1072,7 +1069,6 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, card.title, add);
 
-    // paraleliza o cadastro de signatários e a movimentação de fase
     await Promise.all([
       cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers)
         .catch(e => console.error('createlist erro', e)),
