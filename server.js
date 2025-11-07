@@ -10,9 +10,9 @@ const crypto = require('crypto');
 
 // compression opcional (não quebra se o pacote não estiver instalado)
 let compression = null;
-try { compression = require('compression'); } catch { /* pacote ausente: segue sem compressão */ }
+try { compression = require('compression'); } catch { /* pacote ausente */ }
 
-// Keep-alive usando undici (opcional também)
+// Keep-alive usando undici (opcional)
 let undiciAgent = null;
 try {
   const { Agent, setGlobalDispatcher } = require('undici');
@@ -23,12 +23,12 @@ try {
     pipelining: 1
   });
   setGlobalDispatcher(undiciAgent);
-} catch { /* ambiente sem undici via require; usa defaults do Node 18 */ }
+} catch {}
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-if (compression) app.use(compression({ threshold: 1024 })); // só aplica se existir
+if (compression) app.use(compression({ threshold: 1024 }));
 app.set('trust proxy', true);
 
 // Log básico
@@ -48,29 +48,25 @@ let {
   PIPE_API_KEY,
   PIPE_GRAPHQL_ENDPOINT,
 
-  // IDs de tabelas / campos
-  FIELD_ID_CONNECT_MARCA_NOME, // marcas_1 (Marcas - Captação)
-  FIELD_ID_CONNECT_CLASSE,     // marcas_2 (Marcas (Visita))
-  FIELD_ID_CONNECT_CLASSES,    // classes_inpi (se existir no card)
-  MARCAS_TABLE_ID,             // MmqLNaPk (Marcas - Captação)
-  CONTACTS_TABLE_ID,           // 306505297 (Contatos)
-  MARCAS2_TABLE_ID,            // tnDAtg7l (Marcas - Visita)
-  CLASSES_TABLE_ID,            // 306521337 (Classes INPI)
+  FIELD_ID_CONNECT_MARCA_NOME,
+  FIELD_ID_CONNECT_CLASSE,
+  FIELD_ID_CONNECT_CLASSES,
+  MARCAS_TABLE_ID,
+  CONTACTS_TABLE_ID,
+  MARCAS2_TABLE_ID,
+  CLASSES_TABLE_ID,
 
-  PIPEFY_FIELD_LINK_CONTRATO,  // d4_contrato
+  PIPEFY_FIELD_LINK_CONTRATO,
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
 
-  // D4Sign
   D4SIGN_TOKEN,
   D4SIGN_CRYPT_KEY,
   TEMPLATE_UUID_CONTRATO,
 
-  // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
 
-  // Cofres
   COFRE_UUID_EDNA,
   COFRE_UUID_GREYCE,
   COFRE_UUID_MARIANA,
@@ -318,17 +314,84 @@ function checklistToText(v) {
   const arr = parseMaybeJsonArray(v);
   return Array.isArray(arr) ? arr.join(', ') : String(v || '');
 }
+
+/* =========================
+ * Contato — extração
+ * =======================*/
+// Mais rigor ao pegar o NOME: só aceita o campo de contato, nunca “Nome da marca”
 function extractNameEmailPhoneFromRecord(record){
   let nome='', email='', telefone='';
+
+  const isNomeContato = (f)=>{
+    const tId = (f?.field?.id||'').toLowerCase();
+    const lbl = String(f?.name||'').toLowerCase();
+    const type = (f?.field?.type||'').toLowerCase();
+
+    // bloqueia qualquer coisa de marca
+    if (lbl.includes('nome da marca') || tId.includes('nome_da_marca') || lbl.includes('marca')) return false;
+
+    // aceita explicitamente o id do database
+    if (tId === 'nome_do_contato') return true;
+
+    // aceita equivalentes óbvios
+    if ((lbl.includes('nome') && lbl.includes('contat')) || lbl === 'nome do contato') return true;
+
+    // aceita short_text que NÃO menciona marca e menciona contato
+    if (type === 'short_text' && lbl.includes('contat') && lbl.includes('nome')) return true;
+
+    return false;
+  };
+
   for (const f of record?.record_fields||[]){
     const t = (f?.field?.type||'').toLowerCase();
     const id = (f?.field?.id||'').toLowerCase();
     const label = (f?.name||'').toLowerCase();
-    if (!nome && (id==='nome_do_contato' || label.includes('nome'))) nome = String(f.value||'');
-    if (!email && (t==='email' || id.includes('email') || label.includes('email'))) email = String(f.value||'');
-    if (!telefone && (t==='phone' || label.includes('telefone') || label.includes('whats') || label.includes('celular'))) telefone = String(f.value||'');
+
+    // nome: apenas se passar no filtro estrito
+    if (!nome && isNomeContato(f)) nome = String(f.value||'');
+
+    // email: aceita tipo email ou id/label conhecidos
+    if (!email && (t==='email' || id==='email_do_contato' || label.includes('email'))) {
+      email = String(f.value||'');
+    }
+
+    // telefone: aceita tipo phone ou id/label conhecidos
+    if (!telefone && (t==='phone' || id==='telefone_do_contato' || label.includes('telefone') || label.includes('whats') || label.includes('celular'))) {
+      telefone = String(f.value||'');
+    }
   }
   return { nome, email, telefone };
+}
+
+// Varre campos de conexão no próprio card e tenta abrir registros conectados para achar email/telefone/nome
+async function resolveContatoFromCardConnections(card){
+  const out = { nome:'', email:'', telefone:'' };
+
+  for (const f of (card.fields||[])) {
+    const type = String(f?.field?.type||'').toLowerCase();
+    if (type !== 'connector' && type !== 'table_connection') continue;
+
+    const nameLc = String(f?.name||'').toLowerCase();
+    const idLc   = String(f?.field?.id||'').toLowerCase();
+
+    const looksLikeContato = ['contato','cliente','respons','contratante'].some(k => nameLc.includes(k) || idLc.includes(k));
+    if (!looksLikeContato) continue;
+
+    const arr = parseMaybeJsonArray(f.value);
+    for (const v of arr) {
+      const id = String(v||'').trim();
+      if (!/^\d+$/.test(id)) continue;
+      try {
+        const rec = await getTableRecord(id);
+        const { nome, email, telefone } = extractNameEmailPhoneFromRecord(rec);
+        if (nome && !out.nome) out.nome = nome;
+        if (email && !out.email) out.email = email;
+        if (telefone && !out.telefone) out.telefone = telefone;
+        if (out.email && out.telefone && out.nome) return out;
+      } catch {}
+    }
+  }
+  return out;
 }
 
 // Resolve record de “marcas_1”
@@ -388,35 +451,36 @@ function contacts_table_id(){ return String(CONTACTS_TABLE_ID||'').trim(); }
 
 async function resolveContatoFromMarcaRecord(marcaRecord){
   if (!marcaRecord) return { nome:'', email:'', telefone:'' };
-  const campo = (marcaRecord?.record_fields||[]).find(f=> f?.field?.id==='contatos' || String(f?.name||'').toLowerCase().includes('contato'));
-  if (!campo) return { nome:'', email:'', telefone:'' };
 
-  const arr = parseMaybeJsonArray(campo.value);
-  const first = arr && arr[0];
-  if (!first) return { nome:'', email:'', telefone:'' };
-
-  if (/^\d+$/.test(String(first))){
-    try { const rec = await getTableRecord(String(first)); return extractNameEmailPhoneFromRecord(rec); }
-    catch { /* espelho */ }
-  }
-  const titleMirror = String(first||'').trim();
-  let emailMirror='', phoneMirrorDigits='';
-  for (const s of arr.map(String)){
-    if (!emailMirror && s.includes('@')) emailMirror = s;
-    const d = normalizePhone(s);
-    if (!phoneMirrorDigits && d.length>=10) phoneMirrorDigits = d;
-  }
-  const found = await findContatoRecordByMirror({
-    contactsTableId: contacts_table_id(),
-    titleMirror, emailMirror, phoneMirrorDigits
+  // tenta um campo de conexão dentro do registro de Marca que aponte para Contatos
+  const connField = (marcaRecord?.record_fields||[]).find(f=>{
+    const t = String(f?.field?.type||'').toLowerCase();
+    const lbl = String(f?.name||'').toLowerCase();
+    const id = String(f?.field?.id||'').toLowerCase();
+    return (t==='connector' || t==='table_connection' || lbl.includes('contato') || id.includes('contato'));
   });
-  if (found) return extractNameEmailPhoneFromRecord(found);
 
-  let nome='';
-  if (arr.length) nome = arr.find(s => s && !String(s).includes('@') && normalizePhone(s).length<10) || '';
-  return { nome, email: emailMirror||'', telefone: phoneMirrorDigits||'' };
+  if (connField && connField.value) {
+    const arr = parseMaybeJsonArray(connField.value);
+    for (const v of arr) {
+      const id = String(v||'').trim();
+      if (!/^\d+$/.test(id)) continue;
+      try {
+        const rec = await getTableRecord(id);
+        const ex = extractNameEmailPhoneFromRecord(rec);
+        if (ex.email || ex.telefone || ex.nome) return ex;
+      } catch {}
+    }
+  }
+
+  // como fallback tenta extrair diretamente do próprio registro,
+  // mas com a mesma regra estrita para não confundir com “Nome da marca”
+  return extractNameEmailPhoneFromRecord(marcaRecord);
 }
 
+/* =========================
+ * Classe
+ * =======================*/
 async function resolveClasseFromLabelOnCard(card){
   const f = (card.fields||[]).find(ff=>{
     const isConn = (ff?.field?.type==='connector' || ff?.field?.type==='table_connection');
@@ -431,6 +495,11 @@ async function resolveClasseFromLabelOnCard(card){
     try { const rec = await getTableRecord(String(first)); return rec?.title || ''; } catch {}
   }
   return String(first||'');
+}
+function normalizeClasseToNumbersOnly(classeStr){
+  if (!classeStr) return '';
+  const nums = String(classeStr).match(/\d+/g) || [];
+  return nums.join(', ');
 }
 async function resolveClasseFromCard(card, marcaRecordFallback){
   const fromCard = await resolveClasseFromLabelOnCard(card);
@@ -508,7 +577,9 @@ async function resolveClasseFromCard(card, marcaRecordFallback){
   return '';
 }
 
-// Documento (CPF/CNPJ)
+/* =========================
+ * Documento (CPF/CNPJ)
+ * =======================*/
 function pickDocumento(card){
   const prefer = ['cpf','cnpj','documento','doc','cpf/cnpj','cnpj/cpf'];
   for (const k of prefer){
@@ -523,7 +594,9 @@ function pickDocumento(card){
   return { tipo:'', valor:'' };
 }
 
-// Assignee parsing (para cofre)
+/* =========================
+ * Assignee parsing (para cofre)
+ * =======================*/
 function stripDiacritics(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function normalizeName(s){ return stripDiacritics(String(s||'').trim()).toLowerCase(); }
 function extractAssigneeNames(raw){
@@ -558,14 +631,9 @@ function computeValorTaxaBRLFromFaixa(d){
   else if (taxa.includes('880')) valorTaxaSemRS = '880,00';
   return valorTaxaSemRS ? `R$ ${valorTaxaSemRS}` : '';
 }
-function normalizeClasseToNumbersOnly(classeStr){
-  if (!classeStr) return '';
-  const nums = String(classeStr).match(/\d+/g) || [];
-  return nums.join(', ');
-}
 
 /* =========================
- * Montagem de dados do contrato (com paralelização segura)
+ * Montagem de dados do contrato
  * =======================*/
 function pickParcelas(card){
   const by = toById(card);
@@ -588,21 +656,16 @@ function pickValorAssessoria(card){
 async function montarDados(card){
   const by = toById(card);
 
-  // Disparos paralelos principais
-  const marcaRecordPromise = resolveMarcaRecordFromCard(card);
+  // disparos em paralelo
+  const [marcaRecord, contatoDireto] = await Promise.all([
+    resolveMarcaRecordFromCard(card),
+    resolveContatoFromCardConnections(card)
+  ]);
 
-  // Contato básico (local, sem IO remoto)
-  const contatoBasico = {
-    nome: getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']),
-    email: getFirstByNames(card, ['email','e-mail']),
-    telefone: getFirstByNames(card, ['telefone','celular','whatsapp','whats'])
-  };
-
-  const marcaRecord = await marcaRecordPromise;
   const classePromise = resolveClasseFromCard(card, marcaRecord);
   const contatoFromMarcaPromise = resolveContatoFromMarcaRecord(marcaRecord);
 
-  // TIPOS DE MARCA
+  // tipo de marca
   let tipoMarca = checklistToText(
     by['tipo_de_marca'] ||
     by['checklist_vertical'] ||
@@ -643,11 +706,12 @@ async function montarDados(card){
     }
   }
 
-  // contato completo (mescla local + fallback marca)
   const [classe, contatoFromMarca] = await Promise.all([classePromise, contatoFromMarcaPromise]);
-  const contatoNome     = contatoBasico.nome     || contatoFromMarca.nome     || '';
-  const contatoEmail    = contatoBasico.email    || contatoFromMarca.email    || '';
-  const contatoTelefone = contatoBasico.telefone || contatoFromMarca.telefone || '';
+
+  // ordem de preferência: conexões do card → registro de marca (com regra estrita) → campos digitados no card
+  const contatoNome     = contatoDireto.nome     || contatoFromMarca.nome     || getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']);
+  const contatoEmail    = contatoDireto.email    || contatoFromMarca.email    || getFirstByNames(card, ['email','e-mail']);
+  const contatoTelefone = contatoDireto.telefone || contatoFromMarca.telefone || getFirstByNames(card, ['telefone','celular','whatsapp','whats']);
 
   // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
@@ -715,7 +779,7 @@ async function montarDados(card){
 
     // Marca / Classe / Qtd marca
     classe: classe || '',
-    marcas_espec: marcasEspec || '', // <<< texto longo
+    marcas_espec: marcasEspec || '', // texto longo
     qtd_marca: qtdMarca,
     tipo_marca: tipoMarca || '',
 
@@ -799,8 +863,6 @@ function montarADDWord(d, nowInfo){
     // Variáveis exatamente como no template
     'E-mail': d.email || '',
     'Telefone': d.telefone || '',
-
-    // Mantemos também em minúsculo caso o template tenha ambos
     telefone: d.telefone || '',
 
     nome_da_marca: d.titulo || '',
@@ -809,7 +871,7 @@ function montarADDWord(d, nowInfo){
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
 
-    // Agora usa o texto longo do campo "classe"
+    // campo longo “classe”
     'marcas-espec': d.marcas_espec || '',
 
     Nacionalidade: d.nacionalidade || '',
@@ -820,16 +882,12 @@ function montarADDWord(d, nowInfo){
     data_de_pagamento_da_assessoria: d.data_pagto_assessoria || '',
     'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
 
-    valor_da_pesquisa: valorPesquisa,
-    forma_de_pagamento_da_pesquisa: formaPesquisa,
-    data_de_pagamento_da_pesquisa: dataPesquisa,
-
-    valor_da_taxa: valorDaTaxa,
-    forma_de_pagamento_da_taxa: formaDaTaxa,
-    data_de_pagamento_da_taxa: dataDaTaxa,
-    'Valor da Taxa': valorDaTaxa,
-    'Forma de pagamento da Taxa': formaDaTaxa,
-    'Data de pagamento da Taxa': dataDaTaxa,
+    valor_da_taxa: d.valor_taxa_brl || '',
+    forma_de_pagamento_da_taxa: d.forma_pagto_taxa || '',
+    data_de_pagamento_da_taxa: d.data_pagto_taxa || '',
+    'Valor da Taxa': d.valor_taxa_brl || '',
+    'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
+    'Data de pagamento da Taxa': d.data_pagto_taxa || '',
 
     dia,
     mes: mesNum,
@@ -857,7 +915,7 @@ function montarSigners(d){
 const locks = new Set();
 function acquireLock(key){ if (locks.has(key)) return false; locks.add(key); return true; }
 function releaseLock(key){ locks.delete(key); }
-async function preflightDNS(){ /* opcional: warmup */ }
+async function preflightDNS(){}
 
 /* =========================
  * D4Sign
@@ -1250,7 +1308,7 @@ app.listen(PORT, () => {
  * FIELD_ID_CONNECT_CLASSE=marcas_2
  * FIELD_ID_CONNECT_CLASSES=classes_inpi
  * MARCAS_TABLE_ID=MmqLNaPk
- * CONTACTS_TABLE_ID=306505297
+ * CONTACTS_TABLE_ID=Pbp9mARx
  * MARCAS2_TABLE_ID=tnDAtg7l
  * CLASSES_TABLE_ID=306521337
  *
