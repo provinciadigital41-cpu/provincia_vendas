@@ -7,10 +7,21 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const compression = require('compression');
+// Keep-alive para todas as requisições (Undici é o fetch do Node 18+)
+const { Agent, setGlobalDispatcher } = require('undici');
+const dispatcher = new Agent({
+  keepAliveTimeout: 30_000,
+  keepAliveMaxTimeout: 60_000,
+  connections: 16,
+  pipelining: 1
+});
+setGlobalDispatcher(dispatcher);
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(compression({ threshold: 1024 })); // respostas HTML menores
 app.set('trust proxy', true);
 
 // Log básico
@@ -93,6 +104,35 @@ const COFRES_UUIDS = {
 };
 
 /* =========================
+ * Cache leve e índices de título
+ * =======================*/
+const cache = new Map(); // chave → { val, exp }
+function cacheGet(k){
+  const hit = cache.get(k);
+  if (!hit) return null;
+  if (hit.exp < Date.now()){ cache.delete(k); return null; }
+  return hit.val;
+}
+function cacheSet(k, val, ttlMs=5*60*1000){ // 5 minutos
+  cache.set(k, { val, exp: Date.now()+ttlMs });
+}
+const titleIndex = new Map(); // `idx:${tableId}` → Map(titleNorm → id)
+function idxKey(tableId){ return `idx:${tableId}`; }
+function titleNorm(s){ return String(s||'').trim().toLowerCase(); }
+function idxSet(tableId, title, id){
+  if (!tableId || !title || !id) return;
+  const k = idxKey(tableId);
+  const m = titleIndex.get(k) || new Map();
+  m.set(titleNorm(title), String(id));
+  titleIndex.set(k, m);
+}
+function idxGet(tableId, title){
+  if (!tableId || !title) return null;
+  const m = titleIndex.get(idxKey(tableId));
+  return m ? m.get(titleNorm(title)) : null;
+}
+
+/* =========================
  * Helpers gerais
  * =======================*/
 function onlyDigits(s){ return String(s||'').replace(/\D/g,''); }
@@ -143,11 +183,11 @@ function fmtDMY2(value){
   return `${dd}/${mm}/${yy}`;
 }
 
-// Retry com timeout exponencial
+// Retry com timeout exponencial (parâmetros afinados por destino)
 async function fetchWithRetry(url, init={}, opts={}){
-  const attempts = opts.attempts || 3;
-  const baseDelayMs = opts.baseDelayMs || 500;
-  const timeoutMs = opts.timeoutMs || 15000;
+  const attempts = opts.attempts ?? 2;
+  const baseDelayMs = opts.baseDelayMs ?? 300;
+  const timeoutMs = opts.timeoutMs ?? 10_000;
 
   for (let i=0;i<attempts;i++){
     try{
@@ -190,16 +230,19 @@ function parseLeadToken(token){
  * Pipefy GraphQL
  * =======================*/
 async function gql(query, variables){
-  const r = await fetch(PIPE_GRAPHQL_ENDPOINT, {
+  const r = await fetchWithRetry(PIPE_GRAPHQL_ENDPOINT, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${PIPE_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables })
-  });
+  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 8000 }); // menor latência Pipefy
   const j = await r.json();
   if (!r.ok || j.errors) throw new Error(`Pipefy GQL: ${r.status} ${JSON.stringify(j.errors||{})}`);
   return j.data;
 }
 async function getCard(cardId){
+  const ck = `card:${cardId}`;
+  const hit = cacheGet(ck);
+  if (hit) return hit;
   const data = await gql(`query($id: ID!){
     card(id:$id){
       id title
@@ -209,7 +252,9 @@ async function getCard(cardId){
       assignees{ name email }
     }
   }`, { id: cardId });
-  return data.card;
+  const card = data.card;
+  cacheSet(ck, card, 60_000); // 1 min para abrir rápido
+  return card;
 }
 async function updateCardField(cardId, fieldId, newValue){
   await gql(`mutation($input: UpdateCardFieldInput!){
@@ -217,15 +262,19 @@ async function updateCardField(cardId, fieldId, newValue){
   }`, { input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue } });
 }
 async function getTableRecord(recordId){
+  const ck = `rec:${recordId}`;
+  const hit = cacheGet(ck); if (hit) return hit;
   const data = await gql(`query($id: ID!){
     table_record(id:$id){
       id title
       record_fields{ name value field{ id type } }
     }
   }`, { id: recordId });
-  return data.table_record;
+  const rec = data.table_record;
+  cacheSet(ck, rec); // TTL default 5 min
+  return rec;
 }
-async function listTableRecords(tableId, first=100, after=null){
+async function listTableRecords(tableId, first=200, after=null){
   const data = await gql(`query($tableId: ID!, $first: Int!, $after: String){
     table(id:$tableId){
       id
@@ -236,6 +285,8 @@ async function listTableRecords(tableId, first=100, after=null){
     }
   }`, { tableId, first, after });
   const edges = data?.table?.table_records?.edges || [];
+  // alimentar índice de títulos
+  for (const e of edges){ idxSet(tableId, e.node.title, e.node.id); }
   const pageInfo = data?.table?.table_records?.pageInfo || {};
   return { records: edges.map(e=>e.node), pageInfo };
 }
@@ -277,7 +328,7 @@ function extractNameEmailPhoneFromRecord(record){
   return { nome, email, telefone };
 }
 
-// Resolve record de “marcas_1” (espelho por título ou id)
+// Resolve record de “marcas_1” (espelho por título ou id) — com índice
 async function resolveMarcaRecordFromCard(card){
   const by = toById(card);
   const v = by[FIELD_ID_CONNECT_MARCA_NOME]; // 'marcas_1'
@@ -290,20 +341,30 @@ async function resolveMarcaRecordFromCard(card){
   }
 
   if (!MARCAS_TABLE_ID) return null;
+
+  // Tenta por índice antes de varrer
+  const idByIdx = idxGet(MARCAS_TABLE_ID, first);
+  if (idByIdx) { try { return await getTableRecord(idByIdx); } catch {} }
+
   let after=null;
-  for (let i=0;i<50;i++){
-    const {records, pageInfo} = await listTableRecords(MARCAS_TABLE_ID, 100, after);
-    const hit = records.find(r=> String(r.title||'').trim().toLowerCase() === first.toLowerCase());
+  for (let i=0;i<20;i++){ // menos páginas
+    const {records, pageInfo} = await listTableRecords(MARCAS_TABLE_ID, 200, after);
+    const hit = records.find(r=> titleNorm(r.title) === titleNorm(first));
     if (hit) return hit;
     if (!pageInfo?.hasNextPage) break;
     after = pageInfo.endCursor || null;
   }
   return null;
 }
+
 async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMirror, phoneMirrorDigits }){
   if (!contactsTableId) return null;
+  // Tenta índice para título se existir
+  const idByIdx = idxGet(contactsTableId, titleMirror);
+  if (idByIdx){ try { return await getTableRecord(idByIdx); } catch {} }
+
   let after=null;
-  for (let i=0;i<100;i++){
+  for (let i=0;i<50;i++){
     const {records, pageInfo} = await listTableRecords(contactsTableId, 200, after);
     if (titleMirror){
       const r = records.find(x => String(x.title||'').trim() === String(titleMirror).trim());
@@ -325,6 +386,7 @@ async function findContatoRecordByMirror({ contactsTableId, titleMirror, emailMi
 function contacts_table_id(){ return String(CONTACTS_TABLE_ID||'').trim(); }
 
 async function resolveContatoFromMarcaRecord(marcaRecord){
+  if (!marcaRecord) return { nome:'', email:'', telefone:'' };
   const campo = (marcaRecord?.record_fields||[]).find(f=> f?.field?.id==='contatos' || String(f?.name||'').toLowerCase().includes('contato'));
   if (!campo) return { nome:'', email:'', telefone:'' };
 
@@ -370,8 +432,9 @@ async function resolveClasseFromLabelOnCard(card){
   return String(first||'');
 }
 async function resolveClasseFromCard(card, marcaRecordFallback){
+  // Tentativa rápida no próprio card
   const fromCard = await resolveClasseFromLabelOnCard(card);
-  if (fromCard) return fromCard;
+  if (fromCard) return normalizeClasseToNumbersOnly(fromCard);
 
   const by = toById(card);
 
@@ -380,8 +443,8 @@ async function resolveClasseFromCard(card, marcaRecordFallback){
     const arr = parseMaybeJsonArray(v);
     if (arr.length){
       const first = String(arr[0]);
-      if (/^\d+$/.test(first)){ try { const rec = await getTableRecord(first); return rec?.title||''; } catch{} }
-      try { const a = Array.isArray(v)? v : JSON.parse(v); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch{}
+      if (/^\d+$/.test(first)){ try { const rec = await getTableRecord(first); return normalizeClasseToNumbersOnly(rec?.title||''); } catch{} }
+      try { const a = Array.isArray(v)? v : JSON.parse(v); if (Array.isArray(a)&&a.length) return normalizeClasseToNumbersOnly(String(a[0]||'')); } catch{}
     }
   }
 
@@ -397,43 +460,51 @@ async function resolveClasseFromCard(card, marcaRecordFallback){
           const val = classeField.value;
           if (Array.isArray(val)){
             const id0 = String(val[0]||'');
-            if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return recClasse?.title || ''; }
+            if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return normalizeClasseToNumbersOnly(recClasse?.title || ''); }
           } else {
-            try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch { if (val) return String(val); }
+            try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return normalizeClasseToNumbersOnly(String(a[0]||'')); } catch { if (val) return normalizeClasseToNumbersOnly(String(val)); }
           }
         }
-        if (rec?.title) return String(rec.title);
+        if (rec?.title) return normalizeClasseToNumbersOnly(String(rec.title));
       } catch {}
     } else {
       if (MARCAS2_TABLE_ID){
+        // Índice antes da varredura
+        const idIdx = idxGet(MARCAS2_TABLE_ID, first);
+        if (idIdx){
+          const rec = await getTableRecord(idIdx);
+          const classeField = (rec.record_fields||[]).find(f => String(f?.name||'').toLowerCase().includes('classe'));
+          if (classeField?.value) return normalizeClasseToNumbersOnly(String(classeField.value));
+          return normalizeClasseToNumbersOnly(String(rec.title||''));
+        }
         let after=null;
-        for (let i=0;i<50;i++){
-          const {records,pageInfo} = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
-          const rec = records.find(r => String(r.title||'').trim().toLowerCase() === first.trim().toLowerCase());
+        for (let i=0;i<20;i++){
+          const {records,pageInfo} = await listTableRecords(MARCAS2_TABLE_ID, 200, after);
+          const rec = records.find(r => titleNorm(r.title)===titleNorm(first));
           if (rec){
             const classeField = (rec.record_fields||[]).find(f => String(f?.name||'').toLowerCase().includes('classe'));
             if (classeField?.value){
               const val = classeField.value;
               if (Array.isArray(val)){
                 const id0 = String(val[0]||'');
-                if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return recClasse?.title || ''; }
+                if (/^\d+$/.test(id0)){ const recClasse = await getTableRecord(id0); return normalizeClasseToNumbersOnly(recClasse?.title || ''); }
               } else {
-                try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch { if (val) return String(val); }
+                try { const a = JSON.parse(val); if (Array.isArray(a)&&a.length) return normalizeClasseToNumbersOnly(String(a[0]||'')); } catch { if (val) return normalizeClasseToNumbersOnly(String(val)); }
               }
             }
-            return String(rec.title||'');
+            return normalizeClasseToNumbersOnly(String(rec.title||''));
           }
           if (!pageInfo?.hasNextPage) break;
           after = pageInfo.endCursor || null;
         }
       } else {
-        try { const a = Array.isArray(v2)? v2 : JSON.parse(v2); if (Array.isArray(a)&&a.length) return String(a[0]||''); } catch{}
+        try { const a = Array.isArray(v2)? v2 : JSON.parse(v2); if (Array.isArray(a)&&a.length) return normalizeClasseToNumbersOnly(String(a[0]||'')); } catch{}
       }
     }
   }
   if (marcaRecordFallback){
     const classeField = (marcaRecordFallback.record_fields||[]).find(f=> String(f?.name||'').toLowerCase().includes('classe'));
-    if (classeField?.value) return String(classeField.value);
+    if (classeField?.value) return normalizeClasseToNumbersOnly(String(classeField.value));
   }
   return '';
 }
@@ -495,7 +566,7 @@ function normalizeClasseToNumbersOnly(classeStr){
 }
 
 /* =========================
- * Montagem de dados do contrato
+ * Montagem de dados do contrato (com paralelização segura)
  * =======================*/
 function pickParcelas(card){
   const by = toById(card);
@@ -518,20 +589,27 @@ function pickValorAssessoria(card){
 async function montarDados(card){
   const by = toById(card);
 
-  // === Classe / Marca / Contato
-  const marcaRecord = await resolveMarcaRecordFromCard(card);
-  let classe = await resolveClasseFromCard(card, marcaRecord);
-  classe = normalizeClasseToNumbersOnly(classe);
-  
+  // Disparos paralelos principais
+  const marcaRecordPromise = resolveMarcaRecordFromCard(card);
+
+  // Contato básico (local, sem IO remoto)
+  const contatoBasico = {
+    nome: getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']),
+    email: getFirstByNames(card, ['email','e-mail']),
+    telefone: getFirstByNames(card, ['telefone','celular','whatsapp','whats'])
+  };
+
+  const marcaRecord = await marcaRecordPromise;
+  const classePromise = resolveClasseFromCard(card, marcaRecord);
+  const contatoFromMarcaPromise = resolveContatoFromMarcaRecord(marcaRecord);
+
   // TIPOS DE MARCA (card → fallback no registro de Marcas (Visita))
-  let tipoMarca = '';
-  tipoMarca = checklistToText(
+  let tipoMarca = checklistToText(
     by['tipo_de_marca'] ||
-    by['checklist_vertical'] ||          // se o id estiver genérico
+    by['checklist_vertical'] ||
     getFirstByNames(card, ['tipo de marca'])
   );
 
-  // 2) se não achar no card, tenta no conector "marcas_2" (Marcas - Visita)
   if (!tipoMarca) {
     const v2 = by[FIELD_ID_CONNECT_CLASSE]; // 'marcas_2'
     const arr2 = parseMaybeJsonArray(v2);
@@ -540,16 +618,20 @@ async function montarDados(card){
       try {
         let rec = null;
         if (/^\d+$/.test(String(first2))) {
-          // veio ID numérico
           rec = await getTableRecord(String(first2));
         } else if (MARCAS2_TABLE_ID) {
-          // veio título espelhado — procurar por título na tabela
-          let after = null;
-          for (let i = 0; i < 50; i++) {
-            const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
-            rec = records.find(r => String(r.title || '').trim().toLowerCase() === String(first2).trim().toLowerCase());
-            if (rec || !pageInfo?.hasNextPage) break;
-            after = pageInfo.endCursor || null;
+          // tentar índice
+          const idIdx = idxGet(MARCAS2_TABLE_ID, String(first2));
+          if (idIdx) {
+            rec = await getTableRecord(idIdx);
+          } else {
+            let after = null;
+            for (let i = 0; i < 10 && !rec; i++) {
+              const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 200, after);
+              rec = records.find(r => titleNorm(r.title)===titleNorm(String(first2)));
+              if (!pageInfo?.hasNextPage) break;
+              after = pageInfo.endCursor || null;
+            }
           }
         }
         if (rec) {
@@ -563,36 +645,11 @@ async function montarDados(card){
     }
   }
 
-  // contato
-  let contatoNome='', contatoEmail='', contatoTelefone='';
-  const contatoConn = (card.fields||[]).find(f => (f.field?.type==='connector'||f.field?.type==='table_connection') && String(f.name||'').toLowerCase().includes('contat'));
-  if (contatoConn?.value){
-    try{
-      const arr = Array.isArray(contatoConn.value)? contatoConn.value : JSON.parse(contatoConn.value);
-      const first = arr && arr[0];
-      if (first && /^\d+$/.test(String(first))){
-        const rec = await getTableRecord(first);
-        const ex = extractNameEmailPhoneFromRecord(rec);
-        contatoNome = ex.nome || '';
-        contatoEmail = ex.email || '';
-        contatoTelefone = ex.telefone || '';
-      } else if (Array.isArray(arr)){
-        const em = arr.find(s => String(s).includes('@'));
-        const ph = arr.find(s => normalizePhone(s).length>=10);
-        contatoEmail = em ? String(em) : '';
-        contatoTelefone = ph ? String(ph) : '';
-      }
-    } catch {}
-  }
-  if (marcaRecord && (!contatoNome||!contatoEmail||!contatoTelefone)){
-    const contato = await resolveContatoFromMarcaRecord(marcaRecord);
-    contatoNome     = contatoNome     || contato.nome || '';
-    contatoEmail    = contatoEmail    || contato.email || '';
-    contatoTelefone = contatoTelefone || contato.telefone || '';
-  }
-  if (!contatoNome)    contatoNome    = getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']);
-  if (!contatoEmail)   contatoEmail   = getFirstByNames(card, ['email','e-mail']);
-  if (!contatoTelefone)contatoTelefone= getFirstByNames(card, ['telefone','celular','whatsapp','whats']);
+  // contato completo (mescla local + fallback marca)
+  const [classe, contatoFromMarca] = await Promise.all([classePromise, contatoFromMarcaPromise]);
+  let contatoNome     = contatoBasico.nome     || contatoFromMarca.nome     || '';
+  let contatoEmail    = contatoBasico.email    || contatoFromMarca.email    || '';
+  let contatoTelefone = contatoBasico.telefone || contatoFromMarca.telefone || '';
 
   // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
@@ -616,7 +673,7 @@ async function montarDados(card){
   const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
   const valorTaxaBRL = computeValorTaxaBRLFromFaixa({ taxa_faixa: taxaFaixaRaw });
   const formaPagtoTaxa = by['tipo_de_pagamento'] || '';
-  const dataPagtoTaxa = fmtDMY2(by['data_de_pagamento_taxa'] || ''); // NOVO
+  const dataPagtoTaxa = fmtDMY2(by['data_de_pagamento_taxa'] || '');
 
   // ENDEREÇO (CNPJ)
   const cepCnpj    = by['cep_do_cnpj']     || '';
@@ -633,8 +690,8 @@ async function montarDados(card){
   const riscoMarca = by['risco_da_marca'] || '';
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
-  const estadoCivil = by['estado_civ_l'] || ''; // NOVO
-  const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || ''); // NOVO
+  const estadoCivil = by['estado_civ_l'] || '';
+  const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || '');
 
   return {
     cardId: card.id,
@@ -645,7 +702,7 @@ async function montarDados(card){
     cpf: cpfDoc, 
     cnpj: cnpjDoc,
     rg: by['rg'] || '',
-    estado_civil: estadoCivil, // NOVO
+    estado_civil: estadoCivil,
 
     // Campos específicos doc
     cpf_campo: cpfCampo,
@@ -665,7 +722,7 @@ async function montarDados(card){
     parcelas: nParcelas,
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
-    data_pagto_assessoria: dataPagtoAssessoria, // NOVO
+    data_pagto_assessoria: dataPagtoAssessoria,
 
     // TAXA
     taxa_faixa: taxaFaixaRaw || '',
@@ -712,27 +769,23 @@ function montarADDWord(d, nowInfo){
   const formaDaTaxa = d.forma_pagto_taxa || '';
   const dataDaTaxa  = d.data_pagto_taxa || '';
 
-  // Data atual (mês por extenso capitalizado)
   const dia = String(nowInfo.dia).padStart(2,'0');
   const mesNum = String(nowInfo.mes).padStart(2,'0');
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
   const baseVars = {
-    // Identificação / contrato
     contratante_1: d.nome || '',
     cpf: d.cpf || '',
     cnpj: d.cnpj || '',
     rg: d.rg || '',
-    'Estado Civíl': d.estado_civil || '', // NOVO
-    'Estado Civil': d.estado_civil || '', // tolerância
+    'Estado Civíl': d.estado_civil || '',
+    'Estado Civil': d.estado_civil || '',
 
-    // Doc adicionais
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
     'CNPJ': d.cnpj_campo || '',
 
-    // Endereço
     rua,
     bairro,
     numero,
@@ -741,37 +794,30 @@ function montarADDWord(d, nowInfo){
     uf,
     cep,
 
-    // Contato
     'E-mail': d.email || '',
     telefone: d.telefone || '',
 
-    // Marca / Classe / Qtd marca / Risco
     nome_da_marca: d.titulo || '',
     classe: d.classe || '',
     'Quantidade depósitos/processos de MARCA': d.qtd_marca || '',
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
 
-    // ===== NOVO: variável solicitada =====
-    // ${"marcas-espec"} → usa o conteúdo de d.classe (classes e especificações)
+    // variável solicitada anteriormente
     'marcas-espec': d.classe || '',
 
-    // Dados pessoais adicionais
     Nacionalidade: d.nacionalidade || '',
 
-    // Assessoria
     numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
     valor_da_parcela_da_assessoria: toBRL(valorParcela),
     forma_de_pagamento_da_assessoria: d.forma_pagto_assessoria || '',
-    data_de_pagamento_da_assessoria: d.data_pagto_assessoria || '', // NOVO
-    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '', // NOVO
+    data_de_pagamento_da_assessoria: d.data_pagto_assessoria || '',
+    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
 
-    // Pesquisa
     valor_da_pesquisa: valorPesquisa,
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    // Taxa
     valor_da_taxa: valorDaTaxa,
     forma_de_pagamento_da_taxa: formaDaTaxa,
     data_de_pagamento_da_taxa: dataDaTaxa,
@@ -779,15 +825,13 @@ function montarADDWord(d, nowInfo){
     'Forma de pagamento da Taxa': formaDaTaxa,
     'Data de pagamento da Taxa': dataDaTaxa,
 
-    // Datas (numérico E por extenso)
     dia,
     mes: mesNum,
     ano,
     mes_extenso: mesExtenso,
-    'Mês': mesExtenso,  // <- para seu template
-    'Mes': mesExtenso,  // tolerância
+    'Mês': mesExtenso,
+    'Mes': mesExtenso,
 
-    // Template
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
 
@@ -810,7 +854,7 @@ function releaseLock(key){ locks.delete(key); }
 async function preflightDNS(){ /* opcional: warmup */ }
 
 /* =========================
- * D4Sign via secure.d4sign.com.br (validados)
+ * D4Sign via secure.d4sign.com.br (timeouts menores e menos tentativas)
  * =======================*/
 async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
   const base = 'https://secure.d4sign.com.br';
@@ -821,7 +865,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = null; }
   if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
@@ -839,7 +883,7 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
   const text = await res.text();
   if (!res.ok) { console.error('[ERRO D4SIGN createlist]', res.status, text); throw new Error(`Falha ao cadastrar signatários: ${res.status}`); }
   return text;
@@ -854,7 +898,7 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = null; }
   if (!res.ok || !json?.url) {
@@ -876,7 +920,7 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  }, { attempts: 2, baseDelayMs: 300, timeoutMs: 10_000 });
   const text = await res.text();
   if (!res.ok) {
     console.error('[ERRO D4SIGN sendtosigner]', res.status, text);
@@ -898,13 +942,16 @@ async function moveCardToPhaseSafe(cardId, phaseId){
 }
 
 /* =========================
- * Rotas — VENDEDOR (UX bonita)
+ * Rotas — VENDEDOR (UX)
  * =======================*/
-// Página de revisão
 app.get('/lead/:token', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
+
+    // Busca do card cacheada
     const card = await getCard(cardId);
+
+    // Montagem de dados com cache/índices e paralelização
     const d = await montarDados(card);
 
     const html = `
@@ -1017,9 +1064,14 @@ app.post('/lead/:token/generate', async (req, res) => {
     if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
 
     const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, card.title, add);
-    await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
 
-    await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
+    // paraleliza o cadastro de signatários e a movimentação de fase
+    await Promise.all([
+      cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers)
+        .catch(e => console.error('createlist erro', e)),
+      moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO)
+        .catch(e => console.warn('move phase warn', e))
+    ]);
 
     releaseLock(lockKey);
 
