@@ -7,21 +7,28 @@
 
 const express = require('express');
 const crypto = require('crypto');
-const compression = require('compression');
-// Keep-alive para todas as requisições (Undici é o fetch do Node 18+)
-const { Agent, setGlobalDispatcher } = require('undici');
-const dispatcher = new Agent({
-  keepAliveTimeout: 30_000,
-  keepAliveMaxTimeout: 60_000,
-  connections: 16,
-  pipelining: 1
-});
-setGlobalDispatcher(dispatcher);
+
+// compression opcional (não quebra se o pacote não estiver instalado)
+let compression = null;
+try { compression = require('compression'); } catch { /* pacote ausente: segue sem compressão */ }
+
+// Keep-alive usando undici (opcional também)
+let undiciAgent = null;
+try {
+  const { Agent, setGlobalDispatcher } = require('undici');
+  undiciAgent = new Agent({
+    keepAliveTimeout: 30_000,
+    keepAliveMaxTimeout: 60_000,
+    connections: 16,
+    pipelining: 1
+  });
+  setGlobalDispatcher(undiciAgent);
+} catch { /* ambiente sem undici disponível via require; usa defaults do Node 18 */ }
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(compression({ threshold: 1024 })); // respostas HTML menores
+if (compression) app.use(compression({ threshold: 1024 })); // só aplica se existir
 app.set('trust proxy', true);
 
 // Log básico
@@ -818,12 +825,12 @@ function montarADDWord(d, nowInfo){
     forma_de_pagamento_da_pesquisa: formaPesquisa,
     data_de_pagamento_da_pesquisa: dataPesquisa,
 
-    valor_da_taxa: valorDaTaxa,
-    forma_de_pagamento_da_taxa: formaDaTaxa,
-    data_de_pagamento_da_taxa: dataDaTaxa,
-    'Valor da Taxa': valorDaTaxa,
-    'Forma de pagamento da Taxa': formaDaTaxa,
-    'Data de pagamento da Taxa': dataDaTaxa,
+    valor_da_taxa: d.valor_taxa_brl || '',
+    forma_de_pagamento_da_taxa: d.forma_pagto_taxa || '',
+    data_de_pagamento_da_taxa: d.data_pagto_taxa || '',
+    'Valor da Taxa': d.valor_taxa_brl || '',
+    'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
+    'Data de pagamento da Taxa': d.data_pagto_taxa || '',
 
     dia,
     mes: mesNum,
@@ -854,7 +861,7 @@ function releaseLock(key){ locks.delete(key); }
 async function preflightDNS(){ /* opcional: warmup */ }
 
 /* =========================
- * D4Sign via secure.d4sign.com.br (timeouts menores e menos tentativas)
+ * D4Sign via secure.d4sign.com.br
  * =======================*/
 async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
   const base = 'https://secure.d4sign.com.br';
@@ -1232,3 +1239,48 @@ app.listen(PORT, () => {
   console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
 });
 
+/**
+ * Checklist de ENV (EasyPanel)
+ *
+ * PUBLIC_BASE_URL=https://seu-dominio.com
+ * PUBLIC_LINK_SECRET=um-segredo-forte
+ *
+ * PIPE_API_KEY=...
+ * PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
+ *
+ * # Campos/Tabelas
+ * PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
+ * FIELD_ID_CONNECT_MARCA_NOME=marcas_1
+ * FIELD_ID_CONNECT_CLASSE=marcas_2
+ * FIELD_ID_CONNECT_CLASSES=classes_inpi
+ * MARCAS_TABLE_ID=MmqLNaPk
+ * CONTACTS_TABLE_ID=306505297
+ * MARCAS2_TABLE_ID=tnDAtg7l
+ * CLASSES_TABLE_ID=306521337
+ *
+ * # D4Sign
+ * D4SIGN_TOKEN=...
+ * D4SIGN_CRYPT_KEY=...
+ * TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+ *
+ * # Fases (opcional)
+ * NOVO_PIPE_ID=306505295
+ * FASE_VISITA_ID=339299691
+ * PHASE_ID_CONTRATO_ENVIADO=XXXXXXXX
+ *
+ * # Assinatura
+ * EMAIL_ASSINATURA_EMPRESA=contratos@empresa.com.br
+ *
+ * # Cofres
+ * COFRE_UUID_EDNA=...
+ * COFRE_UUID_GREYCE=...
+ * COFRE_UUID_MARIANA=...
+ * COFRE_UUID_VALDEIR=...
+ * COFRE_UUID_DEBORA=...
+ * COFRE_UUID_MAYKON=...
+ * COFRE_UUID_JEFERSON=...
+ * COFRE_UUID_RONALDO=...
+ * COFRE_UUID_BRENDA=...
+ * COFRE_UUID_MAURO=...
+ * DEFAULT_COFRE_UUID=... (opcional)
+ */
