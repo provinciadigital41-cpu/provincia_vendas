@@ -267,7 +267,7 @@ async function getCardShallow(cardId){
 }
 
 /**
- * Tenta abrir um ID que pode ser tanto table_record quanto card.
+ * Abre um ID que pode ser table_record ou card.
  * Retorna { kind: 'record'|'card', node }
  */
 async function getAnyNode(id){
@@ -344,6 +344,20 @@ function checklistToText(v) {
 }
 
 /* =========================
+ * Normalização para ler campos tanto de record quanto de card
+ * =======================*/
+function getRecordFieldsLike(anyNode){
+  // record: node.record_fields; card: node.fields
+  if (!anyNode) return [];
+  if (anyNode.record_fields) return anyNode.record_fields;
+  if (anyNode.fields) {
+    // já tem {name, value, field:{id,type}}
+    return anyNode.fields.map(f => ({ name: f.name, value: f.value, field: { id: f.field?.id, type: f.field?.type }}));
+  }
+  return [];
+}
+
+/* =========================
  * Contato — extração
  * =======================*/
 function extractNameEmailPhoneFromRecord(record){
@@ -370,7 +384,6 @@ function extractNameEmailPhoneFromRecord(record){
   }
   return { nome, email, telefone };
 }
-
 function extractNameEmailPhoneFromCard(card){
   let nome='', email='', telefone='';
   for (const f of (card?.fields||[])){
@@ -393,49 +406,84 @@ function extractNameEmailPhoneFromCard(card){
   return { nome, email, telefone };
 }
 
-async function resolveContatoFromCardConnections(card){
-  const out = { nome:'', email:'', telefone:'' };
+/* =========================
+ * Marca — resolver a partir do card principal
+ * (aceita tanto table_record quanto card)
+ * =======================*/
+async function resolveMarcaRecordFromCard(card){
+  const by = toById(card);
+  const v = by[FIELD_ID_CONNECT_MARCA_NOME];
+  const ids = extractConnectedRecordIds(v);
+  if (ids.length){
+    // pega o primeiro
+    return await getAnyNode(ids[0]); // {kind,node}
+  }
 
-  // 1) Prioriza explicitamente o connector com id 'contato'
-  const connectors = (card.fields||[]).filter(f => {
-    const type = String(f?.field?.type||'').toLowerCase();
-    return type==='connector' || type==='table_connection';
+  // Caso seja texto (título) — tenta achar em tabela de marcas
+  const first = parseMaybeJsonArray(v)[0];
+  if (!first) return null;
+
+  if (/^\d+$/.test(String(first))){
+    const any = await getAnyNode(String(first));
+    return any?.kind ? any : null;
+  }
+
+  if (!MARCAS_TABLE_ID) return null;
+
+  const idByIdx = idxGet(MARCAS_TABLE_ID, first);
+  if (idByIdx) { try { const rec = await getTableRecord(idByIdx); return { kind:'record', node: rec }; } catch {} }
+
+  let after=null;
+  for (let i=0;i<20;i++){
+    const {records, pageInfo} = await listTableRecords(MARCAS_TABLE_ID, 200, after);
+    const hit = records.find(r=> titleNorm(r.title) === titleNorm(first));
+    if (hit) return { kind:'record', node: hit };
+    if (!pageInfo?.hasNextPage) break;
+    after = pageInfo.endCursor || null;
+  }
+  return null;
+}
+
+/* =========================
+ * Contato vindo da Marca (record ou card)
+ * =======================*/
+async function resolveContatoFromMarcaRecord(marcaAny){
+  if (!marcaAny || !marcaAny.node) return { nome:'', email:'', telefone:'' };
+  const node = marcaAny.node;
+
+  // Procura dentro da marca um conector que leve a contato
+  const fieldsLike = getRecordFieldsLike(node);
+  const connField = fieldsLike.find(f=>{
+    const t = String(f?.field?.type||'').toLowerCase();
+    const lbl = String(f?.name||'').toLowerCase();
+    const id = String(f?.field?.id||'').toLowerCase();
+    return (t==='connector' || t==='table_connection' || lbl.includes('contato') || id.includes('contato'));
   });
 
-  const primary = connectors.filter(f => String(f?.field?.id||'').toLowerCase()==='contato');
-  const secondary = connectors.filter(f => {
-    const idLc = String(f?.field?.id||'').toLowerCase();
-    const nameLc = String(f?.name||'').toLowerCase();
-    return idLc!=='contato' && (['contato','cliente','respons','contratante'].some(k => idLc.includes(k) || nameLc.includes(k)));
-  });
-
-  const ordered = [...primary, ...secondary];
-
-  for (const f of ordered) {
-    const recIds = extractConnectedRecordIds(f.value);
+  if (connField && connField.value) {
+    const recIds = extractConnectedRecordIds(connField.value);
     for (const id of recIds) {
       try {
         const any = await getAnyNode(id);
         if (any.kind === 'record') {
-          const { nome, email, telefone } = extractNameEmailPhoneFromRecord(any.node);
-          if (nome && !out.nome) out.nome = nome;
-          if (email && !out.email) out.email = email;
-          if (telefone && !out.telefone) out.telefone = telefone;
+          const ex = extractNameEmailPhoneFromRecord(any.node);
+          if (ex.email || ex.telefone || ex.nome) return ex;
         } else if (any.kind === 'card') {
-          const { nome, email, telefone } = extractNameEmailPhoneFromCard(any.node);
-          if (nome && !out.nome) out.nome = nome;
-          if (email && !out.email) out.email = email;
-          if (telefone && !out.telefone) out.telefone = telefone;
+          const ex = extractNameEmailPhoneFromCard(any.node);
+          if (ex.email || ex.telefone || ex.nome) return ex;
         }
-        if (out.email && out.telefone && out.nome) return out;
       } catch {}
     }
   }
-  return out;
+
+  // fallback: extrai direto do próprio nó
+  if (marcaAny.kind === 'record') return extractNameEmailPhoneFromRecord(node);
+  if (marcaAny.kind === 'card')   return extractNameEmailPhoneFromCard(node);
+  return { nome:'', email:'', telefone:'' };
 }
 
 /* =========================
- * Classe (mantida)
+ * Classe
  * =======================*/
 async function resolveClasseFromLabelOnCard(card){
   const f = (card.fields||[]).find(ff=>{
@@ -457,7 +505,7 @@ function normalizeClasseToNumbersOnly(classeStr){
   const nums = String(classeStr).match(/\d+/g) || [];
   return nums.join(', ');
 }
-async function resolveClasseFromCard(card, marcaRecordFallback){
+async function resolveClasseFromCard(card, marcaAny){
   const fromCard = await resolveClasseFromLabelOnCard(card);
   if (fromCard) return normalizeClasseToNumbersOnly(fromCard);
 
@@ -494,8 +542,9 @@ async function resolveClasseFromCard(card, marcaRecordFallback){
     if (first2) return normalizeClasseToNumbersOnly(String(first2));
   }
 
-  if (marcaRecordFallback){
-    const classeField = (marcaRecordFallback.record_fields||[]).find(f=> String(f?.name||'').toLowerCase().includes('classe'));
+  if (marcaAny && marcaAny.node){
+    const fieldsLike = getRecordFieldsLike(marcaAny.node);
+    const classeField = fieldsLike.find(f=> String(f?.name||'').toLowerCase().includes('classe'));
     if (classeField?.value) return normalizeClasseToNumbersOnly(String(classeField.value));
   }
   return '';
@@ -577,16 +626,56 @@ function pickValorAssessoria(card){
   return isNaN(n)? null : n;
 }
 
+async function resolveContatoFromCardConnections(card){
+  const out = { nome:'', email:'', telefone:'' };
+
+  const connectors = (card.fields||[]).filter(f => {
+    const type = String(f?.field?.type||'').toLowerCase();
+    return type==='connector' || type==='table_connection';
+  });
+
+  const primary = connectors.filter(f => String(f?.field?.id||'').toLowerCase()==='contato');
+  const secondary = connectors.filter(f => {
+    const idLc = String(f?.field?.id||'').toLowerCase();
+    const nameLc = String(f?.name||'').toLowerCase();
+    return idLc!=='contato' && (['contato','cliente','respons','contratante'].some(k => idLc.includes(k) || nameLc.includes(k)));
+  });
+
+  const ordered = [...primary, ...secondary];
+
+  for (const f of ordered) {
+    const recIds = extractConnectedRecordIds(f.value);
+    for (const id of recIds) {
+      try {
+        const any = await getAnyNode(id);
+        if (any.kind === 'record') {
+          const { nome, email, telefone } = extractNameEmailPhoneFromRecord(any.node);
+          if (nome && !out.nome) out.nome = nome;
+          if (email && !out.email) out.email = email;
+          if (telefone && !out.telefone) out.telefone = telefone;
+        } else if (any.kind === 'card') {
+          const { nome, email, telefone } = extractNameEmailPhoneFromCard(any.node);
+          if (nome && !out.nome) out.nome = nome;
+          if (email && !out.email) out.email = email;
+          if (telefone && !out.telefone) out.telefone = telefone;
+        }
+        if (out.email && out.telefone && out.nome) return out;
+      } catch {}
+    }
+  }
+  return out;
+}
+
 async function montarDados(card){
   const by = toById(card);
 
-  const [marcaRecord, contatoDireto] = await Promise.all([
-    resolveMarcaRecordFromCard(card),
+  const [marcaAny, contatoDireto] = await Promise.all([
+    resolveMarcaRecordFromCard(card),     // << agora existe
     resolveContatoFromCardConnections(card)
   ]);
 
-  const classePromise = resolveClasseFromCard(card, marcaRecord);
-  const contatoFromMarcaPromise = resolveContatoFromMarcaRecord(marcaRecord);
+  const classePromise = resolveClasseFromCard(card, marcaAny);
+  const contatoFromMarcaPromise = resolveContatoFromMarcaRecord(marcaAny);
 
   let tipoMarca = checklistToText(
     by['tipo_de_marca'] ||
@@ -667,6 +756,7 @@ async function montarDados(card){
   const estadoCivil = by['estado_civ_l'] || '';
   const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || '');
 
+  // Campo de texto longo para o template ${"marcas-espec"}
   const marcasEspec = by['classe'] || getByName(card, 'classes e especificações') || '';
 
   return {
