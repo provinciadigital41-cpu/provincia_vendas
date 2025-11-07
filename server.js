@@ -752,6 +752,10 @@ function montarADDWord(d, nowInfo){
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
 
+    // ===== NOVO: variável solicitada =====
+    // ${"marcas-espec"} → usa o conteúdo de d.classe (classes e especificações)
+    'marcas-espec': d.classe || '',
+
     // Dados pessoais adicionais
     Nacionalidade: d.nacionalidade || '',
 
@@ -1176,48 +1180,3 @@ app.listen(PORT, () => {
   console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
 });
 
-/**
- * Checklist de ENV (EasyPanel)
- *
- * PUBLIC_BASE_URL=https://seu-dominio.com
- * PUBLIC_LINK_SECRET=um-segredo-forte
- *
- * PIPE_API_KEY=...
- * PIPE_GRAPHQL_ENDPOINT=https://api.pipefy.com/graphql
- *
- * # Campos/Tabelas
- * PIPEFY_FIELD_LINK_CONTRATO=d4_contrato
- * FIELD_ID_CONNECT_MARCA_NOME=marcas_1
- * FIELD_ID_CONNECT_CLASSE=marcas_2
- * FIELD_ID_CONNECT_CLASSES=classes_inpi
- * MARCAS_TABLE_ID=MmqLNaPk
- * CONTACTS_TABLE_ID=306505297
- * MARCAS2_TABLE_ID=tnDAtg7l
- * CLASSES_TABLE_ID=306521337
- *
- * # D4Sign
- * D4SIGN_TOKEN=...
- * D4SIGN_CRYPT_KEY=...
- * TEMPLATE_UUID_CONTRATO=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
- *
- * # Fases (opcional)
- * NOVO_PIPE_ID=306505295
- * FASE_VISITA_ID=339299691
- * PHASE_ID_CONTRATO_ENVIADO=XXXXXXXX
- *
- * # Assinatura
- * EMAIL_ASSINATURA_EMPRESA=contratos@empresa.com.br
- *
- * # Cofres
- * COFRE_UUID_EDNA=...
- * COFRE_UUID_GREYCE=...
- * COFRE_UUID_MARIANA=...
- * COFRE_UUID_VALDEIR=...
- * COFRE_UUID_DEBORA=...
- * COFRE_UUID_MAYKON=...
- * COFRE_UUID_JEFERSON=...
- * COFRE_UUID_RONALDO=...
- * COFRE_UUID_BRENDA=...
- * COFRE_UUID_MAURO=...
- * DEFAULT_COFRE_UUID=... (opcional)
- */
