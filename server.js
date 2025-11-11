@@ -191,6 +191,7 @@ async function getCard(cardId){
       assignees{ name email }
     }
   }`, { id: cardId });
+  if (!data?.card) throw new Error(`Card ${cardId} não encontrado`);
   return data.card;
 }
 async function updateCardField(cardId, fieldId, newValue){
@@ -249,6 +250,7 @@ function extractAssigneeNames(raw){
   return [...new Set(out.filter(Boolean))];
 }
 function resolveCofreUuidByCard(card){
+  if (!card) return DEFAULT_COFRE_UUID || null;
   const by = toById(card);
   const candidatosBrutos = [];
   if (by['vendedor_respons_vel']) candidatosBrutos.push(by['vendedor_respons_vel']);
@@ -281,6 +283,104 @@ function extractClasseNumbersFromText(s){
     if (!seen.has(n)){ seen.add(n); nums.push(n); }
   }
   return nums.join(', ');
+}
+
+// Normaliza o nome do serviço conforme mapeamento
+function normalizarServico(servicoRaw){
+  if (!servicoRaw) return '';
+  const s = String(servicoRaw).trim();
+  if (!s) return '';
+  const upper = s.toUpperCase();
+  
+  // Mapeamento case-insensitive - ordem importa (mais específico primeiro)
+  // 1. Desenho Industrial (mais específico)
+  if (upper.includes('PEDIDO DE REGISTRO DE DESENHO INDUSTRIAL') || 
+      upper.includes('DESENHO INDUSTRIAL') ||
+      (upper.includes('DESENHO') && upper.includes('INDUSTRIAL'))) {
+    return 'DESENHO INDUSTRIAL';
+  }
+  // 2. Patente
+  if (upper.includes('PEDIDO DE REGISTRO DE PATENTE') || 
+      upper.includes('PATENTE')) {
+    return 'PATENTE';
+  }
+  // 3. Marca (mais genérico, por último)
+  if (upper.includes('REGISTRO DE MARCA') || 
+      upper === 'MARCA' ||
+      upper.includes('MARCA')) {
+    return 'MARCA';
+  }
+  
+  // Retorna o valor original (normalizado) se não encontrar correspondência
+  return s;
+}
+
+// Busca campo statement que contenha informações de serviço
+function buscarServicoStatement(card){
+  // Busca campos do tipo statement
+  const statementFields = (card.fields||[]).filter(f => 
+    String(f?.field?.type||'').toLowerCase() === 'statement'
+  );
+  
+  // Busca por nome que contenha "serviço" ou similar
+  for (const field of statementFields){
+    const name = String(field?.name||'').toLowerCase();
+    if (name.includes('serviço') || name.includes('servico') || name.includes('marca')){
+      let value = field?.value || '';
+      
+      // Remove HTML tags se existirem
+      value = String(value).replace(/<[^>]*>/g, ' ').trim();
+      
+      // Remove texto comum do início como "Serviços marca X:" ou "Serviços:"
+      value = value.replace(/^serviços?\s*(marca\s*\d*)?\s*:?\s*/i, '').trim();
+      
+      // Tenta extrair após dois pontos (última parte após :)
+      const colonParts = value.split(':');
+      if (colonParts.length > 1) {
+        // Pega a última parte após os dois pontos
+        value = colonParts[colonParts.length - 1].trim();
+      }
+      
+      // Remove quebras de linha, espaços múltiplos e normaliza
+      value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+      
+      // Se encontrou um valor válido, retorna
+      if (value && value.length > 2) {
+        // Verifica se contém termos de serviço conhecidos
+        const upperValue = value.toUpperCase();
+        if (upperValue.includes('REGISTRO DE MARCA') || 
+            upperValue.includes('PATENTE') || 
+            upperValue.includes('DESENHO INDUSTRIAL') ||
+            upperValue.includes('MARCA')) {
+          return value;
+        }
+      }
+    }
+  }
+  
+  // Fallback 1: busca em todos os campos por termos de serviço (case-insensitive)
+  const servicoTerms = ['registro de marca', 'pedido de registro de patente', 
+                        'pedido de registro de desenho industrial', 'patente', 'desenho industrial'];
+  for (const field of card.fields || []){
+    const fieldValue = String(field?.value||'').trim();
+    if (!fieldValue) continue;
+    
+    const upperValue = fieldValue.toUpperCase();
+    for (const term of servicoTerms){
+      if (upperValue.includes(term.toUpperCase())){
+        return fieldValue;
+      }
+    }
+  }
+  
+  // Fallback 2: busca campos que possam conter o serviço por nome
+  const servicoFieldNames = ['serviço', 'servico', 'tipo de serviço', 'tipo_de_servico'];
+  for (const fieldName of servicoFieldNames){
+    const fieldValue = getFirstByNames(card, [fieldName]);
+    if (fieldValue) return fieldValue;
+  }
+  
+  return '';
 }
 
 /* =========================
@@ -338,6 +438,10 @@ async function montarDados(card){
 
   // Serviços / quantidade de marca
   const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
+  const servicoStatement = buscarServicoStatement(card);
+  // Prioriza o serviço do statement, depois busca em outros campos
+  const servicoRaw = servicoStatement || serv1 || '';
+  const servico = normalizarServico(servicoRaw);
   const temMarca = Boolean(by['marca'] || getFirstByNames(card, ['marca']) || card.title);
   const qtdMarca = temMarca ? '1' : '';
   const servicos = [serv1].filter(Boolean);
@@ -401,6 +505,7 @@ async function montarDados(card){
 
     // Serviços / Assessoria
     servicos,
+    servico, // Serviço normalizado para o template (MARCA, PATENTE, DESENHO INDUSTRIAL)
     parcelas: nParcelas,
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
@@ -494,6 +599,10 @@ function montarADDWord(d, nowInfo){
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
     'marcas-espec': marcasEspecForWord,
+
+    // Serviço normalizado
+    servico: d.servico || '',
+    'servico': d.servico || '', // Versão com aspas para compatibilidade
 
 
 
@@ -707,7 +816,10 @@ app.get('/lead/:token', async (req, res) => {
     </div>
 
     <h2>Serviços</h2>
-    <div>${(d.servicos||[]).join(', ') || '-'}</div>
+    <div class="grid">
+      <div><div class="label">Serviços (lista)</div><div>${(d.servicos||[]).join(', ') || '-'}</div></div>
+      <div><div class="label">Serviço (normalizado para contrato)</div><div><strong>${d.servico || '-'}</strong></div></div>
+    </div>
 
     <h2>Remuneração — Assessoria</h2>
     <div class="grid3">
@@ -877,10 +989,29 @@ app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
     return res.status(500).json({ error: String(e.message||e) });
   }
 });
-app.get('/novo-pipe/criar-link-confirmacao', async (req,res)=>{ // opcional GET
-  req.body = req.body || {};
-  req.body.cardId = req.query.cardId || req.query.card_id;
-  return app._router.handle(req, res, ()=>{});
+app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
+  try {
+    const cardId = req.query.cardId || req.query.card_id;
+    if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
+
+    const card = await getCard(cardId);
+    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
+      return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
+    }
+    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
+      return res.status(400).json({ error: 'Card não está na fase esperada' });
+    }
+
+    const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
+    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
+
+    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
+
+    return res.json({ ok:true, link:url });
+  } catch (e) {
+    console.error('[ERRO criar-link]', e.message||e);
+    return res.status(500).json({ error: String(e.message||e) });
+  }
 });
 
 /* =========================
