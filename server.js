@@ -309,6 +309,7 @@ async function montarDados(card){
 
   // Marca e classes vindos somente do campo de texto "CLASSES E ESPECIFICAÇÕES" (id: 'classe')
   const marcasEspecRaw = (by['classe'] || getFirstByNames(card, ['classes e especificações']) || '');
+  const linhasMarcasEspec = String(marcasEspecRaw).split(/\r?\n/).map(s => s.trim()).filter(s => s.length);
   const classeSomenteNumeros = extractClasseNumbersFromText(marcasEspecRaw);
 
   // Tipo de marca apenas dos campos do card (sem DB)
@@ -392,8 +393,9 @@ async function montarDados(card){
     telefone: contatoTelefone || '',
 
     // Classe e especificações
-    classe: classeSomenteNumeros,          // apenas números separados por vírgula
-    marcas_espec: marcasEspecRaw,          // texto cru exatamente como digitado
+    classe: classeSomenteNumeros,
+    marcas_espec: marcasEspecRaw,
+    linhas_marcas_espec: linhasMarcasEspec,
     qtd_marca: qtdMarca,
     tipo_marca: tipoMarca || '',
 
@@ -436,9 +438,7 @@ function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
-  const marcasEspecForWord = String(d.marcas_espec || '')
-  .split(/\r?\n/)
-  .join('\r');
+  const marcasEspecForWord = String(d.marcas_espec || '');
 
   const valorPesquisa = 'R$ 00,00';
   const formaPesquisa = '---';
@@ -530,6 +530,15 @@ function montarADDWord(d, nowInfo){
 
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
+  const maxLinhas = 30; // ajuste se precisar
+  const linhas = Array.isArray(d.linhas_marcas_espec)
+    ? d.linhas_marcas_espec
+    : String(d.marcas_espec || '').split(/\r?\n/);
+
+  for (let i = 0; i < maxLinhas; i++) {
+    const valor = (linhas[i] || '').trim();
+    baseVars[`marcas-espec_${i+1}`] = valor;
+  }
 
   return baseVars;
 }
