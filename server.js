@@ -407,8 +407,8 @@ function pickValorAssessoria(card){
 async function montarDados(card){
   const by = toById(card);
 
-  // Marca e classes vindos somente do campo de texto "CLASSES E ESPECIFICAÇÕES" (id: 'classe')
-  const marcasEspecRaw = (by['classe'] || getFirstByNames(card, ['classes e especificações']) || '');
+  // Marca e classes vindos somente do campo de texto "CLASSES E ESPECIFICAÇÕES MARCA - 1" (id: 'copy_of_classe_e_especifica_es')
+  const marcasEspecRaw = (by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '');
   const linhasMarcasEspec = String(marcasEspecRaw).split(/\r?\n/).map(s => s.trim()).filter(s => s.length);
   const classeSomenteNumeros = extractClasseNumbersFromText(marcasEspecRaw);
 
