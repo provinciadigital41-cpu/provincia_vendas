@@ -329,7 +329,7 @@ function buscarServicoStatement(card){
       let value = field?.value || '';
       
       // Remove HTML tags se existirem
-      value = String(value).replace(/<[^>]*>/g, ' ').trim();
+      value = String(value).replace(/<[^>]*>/g, ' ').trim(); 
       
       // Remove texto comum do início como "Serviços marca X:" ou "Serviços:"
       value = value.replace(/^serviços?\s*(marca\s*\d*)?\s*:?\s*/i, '').trim();
@@ -538,27 +538,70 @@ async function montarDados(card){
   };
 }
 
+// Sanitiza valores para o D4Sign (remove caracteres problemáticos)
+function sanitizeForD4Sign(value){
+  if (value === null || value === undefined) return '';
+  let s = String(value);
+  
+  // Remove HTML tags e entidades HTML
+  s = s.replace(/<[^>]*>/g, '');
+  s = s.replace(/&nbsp;/g, ' ');
+  s = s.replace(/&amp;/g, '&');
+  s = s.replace(/&lt;/g, '<');
+  s = s.replace(/&gt;/g, '>');
+  s = s.replace(/&quot;/g, '"');
+  s = s.replace(/&#39;/g, "'");
+  s = s.replace(/&[a-z]+;/gi, '');
+  
+  // Remove caracteres de controle problemáticos (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F)
+  // Mantém apenas: \t (0x09), \n (0x0A), \r (0x0D) - mas depois vamos remover também
+  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  
+  // Normaliza quebras de linha: converte \r\n, \r, \n, \t para espaço simples
+  // D4Sign pode ter problemas com quebras de linha em alguns campos (especialmente 0x0B)
+  s = s.replace(/\r\n/g, ' ');
+  s = s.replace(/\r/g, ' ');
+  s = s.replace(/\n/g, ' ');
+  s = s.replace(/\t/g, ' ');
+  
+  // Remove múltiplos espaços consecutivos
+  s = s.replace(/\s+/g, ' ');
+  
+  // Remove espaços no início e fim
+  s = s.trim();
+  
+  // Remove caracteres de controle restantes (mantém caracteres imprimíveis e Unicode válido)
+  // Permite: espaço (0x20), caracteres ASCII imprimíveis (0x21-0x7E), e caracteres Unicode válidos
+  s = s.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+  
+  return s;
+}
+
 // Variáveis para Template Word (ADD)
 function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
-  const marcasEspecForWord = String(d.marcas_espec || '');
+  
+  // Sanitiza marcas_espec - mantém quebras para campos separados, mas sanitiza o campo completo
+  const marcasEspecRaw = String(d.marcas_espec || '');
+  const marcasEspecForWord = sanitizeForD4Sign(marcasEspecRaw);
 
   const valorPesquisa = 'R$ 00,00';
   const formaPesquisa = '---';
   const dataPesquisa  = '00/00/00';
 
-  const rua    = d.rua_cnpj || '';
-  const bairro = d.bairro_cnpj || '';
-  const numero = d.numero_cnpj || '';
-  const cidade = d.cidade_cnpj || '';
-  const uf     = d.uf_cnpj || '';
-  const cep    = d.cep_cnpj || '';
+  // Sanitiza todos os campos de texto antes de enviar ao D4Sign
+  const rua    = sanitizeForD4Sign(d.rua_cnpj || '');
+  const bairro = sanitizeForD4Sign(d.bairro_cnpj || '');
+  const numero = sanitizeForD4Sign(d.numero_cnpj || '');
+  const cidade = sanitizeForD4Sign(d.cidade_cnpj || '');
+  const uf     = sanitizeForD4Sign(d.uf_cnpj || '');
+  const cep    = sanitizeForD4Sign(d.cep_cnpj || '');
 
-  const valorDaTaxa = d.valor_taxa_brl || '';
-  const formaDaTaxa = d.forma_pagto_taxa || '';
-  const dataDaTaxa  = d.data_pagto_taxa || '';
+  const valorDaTaxa = sanitizeForD4Sign(d.valor_taxa_brl || '');
+  const formaDaTaxa = sanitizeForD4Sign(d.forma_pagto_taxa || '');
+  const dataDaTaxa  = sanitizeForD4Sign(d.data_pagto_taxa || '');
 
   const dia = String(nowInfo.dia).padStart(2,'0');
   const mesNum = String(nowInfo.mes).padStart(2,'0');
@@ -567,17 +610,17 @@ function montarADDWord(d, nowInfo){
 
   const baseVars = {
     // Identificação / contrato
-    contratante_1: d.nome || '',
-    cpf: d.cpf || '',
-    cnpj: d.cnpj || '',
-    rg: d.rg || '',
-    'Estado Civíl': d.estado_civil || '',
-    'Estado Civil': d.estado_civil || '',
+    contratante_1: sanitizeForD4Sign(d.nome || ''),
+    cpf: sanitizeForD4Sign(d.cpf || ''),
+    cnpj: sanitizeForD4Sign(d.cnpj || ''),
+    rg: sanitizeForD4Sign(d.rg || ''),
+    'Estado Civíl': sanitizeForD4Sign(d.estado_civil || ''),
+    'Estado Civil': sanitizeForD4Sign(d.estado_civil || ''),
 
     // Doc adicionais
-    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
-    'CPF': d.cpf_campo || '',
-    'CNPJ': d.cnpj_campo || '',
+    'CPF/CNPJ': sanitizeForD4Sign(d.selecao_cnpj_ou_cpf || ''),
+    'CPF': sanitizeForD4Sign(d.cpf_campo || ''),
+    'CNPJ': sanitizeForD4Sign(d.cnpj_campo || ''),
 
     // Endereço
     rua,
@@ -589,32 +632,30 @@ function montarADDWord(d, nowInfo){
     cep,
 
     // Contato
-    'E-mail': d.email || '',
-    telefone: d.telefone || '',
+    'E-mail': sanitizeForD4Sign(d.email || ''),
+    telefone: sanitizeForD4Sign(d.telefone || ''),
 
     // Marca / Classe / Risco
-    nome_da_marca: d.titulo || '',
-    classe: d.classe || '',                           // números separados por vírgula
-    'Quantidade depósitos/processos de MARCA': d.qtd_marca || '',
-    'tipo de marca': d.tipo_marca || '',
-    risco_da_marca: d.risco_marca || '',
+    nome_da_marca: sanitizeForD4Sign(d.titulo || ''),
+    classe: sanitizeForD4Sign(d.classe || ''),                           // números separados por vírgula
+    'Quantidade depósitos/processos de MARCA': sanitizeForD4Sign(d.qtd_marca || ''),
+    'tipo de marca': sanitizeForD4Sign(d.tipo_marca || ''),
+    risco_da_marca: sanitizeForD4Sign(d.risco_marca || ''),
     'marcas-espec': marcasEspecForWord,
 
     // Serviço normalizado
-    servico: d.servico || '',
-    'servico': d.servico || '', // Versão com aspas para compatibilidade
-
-
+    servico: sanitizeForD4Sign(d.servico || ''),
+    'servico': sanitizeForD4Sign(d.servico || ''), // Versão com aspas para compatibilidade
 
     // Dados pessoais adicionais
-    Nacionalidade: d.nacionalidade || '',
+    Nacionalidade: sanitizeForD4Sign(d.nacionalidade || ''),
 
     // Assessoria
     numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
     valor_da_parcela_da_assessoria: toBRL(valorParcela),
-    forma_de_pagamento_da_assessoria: d.forma_pagto_assessoria || '',
-    data_de_pagamento_da_assessoria: d.data_pagto_assessoria || '',
-    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
+    forma_de_pagamento_da_assessoria: sanitizeForD4Sign(d.forma_pagto_assessoria || ''),
+    data_de_pagamento_da_assessoria: sanitizeForD4Sign(d.data_pagto_assessoria || ''),
+    'Data de pagamento da Assessoria': sanitizeForD4Sign(d.data_pagto_assessoria || ''),
 
     // Pesquisa
     valor_da_pesquisa: valorPesquisa,
@@ -645,7 +686,7 @@ function montarADDWord(d, nowInfo){
     : String(d.marcas_espec || '').split(/\r?\n/);
 
   for (let i = 0; i < maxLinhas; i++) {
-    const valor = (linhas[i] || '').trim();
+    const valor = sanitizeForD4Sign(linhas[i] || '');
     baseVars[`marcas-espec_${i+1}`] = valor;
   }
 
@@ -677,18 +718,59 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplateword`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
-  const body = { name_document: title, templates: { [templateId]: varsObj } };
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
-  const text = await res.text();
-  let json; try { json = JSON.parse(text); } catch { json = null; }
-  if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
-    console.error('[ERRO D4SIGN WORD]', res.status, text);
-    throw new Error(`Falha D4Sign(WORD): ${res.status}`);
+  
+  // Sanitiza o título do documento (já deve estar sanitizado, mas garante segurança)
+  const titleSanitized = sanitizeForD4Sign(title || 'Contrato');
+  
+  // Valida varsObj - garante que todos os valores sejam strings válidas
+  // Os valores já foram sanitizados em montarADDWord, mas fazemos uma validação final
+  const varsObjValidated = {};
+  for (const [key, value] of Object.entries(varsObj || {})) {
+    // Converte para string e valida
+    if (value === null || value === undefined) {
+      varsObjValidated[key] = '';
+    } else {
+      // Valida que não há caracteres de controle problemáticos (0x0B especialmente)
+      const strValue = String(value);
+      // Remove apenas caracteres de controle problemáticos que possam ter passado
+      const cleaned = strValue.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+      varsObjValidated[key] = cleaned;
+    }
   }
-  return json.uuid || json.uuid_document;
+  
+  const body = { name_document: titleSanitized, templates: { [templateId]: varsObjValidated } };
+  
+  try {
+    const res = await fetchWithRetry(url.toString(), {
+      method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+    
+    const text = await res.text();
+    let json; 
+    try { 
+      json = JSON.parse(text); 
+    } catch (e) { 
+      console.error('[ERRO D4SIGN WORD - JSON parse]', e.message, text.substring(0, 500));
+      json = null; 
+    }
+    
+    if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
+      console.error('[ERRO D4SIGN WORD]', res.status, text.substring(0, 1000));
+      // Log das variáveis enviadas para debug (apenas primeiros caracteres de cada)
+      const varsPreview = Object.keys(varsObjValidated).reduce((acc, k) => {
+        const v = String(varsObjValidated[k] || '');
+        acc[k] = v.length > 50 ? v.substring(0, 50) + '...' : v;
+        return acc;
+      }, {});
+      console.error('[D4SIGN VARS PREVIEW]', JSON.stringify(varsPreview, null, 2));
+      throw new Error(`Falha D4Sign(WORD): ${res.status} - ${text.substring(0, 200)}`);
+    }
+    return json.uuid || json.uuid_document;
+  } catch (e) {
+    console.error('[ERRO D4SIGN WORD - Exception]', e.message);
+    throw e;
+  }
 }
 async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
   const base = 'https://secure.d4sign.com.br';
