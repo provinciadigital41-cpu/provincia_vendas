@@ -315,17 +315,63 @@ function normalizarServico(servicoRaw){
   return s;
 }
 
-// Busca campo statement que contenha informações de serviço
-function buscarServicoStatement(card){
+// Busca campo statement que contenha informações de serviço para uma marca específica
+function buscarServicoStatementPorMarca(card, numeroMarca = 1){
+  // IDs conhecidos dos campos statement para marcas 2 e 3
+  const statementIdsPorMarca = {
+    2: 'statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e',
+    3: 'statement_c5616541_5f30_41b9_bd74_e2bd2063f253'
+  };
+  
   // Busca campos do tipo statement
   const statementFields = (card.fields||[]).filter(f => 
     String(f?.field?.type||'').toLowerCase() === 'statement'
   );
   
-  // Busca por nome que contenha "serviço" ou similar
+  // Busca por ID específico primeiro (mais preciso)
+  if (numeroMarca === 2 || numeroMarca === 3) {
+    const expectedId = statementIdsPorMarca[numeroMarca];
+    for (const field of statementFields) {
+      const fieldId = String(field?.field?.id || '');
+      if (fieldId === expectedId || fieldId.toLowerCase().includes(expectedId.replace('statement_', '').replace(/_/g, ''))) {
+        let value = field?.value || '';
+        value = String(value).replace(/<[^>]*>/g, ' ').trim();
+        value = value.replace(/^serviços?\s*marca\s*\d*\s*:?\s*/i, '').trim();
+        const colonParts = value.split(':');
+        if (colonParts.length > 1) {
+          value = colonParts[colonParts.length - 1].trim();
+        }
+        value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        if (value && value.length > 2) {
+          return value;
+        }
+      }
+    }
+  }
+  
+  // Busca por nome que contenha "serviço" e o número da marca
   for (const field of statementFields){
     const name = String(field?.name||'').toLowerCase();
-    if (name.includes('serviço') || name.includes('servico') || name.includes('marca')){
+    const fieldId = String(field?.field?.id||'').toLowerCase();
+    const description = String(field?.field?.description || '').toLowerCase();
+    
+    // Para marca 1, busca qualquer statement de serviço (que não seja marca 2 ou 3)
+    // Para marca 2 e 3, busca especificamente pelo número
+    let matches = false;
+    if (numeroMarca === 1) {
+      matches = (name.includes('serviço') || name.includes('servico')) && 
+                !name.includes('marca 2') && !name.includes('marca 3') &&
+                !name.includes('marca2') && !name.includes('marca3');
+    } else {
+      // Busca por padrões que indiquem marca 2 ou 3
+      const marcaPattern = new RegExp(`marca\\s*${numeroMarca}|serviços?\\s*marca\\s*${numeroMarca}`, 'i');
+      matches = marcaPattern.test(name) || 
+                marcaPattern.test(description) ||
+                fieldId.includes(`marca${numeroMarca}`) ||
+                (description.includes(`serviços marca ${numeroMarca}`) || description.includes(`serviços marca${numeroMarca}`));
+    }
+    
+    if (matches){
       let value = field?.value || '';
       
       // Remove HTML tags se existirem
@@ -344,43 +390,19 @@ function buscarServicoStatement(card){
       // Remove quebras de linha, espaços múltiplos e normaliza
       value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
       
-      // Se encontrou um valor válido, retorna
-      if (value && value.length > 2) {
-        // Verifica se contém termos de serviço conhecidos
-        const upperValue = value.toUpperCase();
-        if (upperValue.includes('REGISTRO DE MARCA') || 
-            upperValue.includes('PATENTE') || 
-            upperValue.includes('DESENHO INDUSTRIAL') ||
-            upperValue.includes('MARCA')) {
-          return value;
-        }
+      // Se encontrou um valor válido, retorna (mesmo sem validação específica para marcas 2 e 3)
+      if (value && value.length > 1) {
+        return value;
       }
     }
-  }
-  
-  // Fallback 1: busca em todos os campos por termos de serviço (case-insensitive)
-  const servicoTerms = ['registro de marca', 'pedido de registro de patente', 
-                        'pedido de registro de desenho industrial', 'patente', 'desenho industrial'];
-  for (const field of card.fields || []){
-    const fieldValue = String(field?.value||'').trim();
-    if (!fieldValue) continue;
-    
-    const upperValue = fieldValue.toUpperCase();
-    for (const term of servicoTerms){
-      if (upperValue.includes(term.toUpperCase())){
-        return fieldValue;
-      }
-    }
-  }
-  
-  // Fallback 2: busca campos que possam conter o serviço por nome
-  const servicoFieldNames = ['serviço', 'servico', 'tipo de serviço', 'tipo_de_servico'];
-  for (const fieldName of servicoFieldNames){
-    const fieldValue = getFirstByNames(card, [fieldName]);
-    if (fieldValue) return fieldValue;
   }
   
   return '';
+}
+
+// Busca campo statement que contenha informações de serviço (marca 1 por padrão)
+function buscarServicoStatement(card){
+  return buscarServicoStatementPorMarca(card, 1);
 }
 
 /* =========================
@@ -436,7 +458,7 @@ async function montarDados(card){
   const valorAssessoria = pickValorAssessoria(card);
   const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
 
-  // Serviços / quantidade de marca
+  // Serviços / quantidade de marca - MARCA 1
   const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
   const servicoStatement = buscarServicoStatement(card);
   // Prioriza o serviço do statement, depois busca em outros campos
@@ -445,6 +467,36 @@ async function montarDados(card){
   const temMarca = Boolean(by['marca'] || getFirstByNames(card, ['marca']) || card.title);
   const qtdMarca = temMarca ? '1' : '';
   const servicos = [serv1].filter(Boolean);
+
+  // MARCA 2
+  const marca2Nome = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2', 'marca - 2']) || '';
+  // Busca serviço da marca 2 pelo statement
+  const marca2ServicoStatement = buscarServicoStatementPorMarca(card, 2);
+  // Também tenta buscar pelo ID do campo statement se disponível
+  const marca2ServicoByField = by['statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e'] || '';
+  const marca2ServicoRaw = marca2ServicoStatement || marca2ServicoByField || '';
+  const marca2Servico = normalizarServico(marca2ServicoRaw);
+  const marca2ClassesRaw = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
+  const marca2Classes = extractClasseNumbersFromText(marca2ClassesRaw);
+  const marca2Tipo = checklistToText(
+    by['copy_of_tipo_de_marca'] ||
+    getFirstByNames(card, ['tipo de marca - 2'])
+  );
+
+  // MARCA 3
+  const marca3Nome = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
+  // Busca serviço da marca 3 pelo statement
+  const marca3ServicoStatement = buscarServicoStatementPorMarca(card, 3);
+  // Também tenta buscar pelo ID do campo statement se disponível
+  const marca3ServicoByField = by['statement_c5616541_5f30_41b9_bd74_e2bd2063f253'] || '';
+  const marca3ServicoRaw = marca3ServicoStatement || marca3ServicoByField || '';
+  const marca3Servico = normalizarServico(marca3ServicoRaw);
+  const marca3ClassesRaw = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
+  const marca3Classes = extractClasseNumbersFromText(marca3ClassesRaw);
+  const marca3Tipo = checklistToText(
+    by['copy_of_copy_of_tipo_de_marca'] ||
+    getFirstByNames(card, ['tipo de marca - 3'])
+  );
 
   // TAXA
   const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
@@ -510,6 +562,18 @@ async function montarDados(card){
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
     data_pagto_assessoria: dataPagtoAssessoria,
+
+    // MARCA 2
+    marca_2_nome: marca2Nome,
+    marca_2_servico: marca2Servico,
+    marca_2_classe: marca2Classes,
+    marca_2_tipo: marca2Tipo || '',
+
+    // MARCA 3
+    marca_3_nome: marca3Nome,
+    marca_3_servico: marca3Servico,
+    marca_3_classe: marca3Classes,
+    marca_3_tipo: marca3Tipo || '',
 
     // TAXA
     taxa_faixa: taxaFaixaRaw || '',
@@ -649,6 +713,18 @@ function montarADDWord(d, nowInfo){
     // Serviço normalizado
     servico: sanitizeForD4Sign(d.servico || ''),
     'servico': sanitizeForD4Sign(d.servico || ''), // Versão com aspas para compatibilidade
+
+    // MARCA 2 - Campos para o template
+    'servico_2': sanitizeForD4Sign(d.marca_2_servico || ''),
+    'Nome da Marca_2': sanitizeForD4Sign(d.marca_2_nome || ''),
+    'tipo de marca_2': sanitizeForD4Sign(d.marca_2_tipo || ''),
+    'Classe_2': sanitizeForD4Sign(d.marca_2_classe || ''),
+
+    // MARCA 3 - Campos para o template
+    'servico_3': sanitizeForD4Sign(d.marca_3_servico || ''),
+    'Nome da Marca_3': sanitizeForD4Sign(d.marca_3_nome || ''),
+    'tipo de marca_3': sanitizeForD4Sign(d.marca_3_tipo || ''),
+    'Classe_3': sanitizeForD4Sign(d.marca_3_classe || ''),
 
     // Dados pessoais adicionais
     Nacionalidade: sanitizeForD4Sign(d.nacionalidade || ''),
