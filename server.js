@@ -144,7 +144,8 @@ function fmtDMY2(value){
 }
 
 // Retry com timeout exponencial
-async function fetchWithRetry(url, init={}, opts={}){
+async function fetchWithRetry(url, init={}, opts={})
+{
   const attempts = opts.attempts || 3;
   const baseDelayMs = opts.baseDelayMs || 500;
   const timeoutMs = opts.timeoutMs || 15000;
@@ -523,27 +524,24 @@ async function montarDados(card){
   let classe = await resolveClasseFromCard(card, marcaRecord);
   classe = normalizeClasseToNumbersOnly(classe);
   
-  // TIPOS DE MARCA (card → fallback no registro de Marcas (Visita))
+  // TIPOS DE MARCA
   let tipoMarca = '';
   tipoMarca = checklistToText(
     by['tipo_de_marca'] ||
-    by['checklist_vertical'] ||          // se o id estiver genérico
+    by['checklist_vertical'] ||
     getFirstByNames(card, ['tipo de marca'])
   );
 
-  // 2) se não achar no card, tenta no conector "marcas_2" (Marcas - Visita)
   if (!tipoMarca) {
-    const v2 = by[FIELD_ID_CONNECT_CLASSE]; // 'marcas_2'
+    const v2 = by[FIELD_ID_CONNECT_CLASSE];
     const arr2 = parseMaybeJsonArray(v2);
     const first2 = arr2 && arr2[0];
     if (first2) {
       try {
         let rec = null;
         if (/^\d+$/.test(String(first2))) {
-          // veio ID numérico
           rec = await getTableRecord(String(first2));
         } else if (MARCAS2_TABLE_ID) {
-          // veio título espelhado — procurar por título na tabela
           let after = null;
           for (let i = 0; i < 50; i++) {
             const { records, pageInfo } = await listTableRecords(MARCAS2_TABLE_ID, 100, after);
@@ -563,7 +561,7 @@ async function montarDados(card){
     }
   }
 
-  // contato
+  // contato via conector antigo
   let contatoNome='', contatoEmail='', contatoTelefone='';
   const contatoConn = (card.fields||[]).find(f => (f.field?.type==='connector'||f.field?.type==='table_connection') && String(f.name||'').toLowerCase().includes('contat'));
   if (contatoConn?.value){
@@ -590,9 +588,15 @@ async function montarDados(card){
     contatoEmail    = contatoEmail    || contato.email || '';
     contatoTelefone = contatoTelefone || contato.telefone || '';
   }
-  if (!contatoNome)    contatoNome    = getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']);
-  if (!contatoEmail)   contatoEmail   = getFirstByNames(card, ['email','e-mail']);
-  if (!contatoTelefone)contatoTelefone= getFirstByNames(card, ['telefone','celular','whatsapp','whats']);
+
+  // NOVO: campos diretos na fase Visitas têm prioridade
+  const nomeDireto   = by['nome_1'] || '';
+  const emailDireto  = by['email_de_contato'] || '';
+  const foneDireto   = by['telefone_de_contato'] || '';
+
+  if (nomeDireto)  contatoNome = nomeDireto;
+  if (emailDireto) contatoEmail = emailDireto;
+  if (foneDireto)  contatoTelefone = foneDireto;
 
   // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
@@ -616,7 +620,10 @@ async function montarDados(card){
   const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
   const valorTaxaBRL = computeValorTaxaBRLFromFaixa({ taxa_faixa: taxaFaixaRaw });
   const formaPagtoTaxa = by['tipo_de_pagamento'] || '';
-  const dataPagtoTaxa = fmtDMY2(by['data_de_pagamento_taxa'] || '');
+
+  // NOVO: datas dos boletos
+  const dataPagtoAssessoria = fmtDMY2(by['copy_of_copy_of_data_do_boleto_pagamento_pesquisa'] || '');
+  const dataPagtoTaxa       = fmtDMY2(by['copy_of_data_do_boleto_pagamento_pesquisa'] || '');
 
   // ENDEREÇO (CNPJ)
   const cepCnpj    = by['cep_do_cnpj']     || '';
@@ -634,14 +641,19 @@ async function montarDados(card){
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
   const estadoCivil = by['estado_civ_l'] || '';
-  const dataPagtoAssessoria = fmtDMY2(by['data_de_pagamento_assessoria'] || '');
 
-  // === NOVO: texto longo "CLASSES E ESPECIFICAÇÕES" (id: classe)
-  const marcasEspec = by['classe'] || getFirstByNames(card, ['classes e especificações']) || '';
+  // Texto longo "CLASSES E ESPECIFICAÇÕES"
+  // Mantido cru, sem qualquer alteração
+  const marcasEspec = (by['classe'] || getFirstByNames(card, ['classes e especificações']) || '');
+
+  // NOVO: email para envio do contrato
+  const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
 
   return {
     cardId: card.id,
-    titulo: card.title,
+
+    // NOVO: título da marca diretamente do campo "marca"
+    titulo: (by['marca'] || card.title || ''),
 
     // Contratante
     nome: contatoNome || (by['r_social_ou_n_completo']||''),
@@ -662,7 +674,6 @@ async function montarDados(card){
     classe: classe || '',
     qtd_marca: qtdMarca,
     tipo_marca: tipoMarca || '',
-    // NOVO:
     marcas_espec: marcasEspec || '',
 
     // Serviços / Assessoria
@@ -692,7 +703,10 @@ async function montarDados(card){
     selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
 
     // Vendedor
-    vendedor
+    vendedor,
+
+    // NOVO: email para assinatura
+    email_envio_contrato: emailEnvioContrato
   };
 }
 
@@ -757,7 +771,7 @@ function montarADDWord(d, nowInfo){
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
 
-    // ===== ALTERADO: agora usa o texto longo de d.marcas_espec
+    // Mantido exatamente como digitado
     'marcas-espec': d.marcas_espec || '',
 
     // Dados pessoais adicionais
@@ -798,9 +812,11 @@ function montarADDWord(d, nowInfo){
   return baseVars;
 }
 
+// NOVO: prioriza email_para_envio_do_contrato
 function montarSigners(d){
   const list = [];
-  if (d.email) list.push({ email: d.email, name: d.nome || d.titulo || d.email, act:'1', foreign:'0', send_email:'1' });
+  const emailPrincipal = d.email_envio_contrato || d.email || '';
+  if (emailPrincipal) list.push({ email: emailPrincipal, name: d.nome || d.titulo || emailPrincipal, act:'1', foreign:'0', send_email:'1' });
   if (EMAIL_ASSINATURA_EMPRESA) list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
   const seen={}; return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
 }
@@ -947,6 +963,7 @@ app.get('/lead/:token', async (req, res) => {
     <div class="grid">
       <div><div class="label">E-mail</div><div>${d.email||'-'}</div></div>
       <div><div class="label">Telefone</div><div>${d.telefone||'-'}</div></div>
+      <div><div class="label">Email para envio do contrato</div><div>${d.email_envio_contrato||'-'}</div></div>
     </div>
 
     <h2>Marca</h2>
@@ -1021,7 +1038,7 @@ app.post('/lead/:token/generate', async (req, res) => {
     const uuidSafe = COFRES_UUIDS[d.vendedor] || DEFAULT_COFRE_UUID;
     if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
 
-    const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, card.title, add);
+    const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, d.titulo || card.title, add);
     await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
 
     await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
