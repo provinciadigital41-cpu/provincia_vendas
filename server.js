@@ -436,6 +436,7 @@ function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
+  const marcasEspecForWord = String(d.marcas_espec || '').replace(/\r?\n/g, '\r\n');
 
   const valorPesquisa = 'R$ 00,00';
   const formaPesquisa = '---';
@@ -490,9 +491,9 @@ function montarADDWord(d, nowInfo){
     'Quantidade depósitos/processos de MARCA': d.qtd_marca || '',
     'tipo de marca': d.tipo_marca || '',
     risco_da_marca: d.risco_marca || '',
+    'marcas-espec': marcasEspecForWord,
 
-    // Texto cru exatamente como digitado (quebra de linha preservada)
-    'marcas-espec': d.marcas_espec || '',
+
 
     // Dados pessoais adicionais
     Nacionalidade: d.nacionalidade || '',
