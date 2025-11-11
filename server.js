@@ -436,7 +436,8 @@ function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
-  const marcasEspecForWord = String(d.marcas_espec || '').replace(/\r?\n/g, '\r\n');
+  const marcasEspecForWord = String(d.marcas_espec || '')
+  .replace(/\r?\n/g, '\x0B');;
 
   const valorPesquisa = 'R$ 00,00';
   const formaPesquisa = '---';
