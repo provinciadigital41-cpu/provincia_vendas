@@ -539,8 +539,8 @@ async function montarDados(card){
 }
 
 // Sanitiza valores para o D4Sign (remove caracteres problemáticos)
-function sanitizeForD4Sign(value){
-  if (value === null || value === undefined) return '';
+function sanitizeForD4Sign(value, allowEmpty = false){
+  if (value === null || value === undefined) return allowEmpty ? '' : '---';
   let s = String(value);
   
   // Remove HTML tags e entidades HTML
@@ -573,6 +573,9 @@ function sanitizeForD4Sign(value){
   // Remove caracteres de controle restantes (mantém caracteres imprimíveis e Unicode válido)
   // Permite: espaço (0x20), caracteres ASCII imprimíveis (0x21-0x7E), e caracteres Unicode válidos
   s = s.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+  
+  // Se ficou vazio e não permite vazio, retorna placeholder
+  if (!allowEmpty && !s) return '---';
   
   return s;
 }
@@ -724,21 +727,50 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   
   // Valida varsObj - garante que todos os valores sejam strings válidas
   // Os valores já foram sanitizados em montarADDWord, mas fazemos uma validação final
+  // IMPORTANTE: Para campos vazios, mantém vazio se for campo opcional, ou usa placeholder mínimo
   const varsObjValidated = {};
+  
+  // Campos que devem manter vazios se estiverem vazios (não usar placeholder)
+  // Estes campos são opcionais ou têm valores padrão já definidos
+  const keepEmptyKeys = [
+    'TEMPLATE_UUID_CONTRATO', // UUID do template não deve ser alterado
+    'data_de_pagamento_da_pesquisa', // Já tem valor padrão '00/00/00'
+    'valor_da_pesquisa', // Já tem valor padrão 'R$ 00,00'
+    'forma_de_pagamento_da_pesquisa', // Já tem valor padrão '---'
+    'marcas-espec_1', 'marcas-espec_2', 'marcas-espec_3' // Campos de lista podem estar vazios
+  ];
+  
   for (const [key, value] of Object.entries(varsObj || {})) {
+    const keepEmpty = keepEmptyKeys.includes(key) || key.startsWith('marcas-espec_');
+    
     // Converte para string e valida
     if (value === null || value === undefined) {
-      varsObjValidated[key] = '';
+      varsObjValidated[key] = keepEmpty ? '' : '---';
     } else {
       // Valida que não há caracteres de controle problemáticos (0x0B especialmente)
       const strValue = String(value);
       // Remove apenas caracteres de controle problemáticos que possam ter passado
-      const cleaned = strValue.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-      varsObjValidated[key] = cleaned;
+      let cleaned = strValue.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim();
+      
+      // Se ficou vazio após limpeza
+      if (!cleaned) {
+        // Campos que devem manter vazio ou já têm valores padrão
+        if (keepEmpty || key.includes('pesquisa') || key.includes('marcas-espec')) {
+          varsObjValidated[key] = '';
+        } else {
+          // Outros campos recebem placeholder mínimo para evitar problemas no D4Sign
+          varsObjValidated[key] = '---';
+        }
+      } else {
+        varsObjValidated[key] = cleaned;
+      }
     }
   }
   
   const body = { name_document: titleSanitized, templates: { [templateId]: varsObjValidated } };
+  
+  // Log para debug (apenas se houver erro)
+  console.log(`[D4SIGN] Criando documento: ${titleSanitized}, Template: ${templateId}, Campos: ${Object.keys(varsObjValidated).length}`);
   
   try {
     const res = await fetchWithRetry(url.toString(), {
@@ -805,6 +837,34 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
   }
   return json; // { url, name }
 }
+// Verifica o status do documento no D4Sign
+async function getDocumentStatus(tokenAPI, cryptKey, uuidDocument) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidDocument}`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+  
+  try {
+    const res = await fetchWithRetry(url.toString(), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    }, { attempts: 3, baseDelayMs: 500, timeoutMs: 10000 });
+    
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    
+    return json;
+  } catch (e) {
+    console.warn('[WARN D4SIGN getStatus]', e.message);
+    return null;
+  }
+}
+
 async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
   message = '',
   skip_email = '0',
@@ -964,7 +1024,27 @@ app.post('/lead/:token/generate', async (req, res) => {
     if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
 
     const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, d.titulo || card.title, add);
+    console.log(`[D4SIGN] Documento criado: ${uuidDoc}`);
+    
+    // Aguarda para o D4Sign processar o documento antes de cadastrar signatários
+    // Isso é importante para evitar o status "PROCESSANDO" permanente
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // Verifica o status do documento (opcional, para debug)
+    try {
+      const status = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
+      if (status) {
+        console.log(`[D4SIGN] Status do documento: ${JSON.stringify(status).substring(0, 200)}`);
+      }
+    } catch (e) {
+      console.warn('[WARN] Não foi possível verificar status do documento:', e.message);
+    }
+    
     await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
+    console.log(`[D4SIGN] Signatários cadastrados para: ${uuidDoc}`);
+    
+    // Aguarda mais um pouco após cadastrar signatários para garantir processamento completo
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
 
