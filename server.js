@@ -297,6 +297,24 @@ function normalizarServico(servicoRaw){
   return s;
 }
 
+// Limpa valores de statement (HTML, JSON em string, etc)
+function cleanStatementValue(v){
+  let s = String(v || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (s.startsWith('[') || s.startsWith('{')) {
+    try {
+      const j = JSON.parse(s);
+      if (Array.isArray(j) && j.length) {
+        s = String(j[0] || '').trim();
+      } else if (j && typeof j === 'object' && j.value) {
+        s = String(j.value).trim();
+      }
+    } catch {
+      // mantém s original
+    }
+  }
+  return s;
+}
+
 // Busca campo statement que contenha informações de serviço para uma marca específica
 function buscarServicoStatementPorMarca(card, numeroMarca = 1){
   const statementIdsPorMarca = {
@@ -316,6 +334,7 @@ function buscarServicoStatementPorMarca(card, numeroMarca = 1){
         const colonParts = value.split(':');
         if (colonParts.length > 1) value = colonParts[colonParts.length - 1].trim();
         value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        value = cleanStatementValue(value);
         if (value && value.length > 2) return value;
       }
     }
@@ -341,6 +360,7 @@ function buscarServicoStatementPorMarca(card, numeroMarca = 1){
       const colonParts = value.split(':');
       if (colonParts.length > 1) value = colonParts[colonParts.length - 1].trim();
       value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+      value = cleanStatementValue(value);
       if (value && value.length > 1) return value;
     }
   }
@@ -415,8 +435,10 @@ async function montarDados(card){
   // Marca 2
   const marca2Nome = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2', 'marca - 2']) || '';
   const marca2ServicoStatement = buscarServicoStatementPorMarca(card, 2);
-  const marca2ServicoByField = by['statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e'] || '';
-  const marca2Servico = normalizarServico(marca2ServicoStatement || marca2ServicoByField || '');
+  const rawStmt2 = by['statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e'] || '';
+  const marca2ServicoByField = cleanStatementValue(rawStmt2);
+  let marca2Servico = normalizarServico(marca2ServicoStatement || marca2ServicoByField || '');
+  if (!marca2Servico && (marca2Nome)) marca2Servico = 'MARCA';
   const marca2ClassesRaw = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
   const marca2Classes = extractClasseNumbersFromText(marca2ClassesRaw);
   const marca2Tipo = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
@@ -424,8 +446,10 @@ async function montarDados(card){
   // Marca 3
   const marca3Nome = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
   const marca3ServicoStatement = buscarServicoStatementPorMarca(card, 3);
-  const marca3ServicoByField = by['statement_c5616541_5f30_41b9_bd74_e2bd2063f253'] || '';
-  const marca3Servico = normalizarServico(marca3ServicoStatement || marca3ServicoByField || '');
+  const rawStmt3 = by['statement_c5616541_5f30_41b9_bd74_e2bd2063f253'] || '';
+  const marca3ServicoByField = cleanStatementValue(rawStmt3);
+  let marca3Servico = normalizarServico(marca3ServicoStatement || marca3ServicoByField || '');
+  if (!marca3Servico && (marca3Nome)) marca3Servico = 'MARCA';
   const marca3ClassesRaw = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
   const marca3Classes = extractClasseNumbersFromText(marca3ClassesRaw);
   const marca3Tipo = checklistToText(by['copy_of_copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 3']));
@@ -480,14 +504,11 @@ async function montarDados(card){
 
   // Contratante 2 com fallback dos campos de cotitular
   let contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
-  // novos campos do cotitular
   const cotitularEmail = by['copy_of_email_para_envio_do_contrato'] || '';
   const cotitularTelefone = by['copy_of_telefone_para_envio_do_contrato'] || '';
-  // anteriores
   let contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
   let contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
 
-  // prioriza os campos novos quando existirem
   if (cotitularEmail) contato2Email = cotitularEmail;
   if (cotitularTelefone) contato2Telefone = cotitularTelefone;
 
@@ -655,7 +676,6 @@ function sanitizeForD4Sign(value, allowEmpty = false, opts = { allowBreaks: fals
   if (!opts.allowBreaks){
     s = s.replace(/\s+/g, ' ');
   } else {
-    // normaliza CRLF em LF e remove espaços finais em linhas
     s = s.replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n');
   }
 
@@ -747,7 +767,6 @@ function joinContato(nome, tel, email){
 }
 
 function detalharItensServicos(itens, rotulo){
-  // itens = [{nome, tipo, classe}]
   if (!Array.isArray(itens) || itens.length === 0) return { qtd: 0, desc: '', detalhes: '' };
   const qtd = itens.length;
   const desc = `${qtd} pedido(s)/depósito(s) de ${rotulo} junto ao INPI`;
@@ -759,7 +778,6 @@ function detalharItensServicos(itens, rotulo){
     if (it.classe) partes.push(`CLASSE: nº ${it.classe}`);
     return partes.join(', ');
   }).filter(Boolean);
-  // Detalhes em múltiplas linhas
   const detalhes = linhas.join('\n');
   return { qtd, desc, detalhes };
 }
@@ -793,11 +811,32 @@ function montarADDWord(d, nowInfo){
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
-  // Monta listas por tipo de serviço
+  // Monta listas por tipo de serviço (com fallbacks)
   const itens = [];
-  if (d.servico) itens.push({ tipoServ: d.servico, nome: d.titulo, tipo: d.tipo_marca, classe: d.classe });
-  if (d.marca_2_servico) itens.push({ tipoServ: d.marca_2_servico, nome: d.marca_2_nome, tipo: d.marca_2_tipo, classe: d.marca_2_classe });
-  if (d.marca_3_servico) itens.push({ tipoServ: d.marca_3_servico, nome: d.marca_3_nome, tipo: d.marca_3_tipo, classe: d.marca_3_classe });
+  if (d.titulo || d.servico) {
+    itens.push({
+      tipoServ: d.servico || 'MARCA',
+      nome: d.titulo,
+      tipo: d.tipo_marca,
+      classe: d.classe
+    });
+  }
+  if (d.marca_2_nome || d.marca_2_servico) {
+    itens.push({
+      tipoServ: d.marca_2_servico || 'MARCA',
+      nome: d.marca_2_nome,
+      tipo: d.marca_2_tipo,
+      classe: d.marca_2_classe
+    });
+  }
+  if (d.marca_3_nome || d.marca_3_servico) {
+    itens.push({
+      tipoServ: d.marca_3_servico || 'MARCA',
+      nome: d.marca_3_nome,
+      tipo: d.marca_3_tipo,
+      classe: d.marca_3_classe
+    });
+  }
 
   const itensMarca = itens.filter(x => String(x.tipoServ).toUpperCase() === 'MARCA').map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }));
   const itensPatente = itens.filter(x => String(x.tipoServ).toUpperCase() === 'PATENTE').map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }));
@@ -957,7 +996,6 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
     'data_de_pagamento_da_pesquisa',
     'valor_da_pesquisa',
     'forma_de_pagamento_da_pesquisa',
-    // permitir em branco quando inexistente
     'Contratante 2',
     'dados para contato 2',
     'dados para contato 1',
@@ -980,10 +1018,8 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
       varsObjValidated[key] = keepEmpty ? '' : '---';
     } else {
       const strValue = String(value);
-      // preserva quebras em detalhes
       const allowBreaks = key === 'Detalhes do serviço - MARCA' || key === 'Detalhes do serviço - PATENTE';
       let cleaned = sanitizeForD4Sign(strValue, keepEmpty, { allowBreaks });
-      // se depois de limpar ficou placeholder, mas podemos manter vazio
       if (keepEmpty && cleaned === '---') cleaned = '';
       varsObjValidated[key] = cleaned;
     }
