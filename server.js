@@ -451,7 +451,7 @@ async function montarDados(card){
   const vendedor = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'])[0] || '';
 
   // Extras
-  const riscoMarca = by['risco_da_marca'] || ''; // garantir leitura do select
+  const riscoMarca = by['risco_da_marca'] || '';
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
   const estadoCivil = by['estado_civ_l'] || '';
@@ -480,8 +480,16 @@ async function montarDados(card){
 
   // Contratante 2 com fallback dos campos de cotitular
   let contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
-  const contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
-  const contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
+  // novos campos do cotitular
+  const cotitularEmail = by['copy_of_email_para_envio_do_contrato'] || '';
+  const cotitularTelefone = by['copy_of_telefone_para_envio_do_contrato'] || '';
+  // anteriores
+  let contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
+  let contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
+
+  // prioriza os campos novos quando existirem
+  if (cotitularEmail) contato2Email = cotitularEmail;
+  if (cotitularTelefone) contato2Telefone = cotitularTelefone;
 
   let nacionalidade2 = by['nacionalidade_2'] || '';
   let estadoCivil2 = by['estado_civ_l_2'] || '';
@@ -607,7 +615,7 @@ async function montarDados(card){
     contratante_1_texto: contratante1Texto,
     contratante_2_texto: contratante2Texto,
 
-    // Dados de contato já prontos para o template
+    // Dados de contato para template
     contato_1_nome: contatoNome,
     contato_1_tel: contatoTelefone,
     contato_1_email: contatoEmail,
@@ -618,9 +626,11 @@ async function montarDados(card){
 }
 
 // Sanitiza valores para o D4Sign
-function sanitizeForD4Sign(value, allowEmpty = false){
+function sanitizeForD4Sign(value, allowEmpty = false, opts = { allowBreaks: false }){
   if (value === null || value === undefined) return allowEmpty ? '' : '---';
   let s = String(value);
+
+  // Remove HTML e entidades
   s = s.replace(/<[^>]*>/g, '');
   s = s.replace(/&nbsp;/g, ' ');
   s = s.replace(/&amp;/g, '&');
@@ -629,14 +639,31 @@ function sanitizeForD4Sign(value, allowEmpty = false){
   s = s.replace(/&quot;/g, '"');
   s = s.replace(/&#39;/g, "'");
   s = s.replace(/&[a-z]+;/gi, '');
-  s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  s = s.replace(/\r\n/g, ' ');
-  s = s.replace(/\r/g, ' ');
-  s = s.replace(/\n/g, ' ');
-  s = s.replace(/\t/g, ' ');
-  s = s.replace(/\s+/g, ' ');
+
+  // Remove controles perigosos, preservando \n se allowBreaks
+  if (opts.allowBreaks){
+    s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  } else {
+    s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+    s = s.replace(/\r\n/g, ' ');
+    s = s.replace(/\r/g, ' ');
+    s = s.replace(/\n/g, ' ');
+    s = s.replace(/\t/g, ' ');
+  }
+
+  // Espaços
+  if (!opts.allowBreaks){
+    s = s.replace(/\s+/g, ' ');
+  } else {
+    // normaliza CRLF em LF e remove espaços finais em linhas
+    s = s.replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n');
+  }
+
   s = s.trim();
-  s = s.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+
+  // Remove DEL e C1
+  s = s.replace(/[\x7F-\x9F]/g, '');
+
   if (!allowEmpty && !s) return '---';
   return s;
 }
@@ -723,49 +750,50 @@ function detalharItensServicos(itens, rotulo){
   // itens = [{nome, tipo, classe}]
   if (!Array.isArray(itens) || itens.length === 0) return { qtd: 0, desc: '', detalhes: '' };
   const qtd = itens.length;
-  const header = `${qtd} pedido(s)/depósito(s) de ${rotulo} junto ao INPI`;
+  const desc = `${qtd} pedido(s)/depósito(s) de ${rotulo} junto ao INPI`;
   const linhas = itens.map(it => {
     const partes = [];
-    if (rotulo === 'MARCA') partes.push(`MARCA: ${it.nome || ''}`.trim());
-    if (rotulo === 'PATENTE') partes.push(`PATENTE: ${it.nome || ''}`.trim());
+    const prefixo = rotulo === 'MARCA' ? 'MARCA' : 'PATENTE';
+    if (it.nome) partes.push(`${prefixo}: ${it.nome}`);
     if (it.tipo) partes.push(`Apresentação: ${it.tipo}`);
     if (it.classe) partes.push(`CLASSE: nº ${it.classe}`);
-    return partes.filter(Boolean).join(', ');
+    return partes.join(', ');
   }).filter(Boolean);
-  const detalhes = linhas.join(' | ');
-  return { qtd, desc: header, detalhes };
+  // Detalhes em múltiplas linhas
+  const detalhes = linhas.join('\n');
+  return { qtd, desc, detalhes };
 }
 
-// Variáveis para Template Word (ADD)
+// Variáveis para Template Word
 function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
 
   const marcasEspecRaw = String(d.marcas_espec || '');
-  const marcasEspecForWord = sanitizeForD4Sign(marcasEspecRaw);
+  const marcasEspecForWord = sanitizeForD4Sign(marcasEspecRaw, true);
 
   const valorPesquisa = 'R$ 00,00';
   const formaPesquisa = '---';
   const dataPesquisa  = '00/00/00';
 
-  const rua    = sanitizeForD4Sign(d.rua_cnpj || '');
-  const bairro = sanitizeForD4Sign(d.bairro_cnpj || '');
-  const numero = sanitizeForD4Sign(d.numero_cnpj || '');
-  const cidade = sanitizeForD4Sign(d.cidade_cnpj || '');
-  const uf     = sanitizeForD4Sign(d.uf_cnpj || '');
-  const cep    = sanitizeForD4Sign(d.cep_cnpj || '');
+  const rua    = sanitizeForD4Sign(d.rua_cnpj || '', true);
+  const bairro = sanitizeForD4Sign(d.bairro_cnpj || '', true);
+  const numero = sanitizeForD4Sign(d.numero_cnpj || '', true);
+  const cidade = sanitizeForD4Sign(d.cidade_cnpj || '', true);
+  const uf     = sanitizeForD4Sign(d.uf_cnpj || '', true);
+  const cep    = sanitizeForD4Sign(d.cep_cnpj || '', true);
 
-  const valorDaTaxa = sanitizeForD4Sign(d.valor_taxa_brl || '');
-  const formaDaTaxa = sanitizeForD4Sign(d.forma_pagto_taxa || '');
-  const dataDaTaxa  = sanitizeForD4Sign(d.data_pagto_taxa || '');
+  const valorDaTaxa = sanitizeForD4Sign(d.valor_taxa_brl || '', true);
+  const formaDaTaxa = sanitizeForD4Sign(d.forma_pagto_taxa || '', true);
+  const dataDaTaxa  = sanitizeForD4Sign(d.data_pagto_taxa || '', true);
 
   const dia = String(nowInfo.dia).padStart(2,'0');
   const mesNum = String(nowInfo.mes).padStart(2,'0');
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
-  // Monta listas por tipo de serviço a partir dos 3 possíveis slots
+  // Monta listas por tipo de serviço
   const itens = [];
   if (d.servico) itens.push({ tipoServ: d.servico, nome: d.titulo, tipo: d.tipo_marca, classe: d.classe });
   if (d.marca_2_servico) itens.push({ tipoServ: d.marca_2_servico, nome: d.marca_2_nome, tipo: d.marca_2_tipo, classe: d.marca_2_classe });
@@ -773,68 +801,67 @@ function montarADDWord(d, nowInfo){
 
   const itensMarca = itens.filter(x => String(x.tipoServ).toUpperCase() === 'MARCA').map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }));
   const itensPatente = itens.filter(x => String(x.tipoServ).toUpperCase() === 'PATENTE').map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }));
-  // Desenho industrial não foi solicitado nos novos campos, mas mantemos no template antigo
 
   const marcaInfo = detalharItensServicos(itensMarca, 'MARCA');
   const patenteInfo = detalharItensServicos(itensPatente, 'PATENTE');
 
   const baseVars = {
     // Identificação
-    contratante_1: sanitizeForD4Sign(d.nome || ''),
-    cpf: sanitizeForD4Sign(d.cpf || ''),
-    cnpj: sanitizeForD4Sign(d.cnpj || ''),
-    rg: sanitizeForD4Sign(d.rg || ''),
-    'Estado Civíl': sanitizeForD4Sign(d.estado_civil || ''),
-    'Estado Civil': sanitizeForD4Sign(d.estado_civil || ''),
+    contratante_1: sanitizeForD4Sign(d.nome || '', true),
+    cpf: sanitizeForD4Sign(d.cpf || '', true),
+    cnpj: sanitizeForD4Sign(d.cnpj || '', true),
+    rg: sanitizeForD4Sign(d.rg || '', true),
+    'Estado Civíl': sanitizeForD4Sign(d.estado_civil || '', true),
+    'Estado Civil': sanitizeForD4Sign(d.estado_civil || '', true),
 
     // Doc adicionais
-    'CPF/CNPJ': sanitizeForD4Sign(d.selecao_cnpj_ou_cpf || ''),
-    'CPF': sanitizeForD4Sign(d.cpf_campo || ''),
-    'CNPJ': sanitizeForD4Sign(d.cnpj_campo || ''),
+    'CPF/CNPJ': sanitizeForD4Sign(d.selecao_cnpj_ou_cpf || '', true),
+    'CPF': sanitizeForD4Sign(d.cpf_campo || '', true),
+    'CNPJ': sanitizeForD4Sign(d.cnpj_campo || '', true),
 
     // Endereço
     rua, bairro, numero, nome_da_cidade: cidade, cidade, uf, cep,
 
     // Contato
-    'E-mail': sanitizeForD4Sign(d.email || ''),
-    telefone: sanitizeForD4Sign(d.telefone || ''),
+    'E-mail': sanitizeForD4Sign(d.email || '', true),
+    telefone: sanitizeForD4Sign(d.telefone || '', true),
 
     // Marca / Classe / Risco
-    nome_da_marca: sanitizeForD4Sign(d.titulo || ''),
-    classe: sanitizeForD4Sign(d.classe || ''),
-    'Quantidade depósitos/processos de MARCA': sanitizeForD4Sign(d.qtd_marca || ''),
-    'tipo de marca': sanitizeForD4Sign(d.tipo_marca || ''),
-    risco_da_marca: sanitizeForD4Sign(d.risco_marca || ''),
-    'Risco': sanitizeForD4Sign(d.risco_marca || ''), // novo mapeamento para o placeholder do documento
+    nome_da_marca: sanitizeForD4Sign(d.titulo || '', true),
+    classe: sanitizeForD4Sign(d.classe || '', true),
+    'Quantidade depósitos/processos de MARCA': sanitizeForD4Sign(d.qtd_marca || '', true),
+    'tipo de marca': sanitizeForD4Sign(d.tipo_marca || '', true),
+    risco_da_marca: sanitizeForD4Sign(d.risco_marca || '', true),
+    'Risco': sanitizeForD4Sign(d.risco_marca || '', true),
     'marcas-espec': marcasEspecForWord,
 
     // Serviço normalizado antigo
-    servico: sanitizeForD4Sign(d.servico || ''),
-    'servico': sanitizeForD4Sign(d.servico || ''),
+    servico: sanitizeForD4Sign(d.servico || '', true),
+    'servico': sanitizeForD4Sign(d.servico || '', true),
 
     // Contratantes
     'Contratante 1': sanitizeForD4Sign(d.contratante_1_texto || '', true),
     'Contratante 2': sanitizeForD4Sign(d.contratante_2_texto || '', true),
 
     // Marca 2 e 3 antigos
-    'servico_2': sanitizeForD4Sign(d.marca_2_servico || ''),
-    'Nome da Marca_2': sanitizeForD4Sign(d.marca_2_nome || ''),
-    'tipo de marca_2': sanitizeForD4Sign(d.marca_2_tipo || ''),
-    'Classe_2': sanitizeForD4Sign(d.marca_2_classe || ''),
-    'servico_3': sanitizeForD4Sign(d.marca_3_servico || ''),
-    'Nome da Marca_3': sanitizeForD4Sign(d.marca_3_nome || ''),
-    'tipo de marca_3': sanitizeForD4Sign(d.marca_3_tipo || ''),
-    'Classe_3': sanitizeForD4Sign(d.marca_3_classe || ''),
+    'servico_2': sanitizeForD4Sign(d.marca_2_servico || '', true),
+    'Nome da Marca_2': sanitizeForD4Sign(d.marca_2_nome || '', true),
+    'tipo de marca_2': sanitizeForD4Sign(d.marca_2_tipo || '', true),
+    'Classe_2': sanitizeForD4Sign(d.marca_2_classe || '', true),
+    'servico_3': sanitizeForD4Sign(d.marca_3_servico || '', true),
+    'Nome da Marca_3': sanitizeForD4Sign(d.marca_3_nome || '', true),
+    'tipo de marca_3': sanitizeForD4Sign(d.marca_3_tipo || '', true),
+    'Classe_3': sanitizeForD4Sign(d.marca_3_classe || '', true),
 
     // Dados pessoais adicionais
-    Nacionalidade: sanitizeForD4Sign(d.nacionalidade || ''),
+    Nacionalidade: sanitizeForD4Sign(d.nacionalidade || '', true),
 
     // Assessoria
     numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
     valor_da_parcela_da_assessoria: toBRL(valorParcela),
-    forma_de_pagamento_da_assessoria: sanitizeForD4Sign(d.forma_pagto_assessoria || ''),
-    data_de_pagamento_da_assessoria: sanitizeForD4Sign(d.data_pagto_assessoria || ''),
-    'Data de pagamento da Assessoria': sanitizeForD4Sign(d.data_pagto_assessoria || ''),
+    forma_de_pagamento_da_assessoria: sanitizeForD4Sign(d.forma_pagto_assessoria || '', true),
+    data_de_pagamento_da_assessoria: sanitizeForD4Sign(d.data_pagto_assessoria || '', true),
+    'Data de pagamento da Assessoria': sanitizeForD4Sign(d.data_pagto_assessoria || '', true),
 
     // Pesquisa
     valor_da_pesquisa: valorPesquisa,
@@ -860,15 +887,15 @@ function montarADDWord(d, nowInfo){
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
 
-  // Novos campos: "dados para contato 1" e "dados para contato 2"
+  // Dados para contato
   baseVars['dados para contato 1'] = sanitizeForD4Sign(joinContato(d.nome, d.telefone, d.email), true);
   baseVars['dados para contato 2'] = sanitizeForD4Sign(joinContato(d.contato_2_nome, d.contato_2_tel, d.contato_2_email), true);
 
   // Novos campos de serviços por tipo
   if (marcaInfo.qtd > 0){
-    baseVars['Quantidade depósitos/processos de MARCA'] = sanitizeForD4Sign(marcaInfo.desc);
-    baseVars['Descrição do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.detalhes);
-    baseVars['Detalhes do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.detalhes);
+    baseVars['Quantidade depósitos/processos de MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
+    baseVars['Descrição do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
+    baseVars['Detalhes do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.detalhes, true, { allowBreaks: true });
   } else {
     baseVars['Quantidade depósitos/processos de MARCA'] = '';
     baseVars['Descrição do serviço - MARCA'] = '';
@@ -876,9 +903,9 @@ function montarADDWord(d, nowInfo){
   }
 
   if (patenteInfo.qtd > 0){
-    baseVars['Quantidade depósitos/processos de PATENTE'] = sanitizeForD4Sign(patenteInfo.desc);
-    baseVars['Descrição do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.detalhes);
-    baseVars['Detalhes do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.detalhes);
+    baseVars['Quantidade depósitos/processos de PATENTE'] = sanitizeForD4Sign(patenteInfo.desc, true);
+    baseVars['Descrição do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.desc, true);
+    baseVars['Detalhes do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.detalhes, true, { allowBreaks: true });
   } else {
     baseVars['Quantidade depósitos/processos de PATENTE'] = '';
     baseVars['Descrição do serviço - PATENTE'] = '';
@@ -889,7 +916,7 @@ function montarADDWord(d, nowInfo){
   const maxLinhas = 30;
   const linhas = Array.isArray(d.linhas_marcas_espec) ? d.linhas_marcas_espec : String(d.marcas_espec || '').split(/\r?\n/);
   for (let i = 0; i < maxLinhas; i++) {
-    const valor = sanitizeForD4Sign(linhas[i] || '');
+    const valor = sanitizeForD4Sign(linhas[i] || '', true);
     baseVars[`marcas-espec_${i+1}`] = valor;
   }
 
@@ -922,14 +949,29 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
 
-  const titleSanitized = sanitizeForD4Sign(title || 'Contrato');
+  const titleSanitized = sanitizeForD4Sign(title || 'Contrato', true);
 
   const varsObjValidated = {};
   const keepEmptyKeys = [
     'TEMPLATE_UUID_CONTRATO',
     'data_de_pagamento_da_pesquisa',
     'valor_da_pesquisa',
-    'forma_de_pagamento_da_pesquisa'
+    'forma_de_pagamento_da_pesquisa',
+    // permitir em branco quando inexistente
+    'Contratante 2',
+    'dados para contato 2',
+    'dados para contato 1',
+    'servico_2','Nome da Marca_2','tipo de marca_2','Classe_2',
+    'servico_3','Nome da Marca_3','tipo de marca_3','Classe_3',
+    'Quantidade depósitos/processos de MARCA',
+    'Descrição do serviço - MARCA',
+    'Detalhes do serviço - MARCA',
+    'Quantidade depósitos/processos de PATENTE',
+    'Descrição do serviço - PATENTE',
+    'Detalhes do serviço - PATENTE',
+    'Risco',
+    'risco_da_marca',
+    'CPF','CNPJ','CPF/CNPJ','E-mail','telefone',
   ];
 
   for (const [key, value] of Object.entries(varsObj || {})) {
@@ -938,16 +980,12 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
       varsObjValidated[key] = keepEmpty ? '' : '---';
     } else {
       const strValue = String(value);
-      let cleaned = strValue.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim();
-      if (!cleaned) {
-        if (keepEmpty || key.includes('pesquisa') || key.includes('marcas-espec')) {
-          varsObjValidated[key] = '';
-        } else {
-          varsObjValidated[key] = '---';
-        }
-      } else {
-        varsObjValidated[key] = cleaned;
-      }
+      // preserva quebras em detalhes
+      const allowBreaks = key === 'Detalhes do serviço - MARCA' || key === 'Detalhes do serviço - PATENTE';
+      let cleaned = sanitizeForD4Sign(strValue, keepEmpty, { allowBreaks });
+      // se depois de limpar ficou placeholder, mas podemos manter vazio
+      if (keepEmpty && cleaned === '---') cleaned = '';
+      varsObjValidated[key] = cleaned;
     }
   }
 
