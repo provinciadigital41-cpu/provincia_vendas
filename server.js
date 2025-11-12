@@ -445,8 +445,9 @@ async function montarDados(card){
   const marca2ClassesRaw = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
   const marca2Classes = extractClasseNumbersFromText(marca2ClassesRaw);
   const marca2Tipo = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
+  const linhasMarcas2Espec = String(marca2ClassesRaw).split(/\r?\n/).map(s => s.trim()).filter(s => s.length);
 
-  // Marca 3
+  // Marca 3 (mantido, mas não usado nos novos campos de cabeçalho 2)
   const marca3Nome = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
   const marca3ServicoStatement = buscarServicoStatementPorMarca(card, 3);
   const rawStmt3 = by['statement_c5616541_5f30_41b9_bd74_e2bd2063f253'] || '';
@@ -603,6 +604,8 @@ async function montarDados(card){
     marca_2_servico: marca2Servico,
     marca_2_classe: marca2Classes,
     marca_2_tipo: marca2Tipo || '',
+    marcas2_espec: marca2ClassesRaw,
+    linhas_marcas2_espec: linhasMarcas2Espec,
 
     // Marca 3
     marca_3_nome: marca3Nome,
@@ -811,10 +814,10 @@ function montarADDWord(d, nowInfo){
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
-  // Monta listas por tipo de serviço sem assumir fallback para MARCA
+  // Monta listas por tipo sem assumir fallback para MARCA em itens secundários
   const itens = [];
 
-  // Marca 1
+  // Item 1 (marca 1)
   itens.push({
     tipoServ: d.servico || '',
     nome: d.titulo,
@@ -822,13 +825,10 @@ function montarADDWord(d, nowInfo){
     classe: d.classe
   });
 
-  // Marca 2
+  // Item 2 (marca 2 ou patente 2)
   {
     let tipoServ2 = d.marca_2_servico || '';
-    if (!tipoServ2) {
-      const evidMarca = !!(d.marca_2_tipo || d.marca_2_classe);
-      if (evidMarca) tipoServ2 = 'MARCA';
-    }
+    // sem fallback para não forçar "MARCA" se vier "PATENTE" no statement
     itens.push({
       tipoServ: tipoServ2,
       nome: d.marca_2_nome,
@@ -837,22 +837,7 @@ function montarADDWord(d, nowInfo){
     });
   }
 
-  // Marca 3
-  {
-    let tipoServ3 = d.marca_3_servico || '';
-    if (!tipoServ3) {
-      const evidMarca = !!(d.marca_3_tipo || d.marca_3_classe);
-      if (evidMarca) tipoServ3 = 'MARCA';
-    }
-    itens.push({
-      tipoServ: tipoServ3,
-      nome: d.marca_3_nome,
-      tipo: d.marca_3_tipo,
-      classe: d.marca_3_classe
-    });
-  }
-
-  // Filtra itens válidos
+  // Separação por tipo apenas para os blocos antigos (mantidos)
   const itensMarca = itens
     .filter(x => String(x.tipoServ).toUpperCase() === 'MARCA')
     .map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }))
@@ -904,7 +889,7 @@ function montarADDWord(d, nowInfo){
     'Contratante 1': sanitizeForD4Sign(d.contratante_1_texto || '', true),
     'Contratante 2': sanitizeForD4Sign(d.contratante_2_texto || '', true),
 
-    // Marca 2 e 3 antigos
+    // Marca 2 e 3 antigos (mantidos)
     'servico_2': sanitizeForD4Sign(d.marca_2_servico || '', true),
     'Nome da Marca_2': sanitizeForD4Sign(d.marca_2_nome || '', true),
     'tipo de marca_2': sanitizeForD4Sign(d.marca_2_tipo || '', true),
@@ -952,7 +937,7 @@ function montarADDWord(d, nowInfo){
   baseVars['dados para contato 1'] = sanitizeForD4Sign(joinContato(d.nome, d.telefone, d.email), true);
   baseVars['dados para contato 2'] = sanitizeForD4Sign(joinContato(d.contato_2_nome, d.contato_2_tel, d.contato_2_email), true);
 
-  // Novos campos de serviços por tipo com quebras
+  // Blocos antigos por tipo (mantidos)
   if (marcaInfo.qtd > 0){
     baseVars['Quantidade depósitos/processos de MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
     baseVars['Descrição do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
@@ -973,12 +958,36 @@ function montarADDWord(d, nowInfo){
     baseVars['Detalhes do serviço - PATENTE'] = '';
   }
 
-  // Linhas de classes e especificações
+  // Cabeçalhos solicitados:
+  //  - "Cabeçalho - SERVIÇOS" para o primeiro item (marca 1 ou patente)
+  //  - "Cabeçalho - SERVIÇOS 2" para o segundo item (marca/patente 2)
+  const tipo1 = String(d.servico || '').toUpperCase();
+  const nome1 = d.titulo || '';
+  const header1 =
+    (tipo1 && nome1) ? `${tipo1}: ${nome1}` :
+    (nome1 ? `${nome1}` : '');
+  baseVars['Cabeçalho - SERVIÇOS'] = sanitizeForD4Sign(header1, true, { allowBreaks: true });
+
+  const tipo2 = String(d.marca_2_servico || '').toUpperCase();
+  const nome2 = d.marca_2_nome || '';
+  const header2 =
+    (tipo2 && nome2) ? `${tipo2}: ${nome2}` :
+    (nome2 ? `${nome2}` : '');
+  baseVars['Cabeçalho - SERVIÇOS 2'] = sanitizeForD4Sign(header2, true, { allowBreaks: true });
+
+  // Linhas de classes e especificações — item 1 (mantém até 30)
   const maxLinhas = 30;
   const linhas = Array.isArray(d.linhas_marcas_espec) ? d.linhas_marcas_espec : String(d.marcas_espec || '').split(/\r?\n/);
   for (let i = 0; i < maxLinhas; i++) {
-    const valor = sanitizeForD4Sign(linhas[i] || '', true);
+    const valor = sanitizeForD4Sign((linhas[i] || ''), true);
     baseVars[`marcas-espec_${i+1}`] = valor;
+  }
+
+  // Linhas de classes e especificações — item 2 (novo prefixo marcas2-espec_1..N)
+  const linhas2 = Array.isArray(d.linhas_marcas2_espec) ? d.linhas_marcas2_espec : String(d.marcas2_espec || '').split(/\r?\n/);
+  for (let i = 0; i < maxLinhas; i++) {
+    const valor2 = sanitizeForD4Sign((linhas2[i] || ''), true);
+    baseVars[`marcas2-espec_${i+1}`] = valor2;
   }
 
   return baseVars;
@@ -1032,15 +1041,17 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
     'Risco',
     'risco_da_marca',
     'CPF','CNPJ','CPF/CNPJ','E-mail','telefone',
+    'Cabeçalho - SERVIÇOS',
+    'Cabeçalho - SERVIÇOS 2'
   ];
 
   for (const [key, value] of Object.entries(varsObj || {})) {
-    const keepEmpty = keepEmptyKeys.includes(key) || key.startsWith('marcas-espec_');
+    const keepEmpty = keepEmptyKeys.includes(key) || key.startsWith('marcas-espec_') || key.startsWith('marcas2-espec_');
     if (value === null || value === undefined) {
       varsObjValidated[key] = keepEmpty ? '' : '---';
     } else {
       const strValue = String(value);
-      const allowBreaks = key === 'Detalhes do serviço - MARCA' || key === 'Detalhes do serviço - PATENTE';
+      const allowBreaks = key === 'Detalhes do serviço - MARCA' || key === 'Detalhes do serviço - PATENTE' || key === 'Cabeçalho - SERVIÇOS' || key === 'Cabeçalho - SERVIÇOS 2';
       let cleaned = sanitizeForD4Sign(strValue, keepEmpty, { allowBreaks });
       if (keepEmpty && cleaned === '---') cleaned = '';
       varsObjValidated[key] = cleaned;
