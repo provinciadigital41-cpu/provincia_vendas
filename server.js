@@ -527,6 +527,66 @@ async function montarDados(card){
   // Email para envio do contrato
   const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
 
+  // Contratantes (bloco de texto completo)
+  const contratante1Texto = montarTextoContratante({
+    nome: contatoNome || (by['r_social_ou_n_completo']||''),
+    nacionalidade,
+    estadoCivil,
+    rua: ruaCnpj,
+    bairro: bairroCnpj,
+    numero: numeroCnpj,
+    cidade: cidadeCnpj,
+    uf: ufCnpj,
+    cep: cepCnpj,
+    rg: by['rg'] || '',
+    docSelecao: selecaoCnpjOuCpf,
+    cpf: cpfCampo || cpfDoc,
+    cnpj: cnpjCampo || cnpjDoc,
+    telefone: contatoTelefone,
+    email: contatoEmail
+  });
+
+  const contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
+  const contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
+  const contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
+  const nacionalidade2 = by['nacionalidade_2'] || '';
+  const estadoCivil2 = by['estado_civ_l_2'] || '';
+  const rua2 = by['rua_2'] || by['rua_av_do_cnpj_2'] || '';
+  const bairro2 = by['bairro_2'] || by['bairro_do_cnpj_2'] || '';
+  const numero2 = by['numero_2'] || by['n_mero_2'] || '';
+  const cidade2 = by['cidade_2'] || by['cidade_do_cnpj_2'] || '';
+  const uf2 = by['estado_2'] || by['estado_do_cnpj_2'] || '';
+  const cep2 = by['cep_2'] || by['cep_do_cnpj_2'] || '';
+  const rg2 = by['rg_2'] || '';
+  const cpf2 = by['cpf_2'] || '';
+  const cnpj2 = by['cnpj_2'] || '';
+  const docSelecao2 = by['cnpj_ou_cpf_2'] || '';
+
+  const temDadosContratante2 = Boolean(
+    contato2Nome || nacionalidade2 || estadoCivil2 || rua2 || bairro2 || numero2 ||
+    cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2 || contato2Telefone || contato2Email
+  );
+
+  const contratante2Texto = temDadosContratante2
+    ? montarTextoContratante({
+        nome: contato2Nome,
+        nacionalidade: nacionalidade2,
+        estadoCivil: estadoCivil2,
+        rua: rua2 || ruaCnpj,
+        bairro: bairro2 || bairroCnpj,
+        numero: numero2 || numeroCnpj,
+        cidade: cidade2 || cidadeCnpj,
+        uf: uf2 || ufCnpj,
+        cep: cep2 || cepCnpj,
+        rg: rg2,
+        docSelecao: docSelecao2,
+        cpf: cpf2,
+        cnpj: cnpj2,
+        telefone: contato2Telefone,
+        email: contato2Email
+      })
+    : '';
+
   return {
     cardId: card.id,
 
@@ -598,7 +658,11 @@ async function montarDados(card){
     vendedor,
 
     // Email para assinatura
-    email_envio_contrato: emailEnvioContrato
+    email_envio_contrato: emailEnvioContrato,
+
+    // Contratantes blocos
+    contratante_1_texto: contratante1Texto,
+    contratante_2_texto: contratante2Texto
   };
 }
 
@@ -642,6 +706,78 @@ function sanitizeForD4Sign(value, allowEmpty = false){
   if (!allowEmpty && !s) return '---';
   
   return s;
+}
+
+function montarTextoContratante(info = {}){
+  const {
+    nome,
+    nacionalidade,
+    estadoCivil,
+    rua,
+    bairro,
+    numero,
+    cidade,
+    uf,
+    cep,
+    rg,
+    docSelecao,
+    cpf,
+    cnpj,
+    telefone,
+    email
+  } = info;
+
+  const partes = [];
+  const identidade = [];
+
+  if (nome) identidade.push(nome);
+  if (nacionalidade) identidade.push(nacionalidade);
+  if (estadoCivil) identidade.push(estadoCivil);
+  if (identidade.length) identidade.push('empresário(a)');
+
+  if (identidade.length) partes.push(identidade.join(', '));
+
+  const enderecoPartes = [];
+  if (rua) enderecoPartes.push(`residente na Rua ${rua}`);
+  if (bairro) enderecoPartes.push(`Bairro ${bairro}`);
+  if (numero) enderecoPartes.push(`nº ${numero}`);
+
+  let cidadeUf = '';
+  if (cidade) cidadeUf += cidade;
+  if (uf) cidadeUf += (cidadeUf ? ' - ' : '') + uf;
+  if (cidadeUf) enderecoPartes.push(cidadeUf);
+  if (cep) enderecoPartes.push(`CEP: ${cep}`);
+
+  if (enderecoPartes.length) partes.push(enderecoPartes.join(', '));
+
+  const documentos = [];
+  if (rg) documentos.push(`portador(a) da cédula de identidade RG de nº ${rg}`);
+
+  const docUpper = String(docSelecao || '').trim().toUpperCase();
+  const docNums = [];
+  if (cpf) docNums.push({ tipo: 'CPF', valor: cpf });
+  if (cnpj) docNums.push({ tipo: 'CNPJ', valor: cnpj });
+
+  if (docUpper && docNums.length){
+    const docPrincipal = docNums[0];
+    documentos.push(`devidamente inscrito no ${docUpper} sob o nº ${docPrincipal.valor}`);
+  } else {
+    for (const doc of docNums){
+      documentos.push(`devidamente inscrito no ${doc.tipo} sob o nº ${doc.valor}`);
+    }
+  }
+
+  if (documentos.length) partes.push(documentos.join(', '));
+
+  const contatoPartes = [];
+  if (telefone) contatoPartes.push(`com telefone de nº ${telefone}`);
+  if (email) contatoPartes.push(`com o seguinte endereço eletrônico: ${email}`);
+  if (contatoPartes.length) partes.push(contatoPartes.join(' e '));
+
+  if (!partes.length) return '';
+
+  const texto = partes.join(', ').replace(/\s+,/g, ',').trim();
+  return texto.endsWith('.') ? texto : `${texto}.`;
 }
 
 // Variáveis para Template Word (ADD)
@@ -713,6 +849,10 @@ function montarADDWord(d, nowInfo){
     // Serviço normalizado
     servico: sanitizeForD4Sign(d.servico || ''),
     'servico': sanitizeForD4Sign(d.servico || ''), // Versão com aspas para compatibilidade
+
+    // Contratantes (texto completo)
+    'Contratante 1': sanitizeForD4Sign(d.contratante_1_texto || '', true),
+    'Contratante 2': sanitizeForD4Sign(d.contratante_2_texto || '', true),
 
     // MARCA 2 - Campos para o template
     'servico_2': sanitizeForD4Sign(d.marca_2_servico || ''),
@@ -1067,7 +1207,7 @@ app.get('/lead/:token', async (req, res) => {
     <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
       <button class="btn" type="submit">Gerar contrato</button>
     </form>
-    <p class="muted" style="margin-top:12px">Ao clicar, o documento será criado no D4Sign e o card poderá ser movido para "Contrato enviado".</p>
+    <p class="muted" style="margin-top:12px">Ao clicar, o documento será criado no D4Sign.</p>
   </div>
 </div>
 `;
