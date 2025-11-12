@@ -223,7 +223,7 @@ function checklistToText(v){
   }catch{ return String(v || ''); }
 }
 
-// Documento (CPF/CNPJ)
+// Documento CPF CNPJ
 function pickDocumento(card){
   const prefer = ['cpf','cnpj','documento','doc','cpf/cnpj','cnpj/cpf'];
   for (const k of prefer){
@@ -238,7 +238,7 @@ function pickDocumento(card){
   return { tipo:'', valor:'' };
 }
 
-// Assignee parsing (para cofre)
+// Assignee parsing
 function stripDiacritics(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function normalizeName(s){ return stripDiacritics(String(s||'').trim()).toLowerCase(); }
 function extractAssigneeNames(raw){
@@ -275,7 +275,7 @@ function computeValorTaxaBRLFromFaixa(d){
   return valorTaxaSemRS ? `R$ ${valorTaxaSemRS}` : '';
 }
 
-// Extrai todos os números em ordem de aparição e devolve separados por vírgula
+// Extrai números em ordem
 function extractClasseNumbersFromText(s){
   const nums=[]; const seen=new Set();
   for (const m of String(s||'').matchAll(/\b\d+\b/g)){
@@ -285,7 +285,7 @@ function extractClasseNumbersFromText(s){
   return nums.join(', ');
 }
 
-// Normaliza o nome do serviço conforme mapeamento
+// Normaliza serviço
 function normalizarServico(servicoRaw){
   if (!servicoRaw) return '';
   const s = String(servicoRaw).trim();
@@ -297,7 +297,7 @@ function normalizarServico(servicoRaw){
   return s;
 }
 
-// Limpa valores de statement ou connector (HTML, JSON em string, etc)
+// Limpa statement
 function cleanStatementValue(v){
   let s = String(v || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   if (s.startsWith('[') || s.startsWith('{')) {
@@ -308,14 +308,12 @@ function cleanStatementValue(v){
       } else if (j && typeof j === 'object' && j.value) {
         s = String(j.value).trim();
       }
-    } catch {
-      // mantém s original
-    }
+    } catch {}
   }
   return s;
 }
 
-// Busca campo statement que contenha informações de serviço para uma marca específica
+// Busca statement por marca N
 function buscarServicoStatementPorMarca(card, numeroMarca = 1){
   const statementIdsPorMarca = {
     2: 'statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e',
@@ -370,7 +368,7 @@ function buscarServicoStatementPorMarca(card, numeroMarca = 1){
   return '';
 }
 
-// Busca campo statement que contenha informações de serviço (marca 1 por padrão)
+// Statement marca 1
 function buscarServicoStatement(card){
   return buscarServicoStatementPorMarca(card, 1);
 }
@@ -447,7 +445,7 @@ async function montarDados(card){
   const marca2Tipo = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
   const linhasMarcas2Espec = String(marca2ClassesRaw).split(/\r?\n/).map(s => s.trim()).filter(s => s.length);
 
-  // Marca 3 (mantido, mas não usado nos novos campos de cabeçalho 2)
+  // Marca 3
   const marca3Nome = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
   const marca3ServicoStatement = buscarServicoStatementPorMarca(card, 3);
   const rawStmt3 = by['statement_c5616541_5f30_41b9_bd74_e2bd2063f253'] || '';
@@ -475,7 +473,7 @@ async function montarDados(card){
   const ufCnpj     = by['estado_do_cnpj']  || '';
   const numeroCnpj = by['n_mero_1']        || getFirstByNames(card, ['numero','número','nº']) || '';
 
-  // Vendedor (cofre)
+  // Vendedor
   const vendedor = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'])[0] || '';
 
   // Extras
@@ -506,7 +504,7 @@ async function montarDados(card){
     email: contatoEmail
   });
 
-  // Contratante 2 com fallback dos campos de cotitular
+  // Contratante 2 com possíveis campos de cotitular
   let contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
   const cotitularEmail = by['copy_of_email_para_envio_do_contrato'] || '';
   const cotitularTelefone = by['copy_of_telefone_para_envio_do_contrato'] || '';
@@ -768,7 +766,7 @@ function joinContato(nome, tel, email){
   return p.join(', ');
 }
 
-// Monta a descrição, com quebra de linha entre itens usando CRLF
+// Monta descrição e detalhes
 function detalharItensServicos(itens, rotulo){
   if (!Array.isArray(itens) || itens.length === 0) return { qtd: 0, desc: '', detalhes: '' };
   const qtd = itens.length;
@@ -781,7 +779,7 @@ function detalharItensServicos(itens, rotulo){
     if (it.classe) partes.push(`CLASSE: nº ${it.classe}`);
     return partes.join(', ');
   }).filter(Boolean);
-  const detalhes = linhas.join('\r\n'); // CRLF para favorecer quebra no Word
+  const detalhes = linhas.join('\r\n');
   return { qtd, desc, detalhes };
 }
 
@@ -814,21 +812,16 @@ function montarADDWord(d, nowInfo){
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
-  // Monta listas por tipo sem assumir fallback para MARCA em itens secundários
+  // Monta lista de itens
   const itens = [];
-
-  // Item 1 (marca 1)
   itens.push({
     tipoServ: d.servico || '',
     nome: d.titulo,
     tipo: d.tipo_marca,
     classe: d.classe
   });
-
-  // Item 2 (marca 2 ou patente 2)
   {
     let tipoServ2 = d.marca_2_servico || '';
-    // sem fallback para não forçar "MARCA" se vier "PATENTE" no statement
     itens.push({
       tipoServ: tipoServ2,
       nome: d.marca_2_nome,
@@ -837,7 +830,6 @@ function montarADDWord(d, nowInfo){
     });
   }
 
-  // Separação por tipo apenas para os blocos antigos (mantidos)
   const itensMarca = itens
     .filter(x => String(x.tipoServ).toUpperCase() === 'MARCA')
     .map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }))
@@ -850,6 +842,23 @@ function montarADDWord(d, nowInfo){
 
   const marcaInfo = detalharItensServicos(itensMarca, 'MARCA');
   const patenteInfo = detalharItensServicos(itensPatente, 'PATENTE');
+
+  // Função para uma linha por item
+  function linhaServico(it, rotulo){
+    if (!it) return '';
+    const partes = [];
+    const prefixo = rotulo === 'MARCA' ? 'MARCA' : 'PATENTE';
+    if (it.nome) partes.push(`${prefixo}: ${it.nome}`);
+    if (it.tipo) partes.push(`Apresentação: ${it.tipo}`);
+    if (it.classe) partes.push(`CLASSE: nº ${it.classe}`);
+    return partes.join(', ');
+  }
+
+  // Primeira e segunda linhas separadas
+  const detMarca1   = itensMarca[0] ? linhaServico(itensMarca[0], 'MARCA') : '';
+  const detMarca2   = itensMarca[1] ? linhaServico(itensMarca[1], 'MARCA') : '';
+  const detPatente1 = itensPatente[0] ? linhaServico(itensPatente[0], 'PATENTE') : '';
+  const detPatente2 = itensPatente[1] ? linhaServico(itensPatente[1], 'PATENTE') : '';
 
   const baseVars = {
     // Identificação
@@ -872,7 +881,7 @@ function montarADDWord(d, nowInfo){
     'E-mail': sanitizeForD4Sign(d.email || '', true),
     telefone: sanitizeForD4Sign(d.telefone || '', true),
 
-    // Marca / Classe / Risco
+    // Marca Classe Risco
     nome_da_marca: sanitizeForD4Sign(d.titulo || '', true),
     classe: sanitizeForD4Sign(d.classe || '', true),
     'Quantidade depósitos/processos de MARCA': sanitizeForD4Sign(d.qtd_marca || '', true),
@@ -889,7 +898,7 @@ function montarADDWord(d, nowInfo){
     'Contratante 1': sanitizeForD4Sign(d.contratante_1_texto || '', true),
     'Contratante 2': sanitizeForD4Sign(d.contratante_2_texto || '', true),
 
-    // Marca 2 e 3 antigos (mantidos)
+    // Marca 2 e 3 antigos
     'servico_2': sanitizeForD4Sign(d.marca_2_servico || '', true),
     'Nome da Marca_2': sanitizeForD4Sign(d.marca_2_nome || '', true),
     'tipo de marca_2': sanitizeForD4Sign(d.marca_2_tipo || '', true),
@@ -933,34 +942,33 @@ function montarADDWord(d, nowInfo){
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
 
-  // Dados para contato
+  // Dados para contato combinados
   baseVars['dados para contato 1'] = sanitizeForD4Sign(joinContato(d.nome, d.telefone, d.email), true);
   baseVars['dados para contato 2'] = sanitizeForD4Sign(joinContato(d.contato_2_nome, d.contato_2_tel, d.contato_2_email), true);
 
-  // Blocos antigos por tipo (mantidos)
+  // Blocos por tipo com contagem e descrição geral
   if (marcaInfo.qtd > 0){
     baseVars['Quantidade depósitos/processos de MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
     baseVars['Descrição do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
-    baseVars['Detalhes do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.detalhes, true, { allowBreaks: true });
   } else {
     baseVars['Quantidade depósitos/processos de MARCA'] = '';
     baseVars['Descrição do serviço - MARCA'] = '';
-    baseVars['Detalhes do serviço - MARCA'] = '';
   }
-
   if (patenteInfo.qtd > 0){
     baseVars['Quantidade depósitos/processos de PATENTE'] = sanitizeForD4Sign(patenteInfo.desc, true);
     baseVars['Descrição do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.desc, true);
-    baseVars['Detalhes do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.detalhes, true, { allowBreaks: true });
   } else {
     baseVars['Quantidade depósitos/processos de PATENTE'] = '';
     baseVars['Descrição do serviço - PATENTE'] = '';
-    baseVars['Detalhes do serviço - PATENTE'] = '';
   }
 
-  // Cabeçalhos solicitados:
-  //  - "Cabeçalho - SERVIÇOS" para o primeiro item (marca 1 ou patente)
-  //  - "Cabeçalho - SERVIÇOS 2" para o segundo item (marca/patente 2)
+  // Detalhes separados por item para garantir quebra no Word
+  baseVars['Detalhes do serviço - MARCA']     = sanitizeForD4Sign(detMarca1, true, { allowBreaks: true });
+  baseVars['Detalhes do serviço - MARCA 2']   = sanitizeForD4Sign(detMarca2, true, { allowBreaks: true });
+  baseVars['Detalhes do serviço - PATENTE']   = sanitizeForD4Sign(detPatente1, true, { allowBreaks: true });
+  baseVars['Detalhes do serviço - PATENTE 2'] = sanitizeForD4Sign(detPatente2, true, { allowBreaks: true });
+
+  // Cabeçalhos solicitados
   const tipo1 = String(d.servico || '').toUpperCase();
   const nome1 = d.titulo || '';
   const header1 =
@@ -975,7 +983,7 @@ function montarADDWord(d, nowInfo){
     (nome2 ? `${nome2}` : '');
   baseVars['Cabeçalho - SERVIÇOS 2'] = sanitizeForD4Sign(header2, true, { allowBreaks: true });
 
-  // Linhas de classes e especificações — item 1 (mantém até 30)
+  // Linhas de classes e especificações — item 1
   const maxLinhas = 30;
   const linhas = Array.isArray(d.linhas_marcas_espec) ? d.linhas_marcas_espec : String(d.marcas_espec || '').split(/\r?\n/);
   for (let i = 0; i < maxLinhas; i++) {
@@ -983,7 +991,7 @@ function montarADDWord(d, nowInfo){
     baseVars[`marcas-espec_${i+1}`] = valor;
   }
 
-  // Linhas de classes e especificações — item 2 (novo prefixo marcas2-espec_1..N)
+  // Linhas de classes e especificações — item 2
   const linhas2 = Array.isArray(d.linhas_marcas2_espec) ? d.linhas_marcas2_espec : String(d.marcas2_espec || '').split(/\r?\n/);
   for (let i = 0; i < maxLinhas; i++) {
     const valor2 = sanitizeForD4Sign((linhas2[i] || ''), true);
@@ -1034,15 +1042,17 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
     'servico_3','Nome da Marca_3','tipo de marca_3','Classe_3',
     'Quantidade depósitos/processos de MARCA',
     'Descrição do serviço - MARCA',
-    'Detalhes do serviço - MARCA',
     'Quantidade depósitos/processos de PATENTE',
     'Descrição do serviço - PATENTE',
-    'Detalhes do serviço - PATENTE',
     'Risco',
     'risco_da_marca',
     'CPF','CNPJ','CPF/CNPJ','E-mail','telefone',
     'Cabeçalho - SERVIÇOS',
-    'Cabeçalho - SERVIÇOS 2'
+    'Cabeçalho - SERVIÇOS 2',
+    'Detalhes do serviço - MARCA',
+    'Detalhes do serviço - MARCA 2',
+    'Detalhes do serviço - PATENTE',
+    'Detalhes do serviço - PATENTE 2'
   ];
 
   for (const [key, value] of Object.entries(varsObj || {})) {
@@ -1051,7 +1061,13 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
       varsObjValidated[key] = keepEmpty ? '' : '---';
     } else {
       const strValue = String(value);
-      const allowBreaks = key === 'Detalhes do serviço - MARCA' || key === 'Detalhes do serviço - PATENTE' || key === 'Cabeçalho - SERVIÇOS' || key === 'Cabeçalho - SERVIÇOS 2';
+      const allowBreaks =
+        key === 'Detalhes do serviço - MARCA' ||
+        key === 'Detalhes do serviço - MARCA 2' ||
+        key === 'Detalhes do serviço - PATENTE' ||
+        key === 'Detalhes do serviço - PATENTE 2' ||
+        key === 'Cabeçalho - SERVIÇOS' ||
+        key === 'Cabeçalho - SERVIÇOS 2';
       let cleaned = sanitizeForD4Sign(strValue, keepEmpty, { allowBreaks });
       if (keepEmpty && cleaned === '---') cleaned = '';
       varsObjValidated[key] = cleaned;
@@ -1162,7 +1178,7 @@ async function moveCardToPhaseSafe(cardId, phaseId){
 }
 
 /* =========================
- * Rotas — VENDEDOR (UX)
+ * Rotas — VENDEDOR
  * =======================*/
 app.get('/lead/:token', async (req, res) => {
   try {
