@@ -1004,10 +1004,34 @@ function montarADDWord(d, nowInfo){
 // Assinantes
 function montarSigners(d){
   const list = [];
-  const emailPrincipal = d.email_envio_contrato || d.email || '';
-  if (emailPrincipal) list.push({ email: emailPrincipal, name: d.nome || d.titulo || emailPrincipal, act:'1', foreign:'0', send_email:'1' });
-  if (EMAIL_ASSINATURA_EMPRESA) list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
-  const seen={}; return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
+
+  // Signatário principal
+  const principalEmail = d.email_envio_contrato || d.email || '';
+  const principalName  = d.nome || d.titulo || principalEmail;
+  if (principalEmail) {
+    list.push({ email: principalEmail, name: principalName, act:'1', foreign:'0', send_email:'1' });
+  }
+
+  // Signatário cotitular (se houver)
+  const coEmail = d.contato_2_email || '';
+  const coName  = d.contato_2_nome || 'Cotitular';
+  if (coEmail) {
+    list.push({ email: coEmail, name: coName, act:'1', foreign:'0', send_email:'1' });
+  }
+
+  // Empresa
+  if (EMAIL_ASSINATURA_EMPRESA) {
+    list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
+  }
+
+  // Dedup por e-mail (case-insensitive)
+  const seen = {};
+  return list.filter(s => {
+    const k = String(s.email||'').toLowerCase();
+    if (!k || seen[k]) return false;
+    seen[k] = true;
+    return true;
+  });
 }
 
 /* =========================
