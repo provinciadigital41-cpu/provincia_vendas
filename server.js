@@ -187,7 +187,7 @@ async function getCard(cardId){
       id title
       current_phase{ id name }
       pipe{ id name }
-      fields{ name value field{ id type } }
+      fields{ name value field{ id type description } }
       assignees{ name email }
     }
   }`, { id: cardId });
@@ -279,7 +279,7 @@ function computeValorTaxaBRLFromFaixa(d){
 function extractClasseNumbersFromText(s){
   const nums=[]; const seen=new Set();
   for (const m of String(s||'').matchAll(/\b\d+\b/g)){
-    const n = String(Number(m[0])); // remove zeros à esquerda
+    const n = String(Number(m[0]));
     if (!seen.has(n)){ seen.add(n); nums.push(n); }
   }
   return nums.join(', ');
@@ -291,44 +291,20 @@ function normalizarServico(servicoRaw){
   const s = String(servicoRaw).trim();
   if (!s) return '';
   const upper = s.toUpperCase();
-  
-  // Mapeamento case-insensitive - ordem importa (mais específico primeiro)
-  // 1. Desenho Industrial (mais específico)
-  if (upper.includes('PEDIDO DE REGISTRO DE DESENHO INDUSTRIAL') || 
-      upper.includes('DESENHO INDUSTRIAL') ||
-      (upper.includes('DESENHO') && upper.includes('INDUSTRIAL'))) {
-    return 'DESENHO INDUSTRIAL';
-  }
-  // 2. Patente
-  if (upper.includes('PEDIDO DE REGISTRO DE PATENTE') || 
-      upper.includes('PATENTE')) {
-    return 'PATENTE';
-  }
-  // 3. Marca (mais genérico, por último)
-  if (upper.includes('REGISTRO DE MARCA') || 
-      upper === 'MARCA' ||
-      upper.includes('MARCA')) {
-    return 'MARCA';
-  }
-  
-  // Retorna o valor original (normalizado) se não encontrar correspondência
+  if (upper.includes('PEDIDO DE REGISTRO DE DESENHO INDUSTRIAL') || upper.includes('DESENHO INDUSTRIAL') || (upper.includes('DESENHO') && upper.includes('INDUSTRIAL'))) return 'DESENHO INDUSTRIAL';
+  if (upper.includes('PEDIDO DE REGISTRO DE PATENTE') || upper.includes('PATENTE')) return 'PATENTE';
+  if (upper.includes('REGISTRO DE MARCA') || upper === 'MARCA' || upper.includes('MARCA')) return 'MARCA';
   return s;
 }
 
 // Busca campo statement que contenha informações de serviço para uma marca específica
 function buscarServicoStatementPorMarca(card, numeroMarca = 1){
-  // IDs conhecidos dos campos statement para marcas 2 e 3
   const statementIdsPorMarca = {
     2: 'statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e',
     3: 'statement_c5616541_5f30_41b9_bd74_e2bd2063f253'
   };
-  
-  // Busca campos do tipo statement
-  const statementFields = (card.fields||[]).filter(f => 
-    String(f?.field?.type||'').toLowerCase() === 'statement'
-  );
-  
-  // Busca por ID específico primeiro (mais preciso)
+  const statementFields = (card.fields||[]).filter(f => String(f?.field?.type||'').toLowerCase() === 'statement');
+
   if (numeroMarca === 2 || numeroMarca === 3) {
     const expectedId = statementIdsPorMarca[numeroMarca];
     for (const field of statementFields) {
@@ -338,65 +314,36 @@ function buscarServicoStatementPorMarca(card, numeroMarca = 1){
         value = String(value).replace(/<[^>]*>/g, ' ').trim();
         value = value.replace(/^serviços?\s*marca\s*\d*\s*:?\s*/i, '').trim();
         const colonParts = value.split(':');
-        if (colonParts.length > 1) {
-          value = colonParts[colonParts.length - 1].trim();
-        }
+        if (colonParts.length > 1) value = colonParts[colonParts.length - 1].trim();
         value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-        if (value && value.length > 2) {
-          return value;
-        }
+        if (value && value.length > 2) return value;
       }
     }
   }
-  
-  // Busca por nome que contenha "serviço" e o número da marca
+
   for (const field of statementFields){
     const name = String(field?.name||'').toLowerCase();
     const fieldId = String(field?.field?.id||'').toLowerCase();
     const description = String(field?.field?.description || '').toLowerCase();
-    
-    // Para marca 1, busca qualquer statement de serviço (que não seja marca 2 ou 3)
-    // Para marca 2 e 3, busca especificamente pelo número
+
     let matches = false;
     if (numeroMarca === 1) {
-      matches = (name.includes('serviço') || name.includes('servico')) && 
-                !name.includes('marca 2') && !name.includes('marca 3') &&
-                !name.includes('marca2') && !name.includes('marca3');
+      matches = (name.includes('serviço') || name.includes('servico')) && !name.includes('marca 2') && !name.includes('marca 3') && !name.includes('marca2') && !name.includes('marca3');
     } else {
-      // Busca por padrões que indiquem marca 2 ou 3
       const marcaPattern = new RegExp(`marca\\s*${numeroMarca}|serviços?\\s*marca\\s*${numeroMarca}`, 'i');
-      matches = marcaPattern.test(name) || 
-                marcaPattern.test(description) ||
-                fieldId.includes(`marca${numeroMarca}`) ||
-                (description.includes(`serviços marca ${numeroMarca}`) || description.includes(`serviços marca${numeroMarca}`));
+      matches = marcaPattern.test(name) || marcaPattern.test(description) || fieldId.includes(`marca${numeroMarca}`) || (description.includes(`serviços marca ${numeroMarca}`) || description.includes(`serviços marca${numeroMarca}`));
     }
-    
+
     if (matches){
       let value = field?.value || '';
-      
-      // Remove HTML tags se existirem
-      value = String(value).replace(/<[^>]*>/g, ' ').trim(); 
-      
-      // Remove texto comum do início como "Serviços marca X:" ou "Serviços:"
+      value = String(value).replace(/<[^>]*>/g, ' ').trim();
       value = value.replace(/^serviços?\s*(marca\s*\d*)?\s*:?\s*/i, '').trim();
-      
-      // Tenta extrair após dois pontos (última parte após :)
       const colonParts = value.split(':');
-      if (colonParts.length > 1) {
-        // Pega a última parte após os dois pontos
-        value = colonParts[colonParts.length - 1].trim();
-      }
-      
-      // Remove quebras de linha, espaços múltiplos e normaliza
+      if (colonParts.length > 1) value = colonParts[colonParts.length - 1].trim();
       value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-      
-      // Se encontrou um valor válido, retorna
-      if (value && value.length > 1) {
-        return value;
-      }
+      if (value && value.length > 1) return value;
     }
   }
-  
   return '';
 }
 
@@ -406,7 +353,7 @@ function buscarServicoStatement(card){
 }
 
 /* =========================
- * Montagem de dados do contrato (somente campos da etapa Visitas)
+ * Montagem de dados do contrato
  * =======================*/
 function pickParcelas(card){
   const by = toById(card);
@@ -429,24 +376,23 @@ function pickValorAssessoria(card){
 async function montarDados(card){
   const by = toById(card);
 
-  // Marca e classes vindos somente do campo de texto "CLASSES E ESPECIFICAÇÕES MARCA - 1" (id: 'copy_of_classe_e_especifica_es')
+  // Marca 1
   const marcasEspecRaw = (by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '');
   const linhasMarcasEspec = String(marcasEspecRaw).split(/\r?\n/).map(s => s.trim()).filter(s => s.length);
   const classeSomenteNumeros = extractClasseNumbersFromText(marcasEspecRaw);
 
-  // Tipo de marca apenas dos campos do card (sem DB)
   const tipoMarca = checklistToText(
     by['tipo_de_marca'] ||
     by['checklist_vertical'] ||
     getFirstByNames(card, ['tipo de marca'])
   );
 
-  // Contato somente da etapa Visitas
+  // Contato contratante 1
   const contatoNome     = by['nome_1'] || getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']) || '';
   const contatoEmail    = by['email_de_contato'] || getFirstByNames(card, ['email','e-mail']) || '';
   const contatoTelefone = by['telefone_de_contato'] || getFirstByNames(card, ['telefone','celular','whatsapp','whats']) || '';
 
-  // Documento (CPF/CNPJ)
+  // Documento
   const doc = pickDocumento(card);
   const cpfDoc  = doc.tipo==='CPF'?  doc.valor : '';
   const cnpjDoc = doc.tipo==='CNPJ'? doc.valor : '';
@@ -458,45 +404,31 @@ async function montarDados(card){
   const valorAssessoria = pickValorAssessoria(card);
   const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
 
-  // Serviços / quantidade de marca - MARCA 1
+  // Serviços e tipos via statement
   const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
   const servicoStatement = buscarServicoStatement(card);
-  // Prioriza o serviço do statement, depois busca em outros campos
-  const servicoRaw = servicoStatement || serv1 || '';
-  const servico = normalizarServico(servicoRaw);
+  const servico = normalizarServico(servicoStatement || serv1 || '');
   const temMarca = Boolean(by['marca'] || getFirstByNames(card, ['marca']) || card.title);
   const qtdMarca = temMarca ? '1' : '';
   const servicos = [serv1].filter(Boolean);
 
-  // MARCA 2
+  // Marca 2
   const marca2Nome = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2', 'marca - 2']) || '';
-  // Busca serviço da marca 2 pelo statement
   const marca2ServicoStatement = buscarServicoStatementPorMarca(card, 2);
-  // Também tenta buscar pelo ID do campo statement se disponível
   const marca2ServicoByField = by['statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e'] || '';
-  const marca2ServicoRaw = marca2ServicoStatement || marca2ServicoByField || '';
-  const marca2Servico = normalizarServico(marca2ServicoRaw);
+  const marca2Servico = normalizarServico(marca2ServicoStatement || marca2ServicoByField || '');
   const marca2ClassesRaw = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
   const marca2Classes = extractClasseNumbersFromText(marca2ClassesRaw);
-  const marca2Tipo = checklistToText(
-    by['copy_of_tipo_de_marca'] ||
-    getFirstByNames(card, ['tipo de marca - 2'])
-  );
+  const marca2Tipo = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
 
-  // MARCA 3
+  // Marca 3
   const marca3Nome = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
-  // Busca serviço da marca 3 pelo statement
   const marca3ServicoStatement = buscarServicoStatementPorMarca(card, 3);
-  // Também tenta buscar pelo ID do campo statement se disponível
   const marca3ServicoByField = by['statement_c5616541_5f30_41b9_bd74_e2bd2063f253'] || '';
-  const marca3ServicoRaw = marca3ServicoStatement || marca3ServicoByField || '';
-  const marca3Servico = normalizarServico(marca3ServicoRaw);
+  const marca3Servico = normalizarServico(marca3ServicoStatement || marca3ServicoByField || '');
   const marca3ClassesRaw = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
   const marca3Classes = extractClasseNumbersFromText(marca3ClassesRaw);
-  const marca3Tipo = checklistToText(
-    by['copy_of_copy_of_tipo_de_marca'] ||
-    getFirstByNames(card, ['tipo de marca - 3'])
-  );
+  const marca3Tipo = checklistToText(by['copy_of_copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 3']));
 
   // TAXA
   const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
@@ -507,7 +439,7 @@ async function montarDados(card){
   const dataPagtoAssessoria = fmtDMY2(by['copy_of_copy_of_data_do_boleto_pagamento_pesquisa'] || '');
   const dataPagtoTaxa       = fmtDMY2(by['copy_of_data_do_boleto_pagamento_pesquisa'] || '');
 
-  // Endereço (CNPJ)
+  // Endereço CNPJ
   const cepCnpj    = by['cep_do_cnpj']     || '';
   const ruaCnpj    = by['rua_av_do_cnpj']  || '';
   const bairroCnpj = by['bairro_do_cnpj']  || '';
@@ -519,7 +451,7 @@ async function montarDados(card){
   const vendedor = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'])[0] || '';
 
   // Extras
-  const riscoMarca = by['risco_da_marca'] || '';
+  const riscoMarca = by['risco_da_marca'] || ''; // garantir leitura do select
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
   const estadoCivil = by['estado_civ_l'] || '';
@@ -527,7 +459,7 @@ async function montarDados(card){
   // Email para envio do contrato
   const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
 
-  // Contratantes (bloco de texto completo)
+  // Contratante 1 texto
   const contratante1Texto = montarTextoContratante({
     nome: contatoNome || (by['r_social_ou_n_completo']||''),
     nacionalidade,
@@ -546,8 +478,7 @@ async function montarDados(card){
     email: contatoEmail
   });
 
-  // ====== INÍCIO DAS INCLUSÕES PARA COTITULAR ======
-  // Campos padrão do contratante 2
+  // Contratante 2 com fallback dos campos de cotitular
   let contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
   const contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
   const contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
@@ -565,34 +496,24 @@ async function montarDados(card){
   let cnpj2 = by['cnpj_2'] || '';
   let docSelecao2 = by['cnpj_ou_cpf_2'] || '';
 
-  // Fallbacks do cotitular
-  // Nome
   if (!contato2Nome) contato2Nome = by['raz_o_social_ou_nome_completo_cotitular'] || contato2Nome;
-  // Nacionalidade
   if (!nacionalidade2) nacionalidade2 = by['nacionalidade_cotitular'] || nacionalidade2;
-  // Estado civil
   if (!estadoCivil2) estadoCivil2 = by['estado_civ_l_cotitular'] || estadoCivil2;
-  // Endereço
   if (!rua2) rua2 = by['rua_av_do_cnpj_cotitular'] || rua2;
   if (!bairro2) bairro2 = by['bairro_cotitular'] || bairro2;
   if (!cidade2) cidade2 = by['cidade_cotitular'] || cidade2;
   if (!uf2) uf2 = by['estado_cotitular'] || uf2;
-  // CEP cotitular não foi listado, mantém cep2
-  // Documentos
   if (!rg2) rg2 = by['rg_cotitular'] || rg2;
   if (!cpf2) cpf2 = by['cpf_cotitular'] || cpf2;
   if (!cnpj2) cnpj2 = by['cnpj_cotitular'] || cnpj2;
-  // tipo_da_empresa_cotitular não é usado no texto, então ignorado
-  // ====== FIM DAS INCLUSÕES PARA COTITULAR ======
 
   const temDadosContratante2 = Boolean(
     contato2Nome || nacionalidade2 || estadoCivil2 || rua2 || bairro2 || numero2 ||
-    cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2 || contato2Telefone || contato2Email
-    // Também considera algum campo do cotitular explicitamente
-    || by['raz_o_social_ou_nome_completo_cotitular'] || by['nacionalidade_cotitular']
-    || by['estado_civ_l_cotitular'] || by['rua_av_do_cnpj_cotitular'] || by['bairro_cotitular']
-    || by['cidade_cotitular'] || by['estado_cotitular'] || by['rg_cotitular'] || by['cpf_cotitular']
-    || by['cnpj_cotitular']
+    cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2 || contato2Telefone || contato2Email ||
+    by['raz_o_social_ou_nome_completo_cotitular'] || by['nacionalidade_cotitular'] ||
+    by['estado_civ_l_cotitular'] || by['rua_av_do_cnpj_cotitular'] || by['bairro_cotitular'] ||
+    by['cidade_cotitular'] || by['estado_cotitular'] || by['rg_cotitular'] || by['cpf_cotitular'] ||
+    by['cnpj_cotitular']
   );
 
   const contratante2Texto = temDadosContratante2
@@ -618,46 +539,40 @@ async function montarDados(card){
   return {
     cardId: card.id,
 
-    // Nome da marca diretamente do campo "marca"
     titulo: (by['marca'] || card.title || ''),
 
-    // Contratante
     nome: contatoNome || (by['r_social_ou_n_completo']||''),
     cpf: cpfDoc, 
     cnpj: cnpjDoc,
     rg: by['rg'] || '',
     estado_civil: estadoCivil,
 
-    // Campos específicos doc
     cpf_campo: cpfCampo,
     cnpj_campo: cnpjCampo,
 
-    // Contato
     email: contatoEmail || '',
     telefone: contatoTelefone || '',
 
-    // Classe e especificações
     classe: classeSomenteNumeros,
     marcas_espec: marcasEspecRaw,
     linhas_marcas_espec: linhasMarcasEspec,
     qtd_marca: qtdMarca,
     tipo_marca: tipoMarca || '',
 
-    // Serviços / Assessoria
     servicos,
-    servico, // Serviço normalizado para o template (MARCA, PATENTE, DESENHO INDUSTRIAL)
+    servico,
     parcelas: nParcelas,
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
     data_pagto_assessoria: dataPagtoAssessoria,
 
-    // MARCA 2
+    // Marca 2
     marca_2_nome: marca2Nome,
     marca_2_servico: marca2Servico,
     marca_2_classe: marca2Classes,
     marca_2_tipo: marca2Tipo || '',
 
-    // MARCA 3
+    // Marca 3
     marca_3_nome: marca3Nome,
     marca_3_servico: marca3Servico,
     marca_3_classe: marca3Classes,
@@ -669,7 +584,7 @@ async function montarDados(card){
     forma_pagto_taxa: formaPagtoTaxa,
     data_pagto_taxa: dataPagtoTaxa,
 
-    // Endereço (CNPJ)
+    // Endereço CNPJ
     cep_cnpj: cepCnpj,
     rua_cnpj: ruaCnpj,
     bairro_cnpj: bairroCnpj,
@@ -685,21 +600,27 @@ async function montarDados(card){
     // Vendedor
     vendedor,
 
-    // Email para assinatura
+    // Email assinatura
     email_envio_contrato: emailEnvioContrato,
 
     // Contratantes blocos
     contratante_1_texto: contratante1Texto,
-    contratante_2_texto: contratante2Texto
+    contratante_2_texto: contratante2Texto,
+
+    // Dados de contato já prontos para o template
+    contato_1_nome: contatoNome,
+    contato_1_tel: contatoTelefone,
+    contato_1_email: contatoEmail,
+    contato_2_nome: contato2Nome,
+    contato_2_tel: contato2Telefone,
+    contato_2_email: contato2Email
   };
 }
 
-// Sanitiza valores para o D4Sign (remove caracteres problemáticos)
+// Sanitiza valores para o D4Sign
 function sanitizeForD4Sign(value, allowEmpty = false){
   if (value === null || value === undefined) return allowEmpty ? '' : '---';
   let s = String(value);
-  
-  // Remove HTML tags e entidades HTML
   s = s.replace(/<[^>]*>/g, '');
   s = s.replace(/&nbsp;/g, ' ');
   s = s.replace(/&amp;/g, '&');
@@ -708,31 +629,15 @@ function sanitizeForD4Sign(value, allowEmpty = false){
   s = s.replace(/&quot;/g, '"');
   s = s.replace(/&#39;/g, "'");
   s = s.replace(/&[a-z]+;/gi, '');
-  
-  // Remove caracteres de controle problemáticos (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F)
-  // Mantém apenas: \t (0x09), \n (0x0A), \r (0x0D) - mas depois vamos remover também
   s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  
-  // Normaliza quebras de linha: converte \r\n, \r, \n, \t para espaço simples
-  // D4Sign pode ter problemas com quebras de linha em alguns campos (especialmente 0x0B)
   s = s.replace(/\r\n/g, ' ');
   s = s.replace(/\r/g, ' ');
   s = s.replace(/\n/g, ' ');
   s = s.replace(/\t/g, ' ');
-  
-  // Remove múltiplos espaços consecutivos
   s = s.replace(/\s+/g, ' ');
-  
-  // Remove espaços no início e fim
   s = s.trim();
-  
-  // Remove caracteres de controle restantes (mantém caracteres imprimíveis e Unicode válido)
-  // Permite: espaço (0x20), caracteres ASCII imprimíveis (0x21-0x7E), e caracteres Unicode válidos
   s = s.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
-  
-  // Se ficou vazio e não permite vazio, retorna placeholder
   if (!allowEmpty && !s) return '---';
-  
   return s;
 }
 
@@ -762,7 +667,6 @@ function montarTextoContratante(info = {}){
   if (nacionalidade) identidade.push(nacionalidade);
   if (estadoCivil) identidade.push(estadoCivil);
   if (identidade.length) identidade.push('empresário(a)');
-
   if (identidade.length) partes.push(identidade.join(', '));
 
   const enderecoPartes = [];
@@ -803,9 +707,33 @@ function montarTextoContratante(info = {}){
   if (contatoPartes.length) partes.push(contatoPartes.join(' e '));
 
   if (!partes.length) return '';
-
   const texto = partes.join(', ').replace(/\s+,/g, ',').trim();
   return texto.endsWith('.') ? texto : `${texto}.`;
+}
+
+function joinContato(nome, tel, email){
+  const p = [];
+  if (nome) p.push(nome);
+  if (tel) p.push(tel);
+  if (email) p.push(email);
+  return p.join(', ');
+}
+
+function detalharItensServicos(itens, rotulo){
+  // itens = [{nome, tipo, classe}]
+  if (!Array.isArray(itens) || itens.length === 0) return { qtd: 0, desc: '', detalhes: '' };
+  const qtd = itens.length;
+  const header = `${qtd} pedido(s)/depósito(s) de ${rotulo} junto ao INPI`;
+  const linhas = itens.map(it => {
+    const partes = [];
+    if (rotulo === 'MARCA') partes.push(`MARCA: ${it.nome || ''}`.trim());
+    if (rotulo === 'PATENTE') partes.push(`PATENTE: ${it.nome || ''}`.trim());
+    if (it.tipo) partes.push(`Apresentação: ${it.tipo}`);
+    if (it.classe) partes.push(`CLASSE: nº ${it.classe}`);
+    return partes.filter(Boolean).join(', ');
+  }).filter(Boolean);
+  const detalhes = linhas.join(' | ');
+  return { qtd, desc: header, detalhes };
 }
 
 // Variáveis para Template Word (ADD)
@@ -813,8 +741,7 @@ function montarADDWord(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
-  
-  // Sanitiza marcas_espec - mantém quebras para campos separados, mas sanitiza o campo completo
+
   const marcasEspecRaw = String(d.marcas_espec || '');
   const marcasEspecForWord = sanitizeForD4Sign(marcasEspecRaw);
 
@@ -822,7 +749,6 @@ function montarADDWord(d, nowInfo){
   const formaPesquisa = '---';
   const dataPesquisa  = '00/00/00';
 
-  // Sanitiza todos os campos de texto antes de enviar ao D4Sign
   const rua    = sanitizeForD4Sign(d.rua_cnpj || '');
   const bairro = sanitizeForD4Sign(d.bairro_cnpj || '');
   const numero = sanitizeForD4Sign(d.numero_cnpj || '');
@@ -839,8 +765,21 @@ function montarADDWord(d, nowInfo){
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
+  // Monta listas por tipo de serviço a partir dos 3 possíveis slots
+  const itens = [];
+  if (d.servico) itens.push({ tipoServ: d.servico, nome: d.titulo, tipo: d.tipo_marca, classe: d.classe });
+  if (d.marca_2_servico) itens.push({ tipoServ: d.marca_2_servico, nome: d.marca_2_nome, tipo: d.marca_2_tipo, classe: d.marca_2_classe });
+  if (d.marca_3_servico) itens.push({ tipoServ: d.marca_3_servico, nome: d.marca_3_nome, tipo: d.marca_3_tipo, classe: d.marca_3_classe });
+
+  const itensMarca = itens.filter(x => String(x.tipoServ).toUpperCase() === 'MARCA').map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }));
+  const itensPatente = itens.filter(x => String(x.tipoServ).toUpperCase() === 'PATENTE').map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }));
+  // Desenho industrial não foi solicitado nos novos campos, mas mantemos no template antigo
+
+  const marcaInfo = detalharItensServicos(itensMarca, 'MARCA');
+  const patenteInfo = detalharItensServicos(itensPatente, 'PATENTE');
+
   const baseVars = {
-    // Identificação / contrato
+    // Identificação
     contratante_1: sanitizeForD4Sign(d.nome || ''),
     cpf: sanitizeForD4Sign(d.cpf || ''),
     cnpj: sanitizeForD4Sign(d.cnpj || ''),
@@ -854,13 +793,7 @@ function montarADDWord(d, nowInfo){
     'CNPJ': sanitizeForD4Sign(d.cnpj_campo || ''),
 
     // Endereço
-    rua,
-    bairro,
-    numero,
-    nome_da_cidade: cidade,
-    cidade,
-    uf,
-    cep,
+    rua, bairro, numero, nome_da_cidade: cidade, cidade, uf, cep,
 
     // Contato
     'E-mail': sanitizeForD4Sign(d.email || ''),
@@ -868,27 +801,26 @@ function montarADDWord(d, nowInfo){
 
     // Marca / Classe / Risco
     nome_da_marca: sanitizeForD4Sign(d.titulo || ''),
-    classe: sanitizeForD4Sign(d.classe || ''),                           // números separados por vírgula
+    classe: sanitizeForD4Sign(d.classe || ''),
     'Quantidade depósitos/processos de MARCA': sanitizeForD4Sign(d.qtd_marca || ''),
     'tipo de marca': sanitizeForD4Sign(d.tipo_marca || ''),
     risco_da_marca: sanitizeForD4Sign(d.risco_marca || ''),
+    'Risco': sanitizeForD4Sign(d.risco_marca || ''), // novo mapeamento para o placeholder do documento
     'marcas-espec': marcasEspecForWord,
 
-    // Serviço normalizado
+    // Serviço normalizado antigo
     servico: sanitizeForD4Sign(d.servico || ''),
-    'servico': sanitizeForD4Sign(d.servico || ''), // Versão com aspas para compatibilidade
+    'servico': sanitizeForD4Sign(d.servico || ''),
 
-    // Contratantes (texto completo)
+    // Contratantes
     'Contratante 1': sanitizeForD4Sign(d.contratante_1_texto || '', true),
     'Contratante 2': sanitizeForD4Sign(d.contratante_2_texto || '', true),
 
-    // MARCA 2 - Campos para o template
+    // Marca 2 e 3 antigos
     'servico_2': sanitizeForD4Sign(d.marca_2_servico || ''),
     'Nome da Marca_2': sanitizeForD4Sign(d.marca_2_nome || ''),
     'tipo de marca_2': sanitizeForD4Sign(d.marca_2_tipo || ''),
     'Classe_2': sanitizeForD4Sign(d.marca_2_classe || ''),
-
-    // MARCA 3 - Campos para o template
     'servico_3': sanitizeForD4Sign(d.marca_3_servico || ''),
     'Nome da Marca_3': sanitizeForD4Sign(d.marca_3_nome || ''),
     'tipo de marca_3': sanitizeForD4Sign(d.marca_3_tipo || ''),
@@ -918,7 +850,7 @@ function montarADDWord(d, nowInfo){
     'Data de pagamento da Taxa': dataDaTaxa,
 
     // Datas
-    dia,
+    dia: String(dia),
     mes: mesNum,
     ano,
     mes_extenso: mesExtenso,
@@ -927,11 +859,35 @@ function montarADDWord(d, nowInfo){
 
     TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
   };
-  const maxLinhas = 30; // ajuste se precisar
-  const linhas = Array.isArray(d.linhas_marcas_espec)
-    ? d.linhas_marcas_espec
-    : String(d.marcas_espec || '').split(/\r?\n/);
 
+  // Novos campos: "dados para contato 1" e "dados para contato 2"
+  baseVars['dados para contato 1'] = sanitizeForD4Sign(joinContato(d.nome, d.telefone, d.email), true);
+  baseVars['dados para contato 2'] = sanitizeForD4Sign(joinContato(d.contato_2_nome, d.contato_2_tel, d.contato_2_email), true);
+
+  // Novos campos de serviços por tipo
+  if (marcaInfo.qtd > 0){
+    baseVars['Quantidade depósitos/processos de MARCA'] = sanitizeForD4Sign(marcaInfo.desc);
+    baseVars['Descrição do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.detalhes);
+    baseVars['Detalhes do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.detalhes);
+  } else {
+    baseVars['Quantidade depósitos/processos de MARCA'] = '';
+    baseVars['Descrição do serviço - MARCA'] = '';
+    baseVars['Detalhes do serviço - MARCA'] = '';
+  }
+
+  if (patenteInfo.qtd > 0){
+    baseVars['Quantidade depósitos/processos de PATENTE'] = sanitizeForD4Sign(patenteInfo.desc);
+    baseVars['Descrição do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.detalhes);
+    baseVars['Detalhes do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.detalhes);
+  } else {
+    baseVars['Quantidade depósitos/processos de PATENTE'] = '';
+    baseVars['Descrição do serviço - PATENTE'] = '';
+    baseVars['Detalhes do serviço - PATENTE'] = '';
+  }
+
+  // Linhas de classes e especificações
+  const maxLinhas = 30;
+  const linhas = Array.isArray(d.linhas_marcas_espec) ? d.linhas_marcas_espec : String(d.marcas_espec || '').split(/\r?\n/);
   for (let i = 0; i < maxLinhas; i++) {
     const valor = sanitizeForD4Sign(linhas[i] || '');
     baseVars[`marcas-espec_${i+1}`] = valor;
@@ -940,7 +896,7 @@ function montarADDWord(d, nowInfo){
   return baseVars;
 }
 
-// Assinantes: prioriza email_para_envio_do_contrato
+// Assinantes
 function montarSigners(d){
   const list = [];
   const emailPrincipal = d.email_envio_contrato || d.email || '';
@@ -955,54 +911,38 @@ function montarSigners(d){
 const locks = new Set();
 function acquireLock(key){ if (locks.has(key)) return false; locks.add(key); return true; }
 function releaseLock(key){ locks.delete(key); }
-async function preflightDNS(){ /* opcional: warmup */ }
+async function preflightDNS(){}
 
 /* =========================
- * D4Sign (validados)
+ * D4Sign
  * =======================*/
 async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplateword`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
-  
-  // Sanitiza o título do documento (já deve estar sanitizado, mas garante segurança)
+
   const titleSanitized = sanitizeForD4Sign(title || 'Contrato');
-  
-  // Valida varsObj - garante que todos os valores sejam strings válidas
-  // Os valores já foram sanitizados em montarADDWord, mas fazemos uma validação final
-  // IMPORTANTE: Para campos vazios, mantém vazio se for campo opcional, ou usa placeholder mínimo
+
   const varsObjValidated = {};
-  
-  // Campos que devem manter vazios se estiverem vazios (não usar placeholder)
-  // Estes campos são opcionais ou têm valores padrão já definidos
   const keepEmptyKeys = [
-    'TEMPLATE_UUID_CONTRATO', // UUID do template não deve ser alterado
-    'data_de_pagamento_da_pesquisa', // Já tem valor padrão '00/00/00'
-    'valor_da_pesquisa', // Já tem valor padrão 'R$ 00,00'
-    'forma_de_pagamento_da_pesquisa', // Já tem valor padrão '---'
-    'marcas-espec_1', 'marcas-espec_2', 'marcas-espec_3' // Campos de lista podem estar vazios
+    'TEMPLATE_UUID_CONTRATO',
+    'data_de_pagamento_da_pesquisa',
+    'valor_da_pesquisa',
+    'forma_de_pagamento_da_pesquisa'
   ];
-  
+
   for (const [key, value] of Object.entries(varsObj || {})) {
     const keepEmpty = keepEmptyKeys.includes(key) || key.startsWith('marcas-espec_');
-    
-    // Converte para string e valida
     if (value === null || value === undefined) {
       varsObjValidated[key] = keepEmpty ? '' : '---';
     } else {
-      // Valida que não há caracteres de controle problemáticos (0x0B especialmente)
       const strValue = String(value);
-      // Remove apenas caracteres de controle problemáticos que possam ter passado
       let cleaned = strValue.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim();
-      
-      // Se ficou vazio após limpeza
       if (!cleaned) {
-        // Campos que devem manter vazio ou já têm valores padrão
         if (keepEmpty || key.includes('pesquisa') || key.includes('marcas-espec')) {
           varsObjValidated[key] = '';
         } else {
-          // Outros campos recebem placeholder mínimo para evitar problemas no D4Sign
           varsObjValidated[key] = '---';
         }
       } else {
@@ -1010,30 +950,22 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
       }
     }
   }
-  
+
   const body = { name_document: titleSanitized, templates: { [templateId]: varsObjValidated } };
-  
-  // Log para debug (apenas se houver erro)
   console.log(`[D4SIGN] Criando documento: ${titleSanitized}, Template: ${templateId}, Campos: ${Object.keys(varsObjValidated).length}`);
-  
+
   try {
     const res = await fetchWithRetry(url.toString(), {
       method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
-    
+
     const text = await res.text();
     let json; 
-    try { 
-      json = JSON.parse(text); 
-    } catch (e) { 
-      console.error('[ERRO D4SIGN WORD - JSON parse]', e.message, text.substring(0, 500));
-      json = null; 
-    }
-    
+    try { json = JSON.parse(text); } catch (e) { console.error('[ERRO D4SIGN WORD - JSON parse]', e.message, text.substring(0, 500)); json = null; }
+
     if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
       console.error('[ERRO D4SIGN WORD]', res.status, text.substring(0, 1000));
-      // Log das variáveis enviadas para debug (apenas primeiros caracteres de cada)
       const varsPreview = Object.keys(varsObjValidated).reduce((acc, k) => {
         const v = String(varsObjValidated[k] || '');
         acc[k] = v.length > 50 ? v.substring(0, 50) + '...' : v;
@@ -1079,50 +1011,29 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
     console.error('[ERRO D4SIGN download]', res.status, text);
     throw new Error(`Falha ao gerar URL de download: ${res.status}`);
   }
-  return json; // { url, name }
+  return json;
 }
-// Verifica o status do documento no D4Sign
 async function getDocumentStatus(tokenAPI, cryptKey, uuidDocument) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
-  
   try {
-    const res = await fetchWithRetry(url.toString(), {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' }
-    }, { attempts: 3, baseDelayMs: 500, timeoutMs: 10000 });
-    
+    const res = await fetchWithRetry(url.toString(), { method: 'GET', headers: { 'Accept': 'application/json' } }, { attempts: 3, baseDelayMs: 500, timeoutMs: 10000 });
     const text = await res.text();
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      return null;
-    }
-    
+    let json; try { json = JSON.parse(text); } catch { return null; }
     return json;
   } catch (e) {
     console.warn('[WARN D4SIGN getStatus]', e.message);
     return null;
   }
 }
-
-async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
-  message = '',
-  skip_email = '0',
-  workflow = '0'
-} = {}) {
+async function sendToSigner(tokenAPI, cryptKey, uuidDocument, { message = '', skip_email = '0', workflow = '0' } = {}) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
   url.searchParams.set('cryptKey', cryptKey);
   const body = { message, skip_email, workflow, tokenAPI };
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST',
-    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  const res = await fetchWithRetry(url.toString(), { method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
   if (!res.ok) {
     console.error('[ERRO D4SIGN sendtosigner]', res.status, text);
@@ -1132,7 +1043,7 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
 }
 
 /* =========================
- * Fase Pipefy (mover após gerar)
+ * Fase Pipefy
  * =======================*/
 async function moveCardToPhaseSafe(cardId, phaseId){
   if (!phaseId) return;
@@ -1146,7 +1057,6 @@ async function moveCardToPhaseSafe(cardId, phaseId){
 /* =========================
  * Rotas — VENDEDOR (UX)
  * =======================*/
-// Página de revisão
 app.get('/lead/:token', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
@@ -1247,7 +1157,7 @@ app.get('/lead/:token', async (req, res) => {
   }
 });
 
-// Gera o documento e mostra botões de Baixar PDF e Enviar para assinatura
+// Gera o documento
 app.post('/lead/:token/generate', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
@@ -1269,25 +1179,17 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, d.titulo || card.title, add);
     console.log(`[D4SIGN] Documento criado: ${uuidDoc}`);
-    
-    // Aguarda para o D4Sign processar o documento antes de cadastrar signatários
-    // Isso é importante para evitar o status "PROCESSANDO" permanente
+
     await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    // Verifica o status do documento (opcional, para debug)
     try {
       const status = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-      if (status) {
-        console.log(`[D4SIGN] Status do documento: ${JSON.stringify(status).substring(0, 200)}`);
-      }
+      if (status) console.log(`[D4SIGN] Status do documento: ${JSON.stringify(status).substring(0, 200)}`);
     } catch (e) {
       console.warn('[WARN] Não foi possível verificar status do documento:', e.message);
     }
-    
+
     await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
     console.log(`[D4SIGN] Signatários cadastrados para: ${uuidDoc}`);
-    
-    // Aguarda mais um pouco após cadastrar signatários para garantir processamento completo
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
@@ -1324,13 +1226,12 @@ app.post('/lead/:token/generate', async (req, res) => {
   }
 });
 
-// Download (redirect para URL temporária do D4Sign)
+// Download
 app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
     if (!cardId) throw new Error('token inválido');
     const uuidDoc = req.params.uuid;
-
     const { url: downloadUrl } = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, { type: 'PDF', language: 'pt' });
     return res.redirect(302, downloadUrl);
   } catch (e) {
@@ -1369,7 +1270,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 });
 
 /* =========================
- * Geração do link no Pipefy (ao marcar checkbox)
+ * Link no Pipefy
  * =======================*/
 app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
   try {
