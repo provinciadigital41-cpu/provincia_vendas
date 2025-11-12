@@ -390,7 +390,7 @@ function buscarServicoStatementPorMarca(card, numeroMarca = 1){
       // Remove quebras de linha, espaços múltiplos e normaliza
       value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
       
-      // Se encontrou um valor válido, retorna (mesmo sem validação específica para marcas 2 e 3)
+      // Se encontrou um valor válido, retorna
       if (value && value.length > 1) {
         return value;
       }
@@ -546,25 +546,53 @@ async function montarDados(card){
     email: contatoEmail
   });
 
-  const contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
+  // ====== INÍCIO DAS INCLUSÕES PARA COTITULAR ======
+  // Campos padrão do contratante 2
+  let contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
   const contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
   const contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
-  const nacionalidade2 = by['nacionalidade_2'] || '';
-  const estadoCivil2 = by['estado_civ_l_2'] || '';
-  const rua2 = by['rua_2'] || by['rua_av_do_cnpj_2'] || '';
-  const bairro2 = by['bairro_2'] || by['bairro_do_cnpj_2'] || '';
-  const numero2 = by['numero_2'] || by['n_mero_2'] || '';
-  const cidade2 = by['cidade_2'] || by['cidade_do_cnpj_2'] || '';
-  const uf2 = by['estado_2'] || by['estado_do_cnpj_2'] || '';
-  const cep2 = by['cep_2'] || by['cep_do_cnpj_2'] || '';
-  const rg2 = by['rg_2'] || '';
-  const cpf2 = by['cpf_2'] || '';
-  const cnpj2 = by['cnpj_2'] || '';
-  const docSelecao2 = by['cnpj_ou_cpf_2'] || '';
+
+  let nacionalidade2 = by['nacionalidade_2'] || '';
+  let estadoCivil2 = by['estado_civ_l_2'] || '';
+  let rua2 = by['rua_2'] || by['rua_av_do_cnpj_2'] || '';
+  let bairro2 = by['bairro_2'] || by['bairro_do_cnpj_2'] || '';
+  let numero2 = by['numero_2'] || by['n_mero_2'] || '';
+  let cidade2 = by['cidade_2'] || by['cidade_do_cnpj_2'] || '';
+  let uf2 = by['estado_2'] || by['estado_do_cnpj_2'] || '';
+  let cep2 = by['cep_2'] || by['cep_do_cnpj_2'] || '';
+  let rg2 = by['rg_2'] || '';
+  let cpf2 = by['cpf_2'] || '';
+  let cnpj2 = by['cnpj_2'] || '';
+  let docSelecao2 = by['cnpj_ou_cpf_2'] || '';
+
+  // Fallbacks do cotitular
+  // Nome
+  if (!contato2Nome) contato2Nome = by['raz_o_social_ou_nome_completo_cotitular'] || contato2Nome;
+  // Nacionalidade
+  if (!nacionalidade2) nacionalidade2 = by['nacionalidade_cotitular'] || nacionalidade2;
+  // Estado civil
+  if (!estadoCivil2) estadoCivil2 = by['estado_civ_l_cotitular'] || estadoCivil2;
+  // Endereço
+  if (!rua2) rua2 = by['rua_av_do_cnpj_cotitular'] || rua2;
+  if (!bairro2) bairro2 = by['bairro_cotitular'] || bairro2;
+  if (!cidade2) cidade2 = by['cidade_cotitular'] || cidade2;
+  if (!uf2) uf2 = by['estado_cotitular'] || uf2;
+  // CEP cotitular não foi listado, mantém cep2
+  // Documentos
+  if (!rg2) rg2 = by['rg_cotitular'] || rg2;
+  if (!cpf2) cpf2 = by['cpf_cotitular'] || cpf2;
+  if (!cnpj2) cnpj2 = by['cnpj_cotitular'] || cnpj2;
+  // tipo_da_empresa_cotitular não é usado no texto, então ignorado
+  // ====== FIM DAS INCLUSÕES PARA COTITULAR ======
 
   const temDadosContratante2 = Boolean(
     contato2Nome || nacionalidade2 || estadoCivil2 || rua2 || bairro2 || numero2 ||
     cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2 || contato2Telefone || contato2Email
+    // Também considera algum campo do cotitular explicitamente
+    || by['raz_o_social_ou_nome_completo_cotitular'] || by['nacionalidade_cotitular']
+    || by['estado_civ_l_cotitular'] || by['rua_av_do_cnpj_cotitular'] || by['bairro_cotitular']
+    || by['cidade_cotitular'] || by['estado_cotitular'] || by['rg_cotitular'] || by['cpf_cotitular']
+    || by['cnpj_cotitular']
   );
 
   const contratante2Texto = temDadosContratante2
