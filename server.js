@@ -361,7 +361,6 @@ function buscarServicoN(card, n){
           v = String(f.value);
         }
       } else if (Array.isArray(f?.array_value) && f.array_value.length){
-        // opcional: se o conector preencher array_value
         v = String(f.array_value[0]);
       }
     }
@@ -475,17 +474,32 @@ async function montarDados(card){
   const contatoEmail    = by['email_de_contato'] || getFirstByNames(card, ['email','e-mail']) || '';
   const contatoTelefone = by['telefone_de_contato'] || getFirstByNames(card, ['telefone','celular','whatsapp','whats']) || '';
 
-  // Contato contratante 2 e cotitular
-  const contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
-  const contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
-  const contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
+  // Campos de “contratante 2” antigos, se existirem
+  const contato2Nome_old = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
+  const contato2Email_old = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
+  const contato2Telefone_old = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
+
+  // Campos de COTITULAR — usar estes como fonte principal do Contratante 2
+  const cot_nome = by['raz_o_social_ou_nome_completo_cotitular'] || '';
+  const cot_nacionalidade = by['nacionalidade_cotitular'] || '';
+  const cot_estado_civil = by['estado_civ_l_cotitular'] || '';
+  const cot_rua = by['rua_av_do_cnpj_cotitular'] || '';
+  const cot_bairro = by['bairro_cotitular'] || '';
+  const cot_cidade = by['cidade_cotitular'] || '';
+  const cot_uf = by['estado_cotitular'] || '';
+  const cot_numero = ''; // não informado
+  const cot_cep = '';    // não informado
+  const cot_rg = by['rg_cotitular'] || '';
+  const cot_cpf = by['cpf_cotitular'] || '';
+  const cot_cnpj = by['cnpj_cotitular'] || '';
+  const cot_docSelecao = cot_cnpj ? 'CNPJ' : (cot_cpf ? 'CPF' : '');
 
   // Envio do contrato principal e cotitular
   const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
   const emailCotitularEnvio = by['copy_of_email_para_envio_do_contrato'] || '';
   const telefoneCotitularEnvio = by['copy_of_telefone_para_envio_do_contrato'] || '';
 
-  // Documento (CPF/CNPJ)
+  // Documento (CPF/CNPJ) principal
   const doc = pickDocumento(card);
   const cpfDoc  = doc.tipo==='CPF'?  doc.valor : '';
   const cnpjDoc = doc.tipo==='CNPJ'? doc.valor : '';
@@ -506,7 +520,7 @@ async function montarDados(card){
   const dataPagtoAssessoria = fmtDMY2(by['copy_of_copy_of_data_do_boleto_pagamento_pesquisa'] || '');
   const dataPagtoTaxa       = fmtDMY2(by['copy_of_data_do_boleto_pagamento_pesquisa'] || '');
 
-  // Endereço (CNPJ)
+  // Endereço (CNPJ) principal
   const cepCnpj    = by['cep_do_cnpj']     || '';
   const ruaCnpj    = by['rua_av_do_cnpj']  || '';
   const bairroCnpj = by['bairro_do_cnpj']  || '';
@@ -528,7 +542,7 @@ async function montarDados(card){
   const risco4 = by['copy_of_risco_da_marca_3_1'] || '';
   const risco5 = by['copy_of_risco_da_marca_4'] || '';
 
-  // Nacionalidade e etc
+  // Nacionalidade e etc principal
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
   const estadoCivil = by['estado_civ_l'] || '';
@@ -536,7 +550,7 @@ async function montarDados(card){
   // Cláusula adicional
   const clausulaAdicional = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : 'Sem aditivos contratuais.';
 
-  // Contratantes blocos
+  // Contratante 1
   const contratante1Texto = montarTextoContratante({
     nome: contatoNome || (by['r_social_ou_n_completo']||''),
     nacionalidade,
@@ -555,50 +569,42 @@ async function montarDados(card){
     email: contatoEmail
   });
 
-  const nacionalidade2 = by['nacionalidade_2'] || '';
-  const estadoCivil2 = by['estado_civ_l_2'] || '';
-  const rua2 = by['rua_2'] || by['rua_av_do_cnpj_2'] || '';
-  const bairro2 = by['bairro_2'] || by['bairro_do_cnpj_2'] || '';
-  const numero2 = by['numero_2'] || by['n_mero_2'] || '';
-  const cidade2 = by['cidade_2'] || by['cidade_do_cnpj_2'] || '';
-  const uf2 = by['estado_2'] || by['estado_do_cnpj_2'] || '';
-  const cep2 = by['cep_2'] || by['cep_do_cnpj_2'] || '';
-  const rg2 = by['rg_2'] || '';
-  const cpf2 = by['cpf_2'] || '';
-  const cnpj2 = by['cnpj_2'] || '';
-  const docSelecao2 = by['cnpj_ou_cpf_2'] || '';
-
-  // Novo: considerar também email/telefone do cotitular como gatilho
-  const hasContato2 = Boolean(
-    contato2Nome || contato2Email || contato2Telefone ||
-    emailCotitularEnvio || telefoneCotitularEnvio ||
-    nacionalidade2 || estadoCivil2 || rua2 || bairro2 || numero2 || cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2
+  // Detecta se há cotitular com base nos campos dedicados OU nos antigos campos 2
+  const hasCotitular = Boolean(
+    cot_nome || cot_nacionalidade || cot_estado_civil || cot_rua || cot_bairro || cot_cidade || cot_uf ||
+    cot_rg || cot_cpf || cot_cnpj || emailCotitularEnvio || telefoneCotitularEnvio ||
+    contato2Nome_old || contato2Email_old || contato2Telefone_old
   );
 
-  const contratante2Texto = hasContato2
+  // Contratante 2 com os CAMPOS DO COTITULAR como fonte principal
+  const contratante2Texto = hasCotitular
     ? montarTextoContratante({
-        nome: contato2Nome || 'Cotitular',
-        nacionalidade: nacionalidade2,
-        estadoCivil: estadoCivil2,
-        rua: rua2 || ruaCnpj,
-        bairro: bairro2 || bairroCnpj,
-        numero: numero2 || numeroCnpj,
-        cidade: cidade2 || cidadeCnpj,
-        uf: uf2 || ufCnpj,
-        cep: cep2 || cepCnpj,
-        rg: rg2,
-        docSelecao: docSelecao2,
-        cpf: cpf2,
-        cnpj: cnpj2,
-        telefone: contato2Telefone || telefoneCotitularEnvio,
-        email: contato2Email || emailCotitularEnvio
+        nome: cot_nome || contato2Nome_old || 'Cotitular',
+        nacionalidade: cot_nacionalidade || '',
+        estadoCivil: cot_estado_civil || '',
+        rua: cot_rua || ruaCnpj,
+        bairro: cot_bairro || bairroCnpj,
+        numero: cot_numero || '',
+        cidade: cot_cidade || cidadeCnpj,
+        uf: cot_uf || ufCnpj,
+        cep: cot_cep || '',
+        rg: cot_rg || '',
+        docSelecao: cot_docSelecao,
+        cpf: cot_cpf || '',
+        cnpj: cot_cnpj || '',
+        telefone: telefoneCotitularEnvio || contato2Telefone_old,
+        email: emailCotitularEnvio || contato2Email_old
       })
     : '';
 
   // Dados para contato 1 e 2
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
-  const dadosContato2 = hasContato2
-    ? [contato2Nome || 'Cotitular', (contato2Telefone || telefoneCotitularEnvio || ''), (contato2Email || emailCotitularEnvio || '')].filter(Boolean).join(' | ')
+  const dadosContato2 = hasCotitular
+    ? [
+        (cot_nome || contato2Nome_old || 'Cotitular'),
+        (telefoneCotitularEnvio || contato2Telefone_old || ''),
+        (emailCotitularEnvio || contato2Email_old || '')
+      ].filter(Boolean).join(' | ')
     : '';
 
   // Entradas consolidadas
@@ -653,7 +659,7 @@ async function montarDados(card){
     h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title||''}` : ''
   };
 
-  // Risco agregado formatado com o nome do tipo e do item
+  // Risco agregado formatado com nome do tipo e do item
   const riscoAgregado = entries
     .map(e => {
       const tipo = e.kind || '';
@@ -928,6 +934,7 @@ function montarVarsParaTemplateMarca(d, nowInfo){
     'clausula-adicional': d.clausula_adicional || ''
   };
 
+  // Preencher até 30 linhas por segurança
   for (let i=5;i<30;i++){
     base[`marcas-espec_${i+1}`] = d.linhas_marcas_espec_1[i] || '';
     base[`marcas2-espec_${i-4}`] = d.linhas_marcas_espec_2[i-5] || '';
