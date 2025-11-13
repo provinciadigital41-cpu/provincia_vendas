@@ -189,7 +189,6 @@ async function gql(query, variables){
   }
   return j.data;
 }
-
 async function getCard(cardId){
   const data = await gql(`query($id: ID!){
     card(id:$id){
@@ -361,26 +360,13 @@ function buscarServicoN(card, n){
         }catch{
           v = String(f.value);
         }
+      } else if (Array.isArray(f?.array_value) && f.array_value.length){
+        // opcional: se o conector preencher array_value
+        v = String(f.array_value[0]);
       }
     }
   }
   return v;
-}
-
-// Busca campo statement “genérico” ainda disponível
-function buscarServicoStatement(card){
-  const statementFields = (card.fields||[]).filter(f => String(f?.field?.type||'').toLowerCase() === 'statement');
-  for (const field of statementFields){
-    const name = String(field?.name||'').toLowerCase();
-    const description = String(field?.field?.description || '').toLowerCase();
-    const isServicos = name.includes('serviço') || name.includes('servico') || description.includes('serviços marca');
-    if (isServicos){
-      let value = String(field?.value||'').replace(/<[^>]*>/g,' ').trim();
-      value = value.replace(/^serviços?.*?:\s*/i,'').trim();
-      if (value) return value;
-    }
-  }
-  return '';
 }
 
 // Normalização apenas para “Detalhes do serviço …”
@@ -466,8 +452,8 @@ async function montarDados(card){
   const classeSomenteNumeros5 = extractClasseNumbersFromText(marcasEspecRaw5);
   const tipoMarca5 = checklistToText(by['copy_of_tipo_de_marca_3_1'] || '');
 
-  // Serviços por N (marca 1 com statement específico e fallback para connector)
-  const serv1Stmt = firstNonEmpty(buscarServicoN(card,1), buscarServicoStatement(card));
+  // Serviços por N
+  const serv1Stmt = firstNonEmpty(buscarServicoN(card,1));
   const serv2Stmt = firstNonEmpty(buscarServicoN(card,2));
   const serv3Stmt = firstNonEmpty(buscarServicoN(card,3));
   const serv4Stmt = firstNonEmpty(buscarServicoN(card,4));
@@ -582,14 +568,16 @@ async function montarDados(card){
   const cnpj2 = by['cnpj_2'] || '';
   const docSelecao2 = by['cnpj_ou_cpf_2'] || '';
 
-  const temDadosContratante2 = Boolean(
-    contato2Nome || nacionalidade2 || estadoCivil2 || rua2 || bairro2 || numero2 ||
-    cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2 || contato2Telefone || contato2Email
+  // Novo: considerar também email/telefone do cotitular como gatilho
+  const hasContato2 = Boolean(
+    contato2Nome || contato2Email || contato2Telefone ||
+    emailCotitularEnvio || telefoneCotitularEnvio ||
+    nacionalidade2 || estadoCivil2 || rua2 || bairro2 || numero2 || cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2
   );
 
-  const contratante2Texto = temDadosContratante2
+  const contratante2Texto = hasContato2
     ? montarTextoContratante({
-        nome: contato2Nome,
+        nome: contato2Nome || 'Cotitular',
         nacionalidade: nacionalidade2,
         estadoCivil: estadoCivil2,
         rua: rua2 || ruaCnpj,
@@ -609,24 +597,24 @@ async function montarDados(card){
 
   // Dados para contato 1 e 2
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
-  const dadosContato2 = temDadosContratante2
+  const dadosContato2 = hasContato2
     ? [contato2Nome || 'Cotitular', (contato2Telefone || telefoneCotitularEnvio || ''), (contato2Email || emailCotitularEnvio || '')].filter(Boolean).join(' | ')
     : '';
 
   // Entradas consolidadas
   const entries = [
-    {kind:k1, title:tituloMarca1, tipo:tipoMarca1, classes:classeSomenteNumeros1, stmt:serv1Stmt, risco:risco1, lines:linhasMarcasEspec1},
-    {kind:k2, title:tituloMarca2, tipo:tipoMarca2, classes:classeSomenteNumeros2, stmt:serv2Stmt, risco:risco2, lines:linhasMarcasEspec2},
-    {kind:k3, title:tituloMarca3, tipo:tipoMarca3, classes:classeSomenteNumeros3, stmt:serv3Stmt, risco:risco3, lines:linhasMarcasEspec3},
-    {kind:k4, title:tituloMarca4, tipo:tipoMarca4, classes:classeSomenteNumeros4, stmt:serv4Stmt, risco:risco4, lines:linhasMarcasEspec4},
-    {kind:k5, title:tituloMarca5, tipo:tipoMarca5, classes:classeSomenteNumeros5, stmt:serv5Stmt, risco:risco5, lines:linhasMarcasEspec5},
+    {kind:serviceKindFromText(serv1Stmt), title:tituloMarca1, tipo:tipoMarca1, classes:classeSomenteNumeros1, stmt:serv1Stmt, risco:risco1, lines:linhasMarcasEspec1},
+    {kind:serviceKindFromText(serv2Stmt), title:tituloMarca2, tipo:tipoMarca2, classes:classeSomenteNumeros2, stmt:serv2Stmt, risco:risco2, lines:linhasMarcasEspec2},
+    {kind:serviceKindFromText(serv3Stmt), title:tituloMarca3, tipo:tipoMarca3, classes:classeSomenteNumeros3, stmt:serv3Stmt, risco:risco3, lines:linhasMarcasEspec3},
+    {kind:serviceKindFromText(serv4Stmt), title:tituloMarca4, tipo:tipoMarca4, classes:classeSomenteNumeros4, stmt:serv4Stmt, risco:risco4, lines:linhasMarcasEspec4},
+    {kind:serviceKindFromText(serv5Stmt), title:tituloMarca5, tipo:tipoMarca5, classes:classeSomenteNumeros5, stmt:serv5Stmt, risco:risco5, lines:linhasMarcasEspec5},
   ].filter(e => String(e.title||e.stmt||'').trim());
 
   // Agrupamento por kind
   const byKind = { 'MARCA':[], 'PATENTE':[], 'DESENHO INDUSTRIAL':[], 'COPYRIGHT/DIREITO AUTORAL':[], 'OUTROS':[] };
   entries.forEach(e => byKind[e.kind].push(e));
 
-  // Linhas “quantidade + descrição”
+  // Linhas “quantidade + descrição” (sem normalizar o texto do serviço)
   const makeQtdDescLine = (kind, arr) => {
     if (!arr.length) return '';
     const baseServico = String(arr[0].stmt||'').trim() || (kind==='MARCA' ? 'Registro de Marca' : kind);
@@ -692,12 +680,17 @@ async function montarDados(card){
     // Doc específicos
     cpf_campo: cpfCampo,
     cnpj_campo: cnpjCampo,
+    selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
 
     // Contatos
     email: contatoEmail || '',
     telefone: contatoTelefone || '',
     dados_contato_1: dadosContato1,
     dados_contato_2: dadosContato2,
+
+    // Textos completos dos contratantes
+    contratante_1_texto: contratante1Texto,
+    contratante_2_texto: contratante2Texto,
 
     // Email para assinatura
     email_envio_contrato: emailEnvioContrato,
@@ -838,7 +831,11 @@ function montarTextoContratante(info = {}){
   return texto.endsWith('.') ? texto : `${texto}.`;
 }
 
-// Variáveis para Template Word — Marca
+/* =========================
+ * Variáveis para Templates
+ * =======================*/
+
+// Marca
 function montarVarsParaTemplateMarca(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
@@ -850,7 +847,7 @@ function montarVarsParaTemplateMarca(d, nowInfo){
 
   const base = {
     // Identificação
-    'Contratante 1': d.nome || '',
+    'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
@@ -939,7 +936,7 @@ function montarVarsParaTemplateMarca(d, nowInfo){
   return base;
 }
 
-// Variáveis para Template Word — Outros Serviços
+// Outros
 function montarVarsParaTemplateOutros(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
@@ -951,7 +948,7 @@ function montarVarsParaTemplateOutros(d, nowInfo){
 
   const base = {
     // Identificação
-    'Contratante 1': d.nome || '',
+    'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
@@ -1050,12 +1047,9 @@ function montarSigners(d){
   const list = [];
   const emailPrincipal = d.email_envio_contrato || d.email || '';
   if (emailPrincipal) list.push({ email: emailPrincipal, name: d.nome || d.titulo || emailPrincipal, act:'1', foreign:'0', send_email:'1' });
-
   if (d.email_cotitular_envio) list.push({ email: d.email_cotitular_envio, name: 'Cotitular', act:'1', foreign:'0', send_email:'1' });
-
   if (EMAIL_ASSINATURA_EMPRESA) list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
-  const seen={};
-  return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
+  const seen={}; return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
 }
 
 /* =========================
@@ -1132,7 +1126,7 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
     console.error('[ERRO D4SIGN download]', res.status, text);
     throw new Error(`Falha ao gerar URL de download: ${res.status}`);
   }
-  return json;
+  return json; // { url, name }
 }
 async function getDocumentStatus(tokenAPI, cryptKey, uuidDocument) {
   const base = 'https://secure.d4sign.com.br';
@@ -1215,17 +1209,14 @@ app.get('/lead/:token', async (req, res) => {
 
     <h2>Contratante(s)</h2>
     <div class="grid">
-      <div><div class="label">Nome</div><div>${d.nome||'-'}</div></div>
-      <div><div class="label">Estado Civil</div><div>${d.estado_civil||'-'}</div></div>
-      <div><div class="label">CPF (campo)</div><div>${d.cpf_campo||'-'}</div></div>
-      <div><div class="label">CNPJ (campo)</div><div>${d.cnpj_campo||'-'}</div></div>
-      <div><div class="label">RG</div><div>${d.rg||'-'}</div></div>
+      <div><div class="label">Contratante 1</div><div>${d.contratante_1_texto||'-'}</div></div>
+      <div><div class="label">Contratante 2</div><div>${d.contratante_2_texto||'-'}</div></div>
     </div>
 
     <h2>Contato</h2>
     <div class="grid">
-      <div><div class="label">E-mail</div><div>${d.email||'-'}</div></div>
-      <div><div class="label">Telefone</div><div>${d.telefone||'-'}</div></div>
+      <div><div class="label">Dados para contato 1</div><div>${d.dados_contato_1||'-'}</div></div>
+      <div><div class="label">Dados para contato 2</div><div>${d.dados_contato_2||'-'}</div></div>
       <div><div class="label">Email para envio do contrato</div><div>${d.email_envio_contrato||'-'}</div></div>
       <div><div class="label">Email Cotitular</div><div>${d.email_cotitular_envio||'-'}</div></div>
     </div>
