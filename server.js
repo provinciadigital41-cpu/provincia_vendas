@@ -39,7 +39,8 @@ let {
   // D4Sign
   D4SIGN_TOKEN,
   D4SIGN_CRYPT_KEY,
-  TEMPLATE_UUID_CONTRATO,
+  TEMPLATE_UUID_CONTRATO,           // Modelo de Marca
+  TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
 
   // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
@@ -66,6 +67,8 @@ PIPEFY_FIELD_LINK_CONTRATO = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
 if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
+if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
+if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
 
 // Cofres mapeados por responsável
 const COFRES_UUIDS = {
@@ -187,7 +190,7 @@ async function getCard(cardId){
       id title
       current_phase{ id name }
       pipe{ id name }
-      fields{ name value field{ id type description } }
+      fields{ name value array_value field{ id type label description } }
       assignees{ name email }
     }
   }`, { id: cardId });
@@ -212,6 +215,9 @@ function getByName(card, nameSub){
   const f = (card.fields||[]).find(ff=> String(ff?.name||'').toLowerCase().includes(t));
   return f?.value || '';
 }
+function getFieldObjById(card, id){
+  return (card.fields||[]).find(f=> String(f?.field?.id||'')===String(id));
+}
 function getFirstByNames(card, arr){
   for (const k of arr){ const v = getByName(card, k); if (v) return v; }
   return '';
@@ -223,7 +229,7 @@ function checklistToText(v){
   }catch{ return String(v || ''); }
 }
 
-// Documento CPF CNPJ
+// Documento (CPF/CNPJ)
 function pickDocumento(card){
   const prefer = ['cpf','cnpj','documento','doc','cpf/cnpj','cnpj/cpf'];
   for (const k of prefer){
@@ -238,7 +244,7 @@ function pickDocumento(card){
   return { tipo:'', valor:'' };
 }
 
-// Assignee parsing
+// Assignee parsing (para cofre)
 function stripDiacritics(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
 function normalizeName(s){ return stripDiacritics(String(s||'').trim()).toLowerCase(); }
 function extractAssigneeNames(raw){
@@ -247,7 +253,7 @@ function extractAssigneeNames(raw){
   if (Array.isArray(val)){ for (const it of val) push(typeof it==='string'? it : (it?.name||it?.username||it?.email||it?.value)); }
   else if (typeof val==='object'&&val){ push(val.name||val.username||val.email||val.value); }
   else if (typeof val==='string'){ const m = val.match(/^\s*\[.*\]\s*$/)? tryParse(val) : null; if (m && Array.isArray(m)) m.forEach(x=>push(typeof x==='string'? x : (x?.name||x?.email))); else push(val); }
-  return [...new Set(out.filter(Boolean))];
+  return [...new Set(out.filter(Boolean))]];
 }
 function resolveCofreUuidByCard(card){
   if (!card) return DEFAULT_COFRE_UUID || null;
@@ -275,7 +281,7 @@ function computeValorTaxaBRLFromFaixa(d){
   return valorTaxaSemRS ? `R$ ${valorTaxaSemRS}` : '';
 }
 
-// Extrai números em ordem
+// Extrai todos os números em ordem de aparição e devolve separados por vírgula
 function extractClasseNumbersFromText(s){
   const nums=[]; const seen=new Set();
   for (const m of String(s||'').matchAll(/\b\d+\b/g)){
@@ -285,92 +291,82 @@ function extractClasseNumbersFromText(s){
   return nums.join(', ');
 }
 
-// Normaliza serviço
-function normalizarServico(servicoRaw){
-  if (!servicoRaw) return '';
-  const s = String(servicoRaw).trim();
-  if (!s) return '';
-  const upper = s.toUpperCase();
-  if (upper.includes('PEDIDO DE REGISTRO DE DESENHO INDUSTRIAL') || upper.includes('DESENHO INDUSTRIAL') || (upper.includes('DESENHO') && upper.includes('INDUSTRIAL'))) return 'DESENHO INDUSTRIAL';
-  if (upper.includes('PEDIDO DE REGISTRO DE PATENTE') || upper.includes('PATENTE')) return 'PATENTE';
-  if (upper.includes('REGISTRO DE MARCA') || upper === 'MARCA' || upper.includes('MARCA')) return 'MARCA';
-  return s;
+// Identifica o tipo base do serviço a partir do texto do statement ou connector
+function serviceKindFromText(s){
+  const t = String(s||'').toUpperCase();
+  if (t.includes('MARCA')) return 'MARCA';
+  if (t.includes('PATENTE')) return 'PATENTE';
+  if (t.includes('DESENHO')) return 'DESENHO INDUSTRIAL';
+  if (t.includes('COPYRIGHT') || t.includes('DIREITO AUTORAL')) return 'COPYRIGHT/DIREITO AUTORAL';
+  return 'OUTROS';
 }
 
-// Limpa statement
-function cleanStatementValue(v){
-  let s = String(v || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  if (s.startsWith('[') || s.startsWith('{')) {
-    try {
-      const j = JSON.parse(s);
-      if (Array.isArray(j) && j.length) {
-        s = String(j[0] || '').trim();
-      } else if (j && typeof j === 'object' && j.value) {
-        s = String(j.value).trim();
-      }
-    } catch {}
-  }
-  return s;
-}
-
-// Busca statement por marca N
-function buscarServicoStatementPorMarca(card, numeroMarca = 1){
-  const statementIdsPorMarca = {
+// Busca campo statement por marca N prioritariamente, com fallback para connector “serviços marca - N”
+function buscarServicoN(card, n){
+  // ids conhecidos de statements
+  const mapStmt = {
+    1: null, // marca 1 usa buscarServicoStatement(card) já existente
     2: 'statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e',
-    3: 'statement_c5616541_5f30_41b9_bd74_e2bd2063f253'
+    3: 'statement_c5616541_5f30_41b9_bd74_e2bd2063f253',
+    4: 'statement_8d833401_2294_448b_a34f_07f86c52981c',
+    5: 'statement_ca0eb59e_a015_4628_8c56_28af6e23c8d9'
   };
-  const statementFields = (card.fields||[]).filter(f => {
-    const t = String(f?.field?.type||'').toLowerCase();
-    return t === 'statement' || t === 'connector';
-  });
-
-  if (numeroMarca === 2 || numeroMarca === 3) {
-    const expectedId = statementIdsPorMarca[numeroMarca];
-    for (const field of statementFields) {
-      const fieldId = String(field?.field?.id || '');
-      if (fieldId === expectedId || fieldId.toLowerCase().includes(expectedId.replace('statement_', '').replace(/_/g, ''))) {
-        let value = field?.value || '';
-        value = String(value).replace(/<[^>]*>/g, ' ').trim();
-        value = value.replace(/^serviços?\s*marca\s*\d*\s*:?\s*/i, '').trim();
-        const colonParts = value.split(':');
-        if (colonParts.length > 1) value = colonParts[colonParts.length - 1].trim();
-        value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-        value = cleanStatementValue(value);
-        if (value && value.length > 2) return value;
+  const stmtId = mapStmt[n];
+  let v = '';
+  if (stmtId){
+    const f = getFieldObjById(card, stmtId);
+    v = String(f?.value||'').replace(/<[^>]*>/g,' ').trim();
+  }
+  if (!v){
+    const connId = n===2 ? 'servi_os_marca_2'
+               : n===3 ? 'servi_os_marca_3'
+               : n===4 ? 'servi_os_marca_4'
+               : n===5 ? 'servi_os_marca_5'
+               : null;
+    if (connId){
+      const f = getFieldObjById(card, connId);
+      if (f?.value){
+        try{
+          const arr = JSON.parse(f.value);
+          if (Array.isArray(arr) && arr[0]) v = String(arr[0]);
+        }catch{
+          v = String(f.value);
+        }
       }
     }
   }
+  return v;
+}
 
+// Busca campo statement que contenha informações de serviço (marca 1 por padrão)
+function buscarServicoStatement(card){
+  // igual ao código original: varre statements da marca 1
+  const statementFields = (card.fields||[]).filter(f => String(f?.field?.type||'').toLowerCase() === 'statement');
   for (const field of statementFields){
     const name = String(field?.name||'').toLowerCase();
-    const fieldId = String(field?.field?.id||'').toLowerCase();
     const description = String(field?.field?.description || '').toLowerCase();
-
-    let matches = false;
-    if (numeroMarca === 1) {
-      matches = (name.includes('serviço') || name.includes('servico')) && !name.includes('marca 2') && !name.includes('marca 3') && !name.includes('marca2') && !name.includes('marca3');
-    } else {
-      const marcaPattern = new RegExp(`marca\\s*${numeroMarca}|serviços?\\s*marca\\s*${numeroMarca}`, 'i');
-      matches = marcaPattern.test(name) || marcaPattern.test(description) || fieldId.includes(`marca${numeroMarca}`) || (description.includes(`serviços marca ${numeroMarca}`) || description.includes(`serviços marca${numeroMarca}`));
-    }
-
-    if (matches){
-      let value = field?.value || '';
-      value = String(value).replace(/<[^>]*>/g, ' ').trim();
-      value = value.replace(/^serviços?\s*(marca\s*\d*)?\s*:?\s*/i, '').trim();
-      const colonParts = value.split(':');
-      if (colonParts.length > 1) value = colonParts[colonParts.length - 1].trim();
-      value = value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-      value = cleanStatementValue(value);
-      if (value && value.length > 1) return value;
+    const isServicos = name.includes('serviço') || name.includes('servico') || description.includes('serviços marca');
+    if (isServicos){
+      let value = String(field?.value||'').replace(/<[^>]*>/g,' ').trim();
+      value = value.replace(/^serviços?.*?:\s*/i,'').trim();
+      if (value) return value;
     }
   }
   return '';
 }
 
-// Statement marca 1
-function buscarServicoStatement(card){
-  return buscarServicoStatementPorMarca(card, 1);
+// Normalização apenas para “Detalhes do serviço …” (não usada nas linhas de “Quantidade … Descrição …”)
+function normalizarCabecalhoDetalhe(kind, nome, tipoMarca='', classeNums=''){
+  const k = String(kind||'').toUpperCase();
+  if (k==='MARCA'){
+    const tipo = tipoMarca ? `, Apresentação: ${tipoMarca}` : '';
+    const classe = classeNums ? `, CLASSE: nº ${classeNums}` : '';
+    return `MARCA: ${nome || ''}${tipo}${classe}`.trim();
+  }
+  if (k==='PATENTE') return `PATENTE: ${nome||''}`.trim();
+  if (k==='DESENHO INDUSTRIAL') return `DESENHO INDUSTRIAL: ${nome||''}`.trim();
+  if (k==='COPYRIGHT/DIREITO AUTORAL') return `COPYRIGHT/DIREITO AUTORAL: ${nome||''}`.trim();
+  return `OUTROS SERVIÇOS: ${nome||''}`.trim();
 }
 
 /* =========================
@@ -394,26 +390,96 @@ function pickValorAssessoria(card){
   return isNaN(n)? null : n;
 }
 
+function firstNonEmpty(...vals){
+  for (const v of vals){ if (String(v||'').trim()) return v; }
+  return '';
+}
+
+function safe(s, allowEmpty=false){
+  if (s===null || s===undefined) return allowEmpty ? '' : '';
+  const out = String(s).replace(/\s+/g,' ').trim();
+  return allowEmpty ? out : out;
+}
+
+function parseListFromLongText(value, max=30){
+  const lines = String(value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const arr = [];
+  for (let i=0;i<max;i++) arr.push(lines[i]||'');
+  return arr;
+}
+
 async function montarDados(card){
   const by = toById(card);
 
-  // Marca 1
-  const marcasEspecRaw = (by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '');
-  const linhasMarcasEspec = String(marcasEspecRaw).split(/\r?\n/).map(s => s.trim()).filter(s => s.length);
-  const classeSomenteNumeros = extractClasseNumbersFromText(marcasEspecRaw);
+  // Marca 1 dados base
+  const tituloMarca1 = by['marca'] || card.title || '';
+  const marcasEspecRaw1 = by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1','classes e especificações']) || '';
+  const linhasMarcasEspec1 = parseListFromLongText(marcasEspecRaw1, 30);
+  const classeSomenteNumeros1 = extractClasseNumbersFromText(marcasEspecRaw1);
+  const tipoMarca1 = checklistToText(by['tipo_de_marca'] || by['checklist_vertical'] || getFirstByNames(card, ['tipo de marca']));
 
-  const tipoMarca = checklistToText(
-    by['tipo_de_marca'] ||
-    by['checklist_vertical'] ||
-    getFirstByNames(card, ['tipo de marca'])
-  );
+  // Marca 2
+  const tituloMarca2 = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2','marca - 2']) || '';
+  const marcasEspecRaw2 = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
+  const linhasMarcasEspec2 = parseListFromLongText(marcasEspecRaw2, 30);
+  const classeSomenteNumeros2 = extractClasseNumbersFromText(marcasEspecRaw2);
+  const tipoMarca2 = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
+
+  // Marca 3
+  const tituloMarca3 = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3','marca - 3']) || '';
+  const marcasEspecRaw3 = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
+  const linhasMarcasEspec3 = parseListFromLongText(marcasEspecRaw3, 30);
+  const classeSomenteNumeros3 = extractClasseNumbersFromText(marcasEspecRaw3);
+  const tipoMarca3 = checklistToText(by['copy_of_copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 3']));
+
+  // Marca 4
+  const tituloMarca4 = by['marca_ou_patente_4'] || '';
+  const marcasEspecRaw4 = by['classes_e_especifica_es_marca_4'] || '';
+  const linhasMarcasEspec4 = parseListFromLongText(marcasEspecRaw4, 30);
+  const classeSomenteNumeros4 = extractClasseNumbersFromText(marcasEspecRaw4);
+  const tipoMarca4 = checklistToText(by['copy_of_tipo_de_marca_3'] || '');
+
+  // Marca 5
+  const tituloMarca5 = by['marca_ou_patente_5'] || '';
+  const marcasEspecRaw5 = by['copy_of_classes_e_especifica_es_marca_4'] || '';
+  const linhasMarcasEspec5 = parseListFromLongText(marcasEspecRaw5, 30);
+  const classeSomenteNumeros5 = extractClasseNumbersFromText(marcasEspecRaw5);
+  const tipoMarca5 = checklistToText(by['copy_of_tipo_de_marca_3_1'] || '');
+
+  // Serviços por N
+  const serv1Stmt = firstNonEmpty(buscarServicoStatement(card));
+  const serv2Stmt = firstNonEmpty(buscarServicoN(card,2));
+  const serv3Stmt = firstNonEmpty(buscarServicoN(card,3));
+  const serv4Stmt = firstNonEmpty(buscarServicoN(card,4));
+  const serv5Stmt = firstNonEmpty(buscarServicoN(card,5));
+
+  // Kinds
+  const k1 = serviceKindFromText(serv1Stmt);
+  const k2 = serviceKindFromText(serv2Stmt);
+  const k3 = serviceKindFromText(serv3Stmt);
+  const k4 = serviceKindFromText(serv4Stmt);
+  const k5 = serviceKindFromText(serv5Stmt);
+
+  // Decide template: se houver qualquer “MARCA” usar modelo de Marca, caso contrário, usar “Outros”
+  const anyMarca = [k1,k2,k3,k4,k5].includes('MARCA');
+  const templateToUse = anyMarca ? TEMPLATE_UUID_CONTRATO : TEMPLATE_UUID_CONTRATO_OUTROS;
 
   // Contato contratante 1
   const contatoNome     = by['nome_1'] || getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']) || '';
   const contatoEmail    = by['email_de_contato'] || getFirstByNames(card, ['email','e-mail']) || '';
   const contatoTelefone = by['telefone_de_contato'] || getFirstByNames(card, ['telefone','celular','whatsapp','whats']) || '';
 
-  // Documento
+  // Contato contratante 2 e cotitular
+  const contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
+  const contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
+  const contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
+
+  // Envio do contrato principal e cotitular
+  const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
+  const emailCotitularEnvio = by['copy_of_email_para_envio_do_contrato'] || '';
+  const telefoneCotitularEnvio = by['copy_of_telefone_para_envio_do_contrato'] || '';
+
+  // Documento (CPF/CNPJ)
   const doc = pickDocumento(card);
   const cpfDoc  = doc.tipo==='CPF'?  doc.valor : '';
   const cnpjDoc = doc.tipo==='CNPJ'? doc.valor : '';
@@ -425,37 +491,6 @@ async function montarDados(card){
   const valorAssessoria = pickValorAssessoria(card);
   const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
 
-  // Serviços e tipos via statement
-  const serv1 = getFirstByNames(card, ['serviços de contratos','serviços contratados','serviços']);
-  const servicoStatement = buscarServicoStatement(card);
-  const servico = normalizarServico(servicoStatement || serv1 || '');
-  const temMarca = Boolean(by['marca'] || getFirstByNames(card, ['marca']) || card.title);
-  const qtdMarca = temMarca ? '1' : '';
-  const servicos = [serv1].filter(Boolean);
-
-  // Marca 2
-  const marca2Nome = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2', 'marca - 2']) || '';
-  const marca2ServicoStatement = buscarServicoStatementPorMarca(card, 2);
-  const rawStmt2 = by['statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e'] || '';
-  const marca2ServicoByField = cleanStatementValue(rawStmt2);
-  const marca2ServicoConnector = cleanStatementValue(by['servi_os_marca_2'] || getByName(card,'Serviços marca - 2') || '');
-  let marca2Servico = normalizarServico(marca2ServicoStatement || marca2ServicoByField || marca2ServicoConnector || '');
-  const marca2ClassesRaw = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
-  const marca2Classes = extractClasseNumbersFromText(marca2ClassesRaw);
-  const marca2Tipo = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
-  const linhasMarcas2Espec = String(marca2ClassesRaw).split(/\r?\n/).map(s => s.trim()).filter(s => s.length);
-
-  // Marca 3
-  const marca3Nome = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
-  const marca3ServicoStatement = buscarServicoStatementPorMarca(card, 3);
-  const rawStmt3 = by['statement_c5616541_5f30_41b9_bd74_e2bd2063f253'] || '';
-  const marca3ServicoByField = cleanStatementValue(rawStmt3);
-  const marca3ServicoConnector = cleanStatementValue(by['servi_os_marca_3'] || getByName(card,'Serviços marca - 3') || '');
-  let marca3Servico = normalizarServico(marca3ServicoStatement || marca3ServicoByField || marca3ServicoConnector || '');
-  const marca3ClassesRaw = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
-  const marca3Classes = extractClasseNumbersFromText(marca3ClassesRaw);
-  const marca3Tipo = checklistToText(by['copy_of_copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 3']));
-
   // TAXA
   const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
   const valorTaxaBRL = computeValorTaxaBRLFromFaixa({ taxa_faixa: taxaFaixaRaw });
@@ -465,7 +500,7 @@ async function montarDados(card){
   const dataPagtoAssessoria = fmtDMY2(by['copy_of_copy_of_data_do_boleto_pagamento_pesquisa'] || '');
   const dataPagtoTaxa       = fmtDMY2(by['copy_of_data_do_boleto_pagamento_pesquisa'] || '');
 
-  // Endereço CNPJ
+  // Endereço (CNPJ)
   const cepCnpj    = by['cep_do_cnpj']     || '';
   const ruaCnpj    = by['rua_av_do_cnpj']  || '';
   const bairroCnpj = by['bairro_do_cnpj']  || '';
@@ -473,19 +508,28 @@ async function montarDados(card){
   const ufCnpj     = by['estado_do_cnpj']  || '';
   const numeroCnpj = by['n_mero_1']        || getFirstByNames(card, ['numero','número','nº']) || '';
 
-  // Vendedor
-  const vendedor = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'])[0] || '';
+  // Vendedor (cofre)
+  const vendedor = (()=>{
+    const v = extractAssigneeNames(by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5']);
+    return v[0] || '';
+  })();
 
-  // Extras
-  const riscoMarca = by['risco_da_marca'] || '';
+  // Riscos 1..5
+  const risco1 = by['risco_da_marca'] || '';
+  const risco2 = by['copy_of_copy_of_risco_da_marca'] || '';
+  const risco3 = by['copy_of_risco_da_marca_3'] || '';
+  const risco4 = by['copy_of_risco_da_marca_3_1'] || '';
+  const risco5 = by['copy_of_risco_da_marca_4'] || '';
+
+  // Nacionalidade e etc
   const nacionalidade = by['nacionalidade'] || '';
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
   const estadoCivil = by['estado_civ_l'] || '';
 
-  // Email para envio do contrato
-  const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
+  // Cláusula adicional
+  const clausulaAdicional = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : 'Sem aditivos contratuais.';
 
-  // Contratante 1 texto
+  // Contratantes blocos
   const contratante1Texto = montarTextoContratante({
     nome: contatoNome || (by['r_social_ou_n_completo']||''),
     nacionalidade,
@@ -504,47 +548,22 @@ async function montarDados(card){
     email: contatoEmail
   });
 
-  // Contratante 2 com possíveis campos de cotitular
-  let contato2Nome = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
-  const cotitularEmail = by['copy_of_email_para_envio_do_contrato'] || '';
-  const cotitularTelefone = by['copy_of_telefone_para_envio_do_contrato'] || '';
-  let contato2Email = by['email_2'] || getFirstByNames(card, ['email 2', 'e-mail 2']) || '';
-  let contato2Telefone = by['telefone_2'] || getFirstByNames(card, ['telefone 2', 'celular 2']) || '';
-
-  if (cotitularEmail) contato2Email = cotitularEmail;
-  if (cotitularTelefone) contato2Telefone = cotitularTelefone;
-
-  let nacionalidade2 = by['nacionalidade_2'] || '';
-  let estadoCivil2 = by['estado_civ_l_2'] || '';
-  let rua2 = by['rua_2'] || by['rua_av_do_cnpj_2'] || '';
-  let bairro2 = by['bairro_2'] || by['bairro_do_cnpj_2'] || '';
-  let numero2 = by['numero_2'] || by['n_mero_2'] || '';
-  let cidade2 = by['cidade_2'] || by['cidade_do_cnpj_2'] || '';
-  let uf2 = by['estado_2'] || by['estado_do_cnpj_2'] || '';
-  let cep2 = by['cep_2'] || by['cep_do_cnpj_2'] || '';
-  let rg2 = by['rg_2'] || '';
-  let cpf2 = by['cpf_2'] || '';
-  let cnpj2 = by['cnpj_2'] || '';
-  let docSelecao2 = by['cnpj_ou_cpf_2'] || '';
-
-  if (!contato2Nome) contato2Nome = by['raz_o_social_ou_nome_completo_cotitular'] || contato2Nome;
-  if (!nacionalidade2) nacionalidade2 = by['nacionalidade_cotitular'] || nacionalidade2;
-  if (!estadoCivil2) estadoCivil2 = by['estado_civ_l_cotitular'] || estadoCivil2;
-  if (!rua2) rua2 = by['rua_av_do_cnpj_cotitular'] || rua2;
-  if (!bairro2) bairro2 = by['bairro_cotitular'] || bairro2;
-  if (!cidade2) cidade2 = by['cidade_cotitular'] || cidade2;
-  if (!uf2) uf2 = by['estado_cotitular'] || uf2;
-  if (!rg2) rg2 = by['rg_cotitular'] || rg2;
-  if (!cpf2) cpf2 = by['cpf_cotitular'] || cpf2;
-  if (!cnpj2) cnpj2 = by['cnpj_cotitular'] || cnpj2;
+  const nacionalidade2 = by['nacionalidade_2'] || '';
+  const estadoCivil2 = by['estado_civ_l_2'] || '';
+  const rua2 = by['rua_2'] || by['rua_av_do_cnpj_2'] || '';
+  const bairro2 = by['bairro_2'] || by['bairro_do_cnpj_2'] || '';
+  const numero2 = by['numero_2'] || by['n_mero_2'] || '';
+  const cidade2 = by['cidade_2'] || by['cidade_do_cnpj_2'] || '';
+  const uf2 = by['estado_2'] || by['estado_do_cnpj_2'] || '';
+  const cep2 = by['cep_2'] || by['cep_do_cnpj_2'] || '';
+  const rg2 = by['rg_2'] || '';
+  const cpf2 = by['cpf_2'] || '';
+  const cnpj2 = by['cnpj_2'] || '';
+  const docSelecao2 = by['cnpj_ou_cpf_2'] || '';
 
   const temDadosContratante2 = Boolean(
     contato2Nome || nacionalidade2 || estadoCivil2 || rua2 || bairro2 || numero2 ||
-    cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2 || contato2Telefone || contato2Email ||
-    by['raz_o_social_ou_nome_completo_cotitular'] || by['nacionalidade_cotitular'] ||
-    by['estado_civ_l_cotitular'] || by['rua_av_do_cnpj_cotitular'] || by['bairro_cotitular'] ||
-    by['cidade_cotitular'] || by['estado_cotitular'] || by['rg_cotitular'] || by['cpf_cotitular'] ||
-    by['cnpj_cotitular']
+    cidade2 || uf2 || cep2 || rg2 || cpf2 || cnpj2 || docSelecao2 || contato2Telefone || contato2Email
   );
 
   const contratante2Texto = temDadosContratante2
@@ -562,62 +581,169 @@ async function montarDados(card){
         docSelecao: docSelecao2,
         cpf: cpf2,
         cnpj: cnpj2,
-        telefone: contato2Telefone,
-        email: contato2Email
+        telefone: contato2Telefone || telefoneCotitularEnvio,
+        email: contato2Email || emailCotitularEnvio
       })
     : '';
 
+  // Dados para contato 1 e 2
+  const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
+  const dadosContato2 = temDadosContratante2
+    ? [contato2Nome || 'Cotitular', (contato2Telefone || telefoneCotitularEnvio || ''), (contato2Email || emailCotitularEnvio || '')].filter(Boolean).join(' | ')
+    : '';
+
+  // Quantidade e descrição “sem normalizar” para cada categoria, conforme templates
+  // Para Marca: somente preenchidos os campos de marca
+  // Para Outros: preencher PATENTE, DESENHO INDUSTRIAL, COPYRIGHT e OUTROS
+  const mkQtd = [k1,k2,k3,k4,k5].filter(k=>k==='MARCA' && (String(serv1Stmt+serv2Stmt+serv3Stmt+serv4Stmt+serv5Stmt))).length;
+  // Em vez de contar pelo kind apenas, vamos contar efetivamente entradas não vazias por kind
+  const entries = [
+    {kind:k1, title:tituloMarca1, tipo:tipoMarca1, classes:classeSomenteNumeros1, stmt:serv1Stmt, risco:risco1, lines:linhasMarcasEspec1},
+    {kind:k2, title:tituloMarca2, tipo:tipoMarca2, classes:classeSomenteNumeros2, stmt:serv2Stmt, risco:risco2, lines:linhasMarcasEspec2},
+    {kind:k3, title:tituloMarca3, tipo:tipoMarca3, classes:classeSomenteNumeros3, stmt:serv3Stmt, risco:risco3, lines:linhasMarcasEspec3},
+    {kind:k4, title:tituloMarca4, tipo:tipoMarca4, classes:classeSomenteNumeros4, stmt:serv4Stmt, risco:risco4, lines:linhasMarcasEspec4},
+    {kind:k5, title:tituloMarca5, tipo:tipoMarca5, classes:classeSomenteNumeros5, stmt:serv5Stmt, risco:risco5, lines:linhasMarcasEspec5},
+  ].filter(e => String(e.title||e.stmt||'').trim());
+
+  // Monta linhas de “quantidade + descrição” conforme pedido
+  const qtdDesc = {
+    MARCA: '',
+    PATENTE: '',
+    'DESENHO INDUSTRIAL': '',
+    'COPYRIGHT/DIREITO AUTORAL': '',
+    OUTROS: ''
+  };
+  const detalhes = {
+    MARCA: ['', '', '', '', ''],
+    PATENTE: ['', '', '', '', ''],
+    'DESENHO INDUSTRIAL': ['', '', '', '', ''],
+    'COPYRIGHT/DIREITO AUTORAL': ['', '', '', '', ''],
+    OUTROS: ['', '', '', '', '']
+  };
+  const headersServicos = { // cabeçalhos “Cabeçalho - SERVIÇOS” e “Cabeçalho - SERVIÇOS 2”
+    h1: '', h2: ''
+  };
+  // Preenche contadores por kind
+  const byKind = { 'MARCA':[], 'PATENTE':[], 'DESENHO INDUSTRIAL':[], 'COPYRIGHT/DIREITO AUTORAL':[], 'OUTROS':[] };
+  entries.forEach(e => byKind[e.kind].push(e));
+
+  // Marca: quantidade e descrição “1 Registro de Marca JUNTO AO INPI” etc
+  const makeQtdDescLine = (kind, arr) => {
+    if (!arr.length) return '';
+    // Extrai o texto do serviço do statement bruto, sem normalizar
+    // Usa o primeiro item como base da frase de quantidade
+    const baseServico = String(arr[0].stmt||'').trim() || (kind==='MARCA' ? 'Registro de Marca' : kind);
+    const qtd = arr.length;
+    // Ex: “2 Registro de Marca JUNTO AO INPI”
+    return `${qtd} ${baseServico} JUNTO AO INPI`;
+  };
+
+  Object.keys(byKind).forEach(k=>{
+    qtdDesc[k] = makeQtdDescLine(k, byKind[k]);
+  });
+
+  // Detalhes por item até 5
+  ['MARCA','PATENTE','DESENHO INDUSTRIAL','COPYRIGHT/DIREITO AUTORAL','OUTROS'].forEach(k=>{
+    const arr = byKind[k];
+    for (let i=0;i<5;i++){
+      const e = arr[i];
+      if (!e){ detalhes[k][i] = ''; continue; }
+      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes);
+      detalhes[k][i] = cab;
+    }
+  });
+
+  // Cabeçalhos “SERVIÇOS” e “SERVIÇOS 2” usados no formulário de classes do contrato de marca
+  // H1 descreve o primeiro bloco, H2 descreve o segundo quando houver entradas numa “marca 2”
+  headersServicos.h1 = byKind['MARCA'][0] ? `MARCA: ${byKind['MARCA'][0].title||''}` : '';
+  headersServicos.h2 = byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title||''}` : '';
+
+  // Risco agregado: “serviço: marca_1 - RISCO: risco marca_1, serviço: marca_2 - RISCO: risco marca_2”
+  const riscoAgregado = entries
+    .map((e, idx)=> {
+      const servTxt = String(e.stmt||e.kind||'').trim();
+      const name = e.title || `serviço ${idx+1}`;
+      const r = String(e.risco||'').trim();
+      if (!servTxt && !r) return '';
+      return `serviço: ${name} - RISCO: ${r || 'Não informado'}`;
+    })
+    .filter(Boolean)
+    .join(', ');
+
   return {
+    // base
     cardId: card.id,
+    templateToUse, // decide qual template será usado depois
 
-    titulo: (by['marca'] || card.title || ''),
-
+    // Identificação
+    titulo: tituloMarca1 || card.title || '',
     nome: contatoNome || (by['r_social_ou_n_completo']||''),
     cpf: cpfDoc, 
     cnpj: cnpjDoc,
     rg: by['rg'] || '',
     estado_civil: estadoCivil,
 
+    // Doc específicos
     cpf_campo: cpfCampo,
     cnpj_campo: cnpjCampo,
 
+    // Contatos
     email: contatoEmail || '',
     telefone: contatoTelefone || '',
+    dados_contato_1: dadosContato1,
+    dados_contato_2: dadosContato2,
 
-    classe: classeSomenteNumeros,
-    marcas_espec: marcasEspecRaw,
-    linhas_marcas_espec: linhasMarcasEspec,
-    qtd_marca: qtdMarca,
-    tipo_marca: tipoMarca || '',
+    // Email para assinatura
+    email_envio_contrato: emailEnvioContrato,
+    email_cotitular_envio: emailCotitularEnvio,
 
-    servicos,
-    servico,
+    // MARCA 1..5: linhas e cabeçalhos do formulário
+    cabecalho_servicos_1: headersServicos.h1,
+    cabecalho_servicos_2: headersServicos.h2,
+
+    linhas_marcas_espec_1: linhasMarcasEspec1,
+    linhas_marcas_espec_2: linhasMarcasEspec2,
+    linhas_marcas_espec_3: linhasMarcasEspec3,
+    linhas_marcas_espec_4: linhasMarcasEspec4,
+    linhas_marcas_espec_5: linhasMarcasEspec5,
+
+    // Quantidades e descrições por categoria
+    qtd_desc: {
+      MARCA: qtdDesc['MARCA'],
+      PATENTE: qtdDesc['PATENTE'],
+      DI: qtdDesc['DESENHO INDUSTRIAL'],
+      COPY: qtdDesc['COPYRIGHT/DIREITO AUTORAL'],
+      OUTROS: qtdDesc['OUTROS']
+    },
+
+    // Detalhes por categoria até 5
+    det: detalhes,
+
+    // Classes e tipos por marca
+    classe1: classeSomenteNumeros1, tipo1: tipoMarca1, nome1: tituloMarca1,
+    classe2: classeSomenteNumeros2, tipo2: tipoMarca2, nome2: tituloMarca2,
+    classe3: classeSomenteNumeros3, tipo3: tipoMarca3, nome3: tituloMarca3,
+    classe4: classeSomenteNumeros4, tipo4: tipoMarca4, nome4: tituloMarca4,
+    classe5: classeSomenteNumeros5, tipo5: tipoMarca5, nome5: tituloMarca5,
+
+    // Assessoria
     parcelas: nParcelas,
     valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
     forma_pagto_assessoria: formaAss,
     data_pagto_assessoria: dataPagtoAssessoria,
 
-    // Marca 2
-    marca_2_nome: marca2Nome,
-    marca_2_servico: marca2Servico,
-    marca_2_classe: marca2Classes,
-    marca_2_tipo: marca2Tipo || '',
-    marcas2_espec: marca2ClassesRaw,
-    linhas_marcas2_espec: linhasMarcas2Espec,
+    // Pesquisa
+    valor_pesquisa: 'R$ 00,00',
+    forma_pesquisa: '',
+    data_pesquisa: '00/00/00',
 
-    // Marca 3
-    marca_3_nome: marca3Nome,
-    marca_3_servico: marca3Servico,
-    marca_3_classe: marca3Classes,
-    marca_3_tipo: marca3Tipo || '',
-
-    // TAXA
+    // Taxa
     taxa_faixa: taxaFaixaRaw || '',
     valor_taxa_brl: valorTaxaBRL,
     forma_pagto_taxa: formaPagtoTaxa,
     data_pagto_taxa: dataPagtoTaxa,
 
-    // Endereço CNPJ
+    // Endereço
     cep_cnpj: cepCnpj,
     rua_cnpj: ruaCnpj,
     bairro_cnpj: bairroCnpj,
@@ -625,67 +751,15 @@ async function montarDados(card){
     uf_cnpj: ufCnpj,
     numero_cnpj: numeroCnpj,
 
-    // Extras
-    risco_marca: riscoMarca,
-    nacionalidade,
-    selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
-
     // Vendedor
     vendedor,
 
-    // Email assinatura
-    email_envio_contrato: emailEnvioContrato,
+    // Risco agregado
+    risco_agregado: riscoAgregado,
 
-    // Contratantes blocos
-    contratante_1_texto: contratante1Texto,
-    contratante_2_texto: contratante2Texto,
-
-    // Dados de contato para template
-    contato_1_nome: contatoNome,
-    contato_1_tel: contatoTelefone,
-    contato_1_email: contatoEmail,
-    contato_2_nome: contato2Nome,
-    contato_2_tel: contato2Telefone,
-    contato_2_email: contato2Email
+    // Cláusula adicional
+    clausula_adicional: clausulaAdicional
   };
-}
-
-// Sanitiza valores para o D4Sign
-function sanitizeForD4Sign(value, allowEmpty = false, opts = { allowBreaks: false }){
-  if (value === null || value === undefined) return allowEmpty ? '' : '---';
-  let s = String(value);
-
-  s = s.replace(/<[^>]*>/g, '');
-  s = s.replace(/&nbsp;/g, ' ');
-  s = s.replace(/&amp;/g, '&');
-  s = s.replace(/&lt;/g, '<');
-  s = s.replace(/&gt;/g, '>');
-  s = s.replace(/&quot;/g, '"');
-  s = s.replace(/&#39;/g, "'");
-  s = s.replace(/&[a-z]+;/gi, '');
-
-  if (opts.allowBreaks){
-    s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  } else {
-    s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-    s = s.replace(/\r\n/g, ' ');
-    s = s.replace(/\r/g, ' ');
-    s = s.replace(/\n/g, ' ');
-    s = s.replace(/\t/g, ' ');
-  }
-
-  if (!opts.allowBreaks){
-    s = s.replace(/\s+/g, ' ');
-  } else {
-    s = s.replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n');
-  }
-
-  s = s.trim();
-
-  s = s.replace(/[\x7F-\x9F]/g, '');
-
-  if (!allowEmpty && !s) return '---';
-  return s;
 }
 
 function montarTextoContratante(info = {}){
@@ -758,280 +832,231 @@ function montarTextoContratante(info = {}){
   return texto.endsWith('.') ? texto : `${texto}.`;
 }
 
-function joinContato(nome, tel, email){
-  const p = [];
-  if (nome) p.push(nome);
-  if (tel) p.push(tel);
-  if (email) p.push(email);
-  return p.join(', ');
-}
-
-// Monta descrição e detalhes
-function detalharItensServicos(itens, rotulo){
-  if (!Array.isArray(itens) || itens.length === 0) return { qtd: 0, desc: '', detalhes: '' };
-  const qtd = itens.length;
-  const desc = `${qtd} pedido(s)/depósito(s) de ${rotulo} junto ao INPI`;
-  const linhas = itens.map(it => {
-    const partes = [];
-    const prefixo = rotulo === 'MARCA' ? 'MARCA' : 'PATENTE';
-    if (it.nome) partes.push(`${prefixo}: ${it.nome}`);
-    if (it.tipo) partes.push(`Apresentação: ${it.tipo}`);
-    if (it.classe) partes.push(`CLASSE: nº ${it.classe}`);
-    return partes.join(', ');
-  }).filter(Boolean);
-  const detalhes = linhas.join('\r\n');
-  return { qtd, desc, detalhes };
-}
-
 // Variáveis para Template Word
-function montarADDWord(d, nowInfo){
+function montarVarsParaTemplateMarca(d, nowInfo){
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
   const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
-
-  const marcasEspecRaw = String(d.marcas_espec || '');
-  const marcasEspecForWord = sanitizeForD4Sign(marcasEspecRaw, true);
-
-  const valorPesquisa = 'R$ 00,00';
-  const formaPesquisa = '---';
-  const dataPesquisa  = '00/00/00';
-
-  const rua    = sanitizeForD4Sign(d.rua_cnpj || '', true);
-  const bairro = sanitizeForD4Sign(d.bairro_cnpj || '', true);
-  const numero = sanitizeForD4Sign(d.numero_cnpj || '', true);
-  const cidade = sanitizeForD4Sign(d.cidade_cnpj || '', true);
-  const uf     = sanitizeForD4Sign(d.uf_cnpj || '', true);
-  const cep    = sanitizeForD4Sign(d.cep_cnpj || '', true);
-
-  const valorDaTaxa = sanitizeForD4Sign(d.valor_taxa_brl || '', true);
-  const formaDaTaxa = sanitizeForD4Sign(d.forma_pagto_taxa || '', true);
-  const dataDaTaxa  = sanitizeForD4Sign(d.data_pagto_taxa || '', true);
 
   const dia = String(nowInfo.dia).padStart(2,'0');
   const mesNum = String(nowInfo.mes).padStart(2,'0');
   const ano = String(nowInfo.ano);
   const mesExtenso = monthNamePt(nowInfo.mes);
 
-  // Monta lista de itens
-  const itens = [];
-  itens.push({
-    tipoServ: d.servico || '',
-    nome: d.titulo,
-    tipo: d.tipo_marca,
-    classe: d.classe
-  });
-  {
-    let tipoServ2 = d.marca_2_servico || '';
-    itens.push({
-      tipoServ: tipoServ2,
-      nome: d.marca_2_nome,
-      tipo: d.marca_2_tipo,
-      classe: d.marca_2_classe
-    });
-  }
-
-  const itensMarca = itens
-    .filter(x => String(x.tipoServ).toUpperCase() === 'MARCA')
-    .map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }))
-    .filter(x => x.nome || x.tipo || x.classe);
-
-  const itensPatente = itens
-    .filter(x => String(x.tipoServ).toUpperCase() === 'PATENTE')
-    .map(x => ({ nome: x.nome, tipo: x.tipo, classe: x.classe }))
-    .filter(x => x.nome || x.tipo || x.classe);
-
-  const marcaInfo = detalharItensServicos(itensMarca, 'MARCA');
-  const patenteInfo = detalharItensServicos(itensPatente, 'PATENTE');
-
-  // Função para uma linha por item
-  function linhaServico(it, rotulo){
-    if (!it) return '';
-    const partes = [];
-    const prefixo = rotulo === 'MARCA' ? 'MARCA' : 'PATENTE';
-    if (it.nome) partes.push(`${prefixo}: ${it.nome}`);
-    if (it.tipo) partes.push(`Apresentação: ${it.tipo}`);
-    if (it.classe) partes.push(`CLASSE: nº ${it.classe}`);
-    return partes.join(', ');
-  }
-
-  // Primeira e segunda linhas separadas
-  const detMarca1   = itensMarca[0] ? linhaServico(itensMarca[0], 'MARCA') : '';
-  const detMarca2   = itensMarca[1] ? linhaServico(itensMarca[1], 'MARCA') : '';
-  const detPatente1 = itensPatente[0] ? linhaServico(itensPatente[0], 'PATENTE') : '';
-  const detPatente2 = itensPatente[1] ? linhaServico(itensPatente[1], 'PATENTE') : '';
-
-  const baseVars = {
+  const base = {
     // Identificação
-    contratante_1: sanitizeForD4Sign(d.nome || '', true),
-    cpf: sanitizeForD4Sign(d.cpf || '', true),
-    cnpj: sanitizeForD4Sign(d.cnpj || '', true),
-    rg: sanitizeForD4Sign(d.rg || '', true),
-    'Estado Civíl': sanitizeForD4Sign(d.estado_civil || '', true),
-    'Estado Civil': sanitizeForD4Sign(d.estado_civil || '', true),
-
-    // Doc adicionais
-    'CPF/CNPJ': sanitizeForD4Sign(d.selecao_cnpj_ou_cpf || '', true),
-    'CPF': sanitizeForD4Sign(d.cpf_campo || '', true),
-    'CNPJ': sanitizeForD4Sign(d.cnpj_campo || '', true),
+    'Contratante 1': d.nome || '',
+    'Contratante 2': d.contratante_2_texto || '',
+    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
+    'CPF': d.cpf_campo || '',
+    'CNPJ': d.cnpj_campo || '',
+    rg: d.rg || '',
+    'Estado Civíl': d.estado_civil || '',
+    'Estado Civil': d.estado_civil || '',
 
     // Endereço
-    rua, bairro, numero, nome_da_cidade: cidade, cidade, uf, cep,
+    rua: d.rua_cnpj || '',
+    bairro: d.bairro_cnpj || '',
+    numero: d.numero_cnpj || '',
+    nome_da_cidade: d.cidade_cnpj || '',
+    cidade: d.cidade_cnpj || '',
+    uf: d.uf_cnpj || '',
+    cep: d.cep_cnpj || '',
 
     // Contato
-    'E-mail': sanitizeForD4Sign(d.email || '', true),
-    telefone: sanitizeForD4Sign(d.telefone || '', true),
+    'E-mail': d.email || '',
+    telefone: d.telefone || '',
+    'dados para contato 1': d.dados_contato_1 || '',
+    'dados para contato 2': d.dados_contato_2 || '',
 
-    // Marca Classe Risco
-    nome_da_marca: sanitizeForD4Sign(d.titulo || '', true),
-    classe: sanitizeForD4Sign(d.classe || '', true),
-    'Quantidade depósitos/processos de MARCA': sanitizeForD4Sign(d.qtd_marca || '', true),
-    'tipo de marca': sanitizeForD4Sign(d.tipo_marca || '', true),
-    risco_da_marca: sanitizeForD4Sign(d.risco_marca || '', true),
-    'Risco': sanitizeForD4Sign(d.risco_marca || '', true),
-    'marcas-espec': marcasEspecForWord,
+    // Resultado da pesquisa prévia
+    'Risco': d.risco_agregado || '',
 
-    // Serviço normalizado antigo
-    servico: sanitizeForD4Sign(d.servico || '', true),
-    'servico': sanitizeForD4Sign(d.servico || '', true),
+    // Quantidade e descrição de Marca
+    'Quantidade depósitos/processos de MARCA': d.qtd_desc.MARCA || '',
+    'Descrição do serviço - MARCA': d.qtd_desc.MARCA ? '' : '',
 
-    // Contratantes
-    'Contratante 1': sanitizeForD4Sign(d.contratante_1_texto || '', true),
-    'Contratante 2': sanitizeForD4Sign(d.contratante_2_texto || '', true),
+    // Detalhes do serviço - Marca até 5
+    'Detalhes do serviço - MARCA': d.det.MARCA[0] || '',
+    'Detalhes do serviço - MARCA 2': d.det.MARCA[1] || '',
+    'Detalhes do serviço - MARCA 3': d.det.MARCA[2] || '',
+    'Detalhes do serviço - MARCA 4': d.det.MARCA[3] || '',
+    'Detalhes do serviço - MARCA 5': d.det.MARCA[4] || '',
 
-    // Marca 2 e 3 antigos
-    'servico_2': sanitizeForD4Sign(d.marca_2_servico || '', true),
-    'Nome da Marca_2': sanitizeForD4Sign(d.marca_2_nome || '', true),
-    'tipo de marca_2': sanitizeForD4Sign(d.marca_2_tipo || '', true),
-    'Classe_2': sanitizeForD4Sign(d.marca_2_classe || '', true),
-    'servico_3': sanitizeForD4Sign(d.marca_3_servico || '', true),
-    'Nome da Marca_3': sanitizeForD4Sign(d.marca_3_nome || '', true),
-    'tipo de marca_3': sanitizeForD4Sign(d.marca_3_tipo || '', true),
-    'Classe_3': sanitizeForD4Sign(d.marca_3_classe || '', true),
+    // Formulário de Classes
+    'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
+    'marcas-espec_1': d.linhas_marcas_espec_1[0] || '',
+    'marcas-espec_2': d.linhas_marcas_espec_1[1] || '',
+    'marcas-espec_3': d.linhas_marcas_espec_1[2] || '',
+    'marcas-espec_4': d.linhas_marcas_espec_1[3] || '',
+    'marcas-espec_5': d.linhas_marcas_espec_1[4] || '',
 
-    // Dados pessoais adicionais
-    Nacionalidade: sanitizeForD4Sign(d.nacionalidade || '', true),
+    'Cabeçalho - SERVIÇOS 2': d.cabecalho_servicos_2 || '',
+    'marcas2-espec_1': d.linhas_marcas_espec_2[0] || '',
+    'marcas2-espec_2': d.linhas_marcas_espec_2[1] || '',
+    'marcas2-espec_3': d.linhas_marcas_espec_2[2] || '',
+    'marcas2-espec_4': d.linhas_marcas_espec_2[3] || '',
+    'marcas2-espec_5': d.linhas_marcas_espec_2[4] || '',
+
+    // Tipo de marca do formulário
+    'tipo de marca': d.tipo1 || '',
 
     // Assessoria
-    numero_de_parcelas_da_assessoria: String(d.parcelas||'1'),
-    valor_da_parcela_da_assessoria: toBRL(valorParcela),
-    forma_de_pagamento_da_assessoria: sanitizeForD4Sign(d.forma_pagto_assessoria || '', true),
-    data_de_pagamento_da_assessoria: sanitizeForD4Sign(d.data_pagto_assessoria || '', true),
-    'Data de pagamento da Assessoria': sanitizeForD4Sign(d.data_pagto_assessoria || '', true),
+    'Número de parcelas da Assessoria': String(d.parcelas||'1'),
+    'Valor da parcela da Assessoria': toBRL(valorParcela),
+    'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
+    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
 
     // Pesquisa
-    valor_da_pesquisa: valorPesquisa,
-    forma_de_pagamento_da_pesquisa: formaPesquisa,
-    data_de_pagamento_da_pesquisa: dataPesquisa,
+    'Valor da Pesquisa': d.valor_pesquisa || 'R$ 00,00',
+    'Forma de pagamento da Pesquisa': d.forma_pesquisa || '',
+    'Data de pagamento da pesquisa': d.data_pesquisa || '00/00/00',
 
     // Taxa
-    valor_da_taxa: valorDaTaxa,
-    forma_de_pagamento_da_taxa: formaDaTaxa,
-    data_de_pagamento_da_taxa: dataDaTaxa,
-    'Valor da Taxa': valorDaTaxa,
-    'Forma de pagamento da Taxa': formaDaTaxa,
-    'Data de pagamento da Taxa': dataDaTaxa,
+    'Valor da Taxa': d.valor_taxa_brl || '',
+    'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
+    'Data de pagamento da Taxa': d.data_pagto_taxa || '',
 
     // Datas
-    dia: String(dia),
-    mes: mesNum,
-    ano,
-    mes_extenso: mesExtenso,
-    'Mês': mesExtenso,
-    'Mes': mesExtenso,
+    Dia: dia,
+    Mês: mesExtenso,
+    Mes: mesExtenso,
+    Ano: ano,
+    Cidade: d.cidade_cnpj || '',
+    UF: d.uf_cnpj || '',
 
-    TEMPLATE_UUID_CONTRATO: TEMPLATE_UUID_CONTRATO || ''
+    // Cláusula adicional
+    'clausula-adicional': d.clausula_adicional || ''
   };
 
-  // Dados para contato combinados
-  baseVars['dados para contato 1'] = sanitizeForD4Sign(joinContato(d.nome, d.telefone, d.email), true);
-  baseVars['dados para contato 2'] = sanitizeForD4Sign(joinContato(d.contato_2_nome, d.contato_2_tel, d.contato_2_email), true);
-
-  // Blocos por tipo com contagem e descrição geral
-  if (marcaInfo.qtd > 0){
-    baseVars['Quantidade depósitos/processos de MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
-    baseVars['Descrição do serviço - MARCA'] = sanitizeForD4Sign(marcaInfo.desc, true);
-  } else {
-    baseVars['Quantidade depósitos/processos de MARCA'] = '';
-    baseVars['Descrição do serviço - MARCA'] = '';
-  }
-  if (patenteInfo.qtd > 0){
-    baseVars['Quantidade depósitos/processos de PATENTE'] = sanitizeForD4Sign(patenteInfo.desc, true);
-    baseVars['Descrição do serviço - PATENTE'] = sanitizeForD4Sign(patenteInfo.desc, true);
-  } else {
-    baseVars['Quantidade depósitos/processos de PATENTE'] = '';
-    baseVars['Descrição do serviço - PATENTE'] = '';
+  // Preenche mais linhas de classes se existirem
+  for (let i=5;i<30;i++){
+    base[`marcas-espec_${i+1}`] = d.linhas_marcas_espec_1[i] || '';
+    base[`marcas2-espec_${i-4}`] = d.linhas_marcas_espec_2[i-5] || '';
   }
 
-  // Detalhes separados por item para garantir quebra no Word
-  baseVars['Detalhes do serviço - MARCA']     = sanitizeForD4Sign(detMarca1, true, { allowBreaks: true });
-  baseVars['Detalhes do serviço - MARCA 2']   = sanitizeForD4Sign(detMarca2, true, { allowBreaks: true });
-  baseVars['Detalhes do serviço - PATENTE']   = sanitizeForD4Sign(detPatente1, true, { allowBreaks: true });
-  baseVars['Detalhes do serviço - PATENTE 2'] = sanitizeForD4Sign(detPatente2, true, { allowBreaks: true });
-
-  // Cabeçalhos solicitados
-  const tipo1 = String(d.servico || '').toUpperCase();
-  const nome1 = d.titulo || '';
-  const header1 =
-    (tipo1 && nome1) ? `${tipo1}: ${nome1}` :
-    (nome1 ? `${nome1}` : '');
-  baseVars['Cabeçalho - SERVIÇOS'] = sanitizeForD4Sign(header1, true, { allowBreaks: true });
-
-  const tipo2 = String(d.marca_2_servico || '').toUpperCase();
-  const nome2 = d.marca_2_nome || '';
-  const header2 =
-    (tipo2 && nome2) ? `${tipo2}: ${nome2}` :
-    (nome2 ? `${nome2}` : '');
-  baseVars['Cabeçalho - SERVIÇOS 2'] = sanitizeForD4Sign(header2, true, { allowBreaks: true });
-
-  // Linhas de classes e especificações — item 1
-  const maxLinhas = 30;
-  const linhas = Array.isArray(d.linhas_marcas_espec) ? d.linhas_marcas_espec : String(d.marcas_espec || '').split(/\r?\n/);
-  for (let i = 0; i < maxLinhas; i++) {
-    const valor = sanitizeForD4Sign((linhas[i] || ''), true);
-    baseVars[`marcas-espec_${i+1}`] = valor;
-  }
-
-  // Linhas de classes e especificações — item 2
-  const linhas2 = Array.isArray(d.linhas_marcas2_espec) ? d.linhas_marcas2_espec : String(d.marcas2_espec || '').split(/\r?\n/);
-  for (let i = 0; i < maxLinhas; i++) {
-    const valor2 = sanitizeForD4Sign((linhas2[i] || ''), true);
-    baseVars[`marcas2-espec_${i+1}`] = valor2;
-  }
-
-  return baseVars;
+  return base;
 }
 
-// Assinantes
+function montarVarsParaTemplateOutros(d, nowInfo){
+  const valorTotalNum = onlyNumberBR(d.valor_total);
+  const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
+  const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
+
+  const dia = String(nowInfo.dia).padStart(2,'0');
+  const mesNum = String(nowInfo.mes).padStart(2,'0');
+  const ano = String(nowInfo.ano);
+  const mesExtenso = monthNamePt(nowInfo.mes);
+
+  const base = {
+    // Identificação
+    'Contratante 1': d.nome || '',
+    'Contratante 2': d.contratante_2_texto || '',
+    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
+    'CPF': d.cpf_campo || '',
+    'CNPJ': d.cnpj_campo || '',
+    rg: d.rg || '',
+    'Estado Civíl': d.estado_civil || '',
+    'Estado Civil': d.estado_civil || '',
+
+    // Endereço
+    rua: d.rua_cnpj || '',
+    bairro: d.bairro_cnpj || '',
+    numero: d.numero_cnpj || '',
+    nome_da_cidade: d.cidade_cnpj || '',
+    cidade: d.cidade_cnpj || '',
+    uf: d.uf_cnpj || '',
+    cep: d.cep_cnpj || '',
+
+    // Contato
+    'E-mail': d.email || '',
+    telefone: d.telefone || '',
+    'dados para contato 1': d.dados_contato_1 || '',
+    'dados para contato 2': d.dados_contato_2 || '',
+
+    // Resultado da pesquisa prévia
+    'Risco': d.risco_agregado || '',
+
+    // PATENTE
+    'Quantidade depósitos/processos de PATENTE': d.qtd_desc.PATENTE || '',
+    'Descrição do serviço - PATENTE': d.qtd_desc.PATENTE ? '' : '',
+    'Detalhes do serviço - PATENTE': d.det.PATENTE[0] || '',
+    'Detalhes do serviço - PATENTE 2': d.det.PATENTE[1] || '',
+    'Detalhes do serviço - PATENTE 3': d.det.PATENTE[2] || '',
+    'Detalhes do serviço - PATENTE 4': d.det.PATENTE[3] || '',
+    'Detalhes do serviço - PATENTE 5': d.det.PATENTE[4] || '',
+
+    // DESENHO INDUSTRIAL
+    'Quantidade depósitos – DESENHO INDUSTRIAL': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
+    'Quantidade depósitos – DESENHO INDUSTRIAL': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
+    'Descrição do serviço - DESENHO INDUSTRIAL': d.qtd_desc.DI ? '' : '',
+    'Detalhes do serviço - DESENHO INDUSTRIAL': d.det['DESENHO INDUSTRIAL'][0] || '',
+    'Detalhes do serviço - DESENHO INDUSTRIAL 2': d.det['DESENHO INDUSTRIAL'][1] || '',
+    'Detalhes do serviço - DESENHO INDUSTRIAL 3': d.det['DESENHO INDUSTRIAL'][2] || '',
+    'Detalhes do serviço - DESENHO INDUSTRIAL 4': d.det['DESENHO INDUSTRIAL'][3] || '',
+    'Detalhes do serviço - DESENHO INDUSTRIAL 5': d.det['DESENHO INDUSTRIAL'][4] || '',
+
+    // COPYRIGHT
+    'Quantidade registros de Copyright/Direito Autoral': d.qtd_desc.COPY || '',
+    'Descrição do serviço - Copyright/Direito Autoral': d.qtd_desc.COPY ? '' : '',
+    'Detalhes do serviço - Copyright/Direito Autoral': d.det['COPYRIGHT/DIREITO AUTORAL'][0] || '',
+    'Detalhes do serviço - Copyright/Direito Autoral 2': d.det['COPYRIGHT/DIREITO AUTORAL'][1] || '',
+    'Detalhes do serviço - Copyright/Direito Autoral 3': d.det['COPYRIGHT/DIREITO AUTORAL'][2] || '',
+    'Detalhes do serviço - Copyright/Direito Autoral 4': d.det['COPYRIGHT/DIREITO AUTORAL'][3] || '',
+    'Detalhes do serviço - Copyright/Direito Autoral 5': d.det['COPYRIGHT/DIREITO AUTORAL'][4] || '',
+
+    // OUTROS
+    'Quantidade registros de outros serviços': d.qtd_desc.OUTROS || '',
+    'Descrição do serviço - outros serviços': d.qtd_desc.OUTROS ? '' : '',
+    'Detalhes do serviço - outros serviços': d.det['OUTROS'][0] || '',
+    'Detalhes do serviço - outros serviços 2': d.det['OUTROS'][1] || '',
+    'Detalhes do serviço - outros serviços 3': d.det['OUTROS'][2] || '',
+    'Detalhes do serviço - outros serviços 4': d.det['OUTROS'][3] || '',
+    'Detalhes do serviço - outros serviços 5': d.det['OUTROS'][4] || '',
+
+    // Assessoria
+    'Número de parcelas da Assessoria': String(d.parcelas||'1'),
+    'Valor da parcela da Assessoria': toBRL(valorParcela),
+    'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
+    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
+
+    // Pesquisa
+    'Valor da Pesquisa': d.valor_pesquisa || 'R$ 00,00',
+    'Forma de pagamento da Pesquisa': d.forma_pesquisa || '',
+    'Data de pagamento da pesquisa': d.data_pesquisa || '00/00/00',
+
+    // Taxa
+    'Valor da Taxa': d.valor_taxa_brl || '',
+    'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
+    'Data de pagamento da Taxa': d.data_pagto_taxa || '',
+
+    // Datas
+    Dia: dia,
+    Mês: mesExtenso,
+    Mes: mesExtenso,
+    Ano: ano,
+    Cidade: d.cidade_cnpj || '',
+    UF: d.uf_cnpj || '',
+
+    // Cláusula adicional
+    'clausula-adicional': d.clausula_adicional || ''
+  };
+
+  return base;
+}
+
+// Assinantes: principal + empresa + cotitular quando houver
 function montarSigners(d){
   const list = [];
+  const emailPrincipal = d.email_envio_contrato || d.email || '';
+  if (emailPrincipal) list.push({ email: emailPrincipal, name: d.nome || d.titulo || emailPrincipal, act:'1', foreign:'0', send_email:'1' });
 
-  // Signatário principal
-  const principalEmail = d.email_envio_contrato || d.email || '';
-  const principalName  = d.nome || d.titulo || principalEmail;
-  if (principalEmail) {
-    list.push({ email: principalEmail, name: principalName, act:'1', foreign:'0', send_email:'1' });
-  }
+  // cotitular
+  if (d.email_cotitular_envio) list.push({ email: d.email_cotitular_envio, name: 'Cotitular', act:'1', foreign:'0', send_email:'1' });
 
-  // Signatário cotitular (se houver)
-  const coEmail = d.contato_2_email || '';
-  const coName  = d.contato_2_nome || 'Cotitular';
-  if (coEmail) {
-    list.push({ email: coEmail, name: coName, act:'1', foreign:'0', send_email:'1' });
-  }
-
-  // Empresa
-  if (EMAIL_ASSINATURA_EMPRESA) {
-    list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
-  }
-
-  // Dedup por e-mail (case-insensitive)
-  const seen = {};
-  return list.filter(s => {
-    const k = String(s.email||'').toLowerCase();
-    if (!k || seen[k]) return false;
-    seen[k] = true;
-    return true;
-  });
+  if (EMAIL_ASSINATURA_EMPRESA) list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
+  const seen={};
+  return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
 }
 
 /* =========================
@@ -1040,10 +1065,10 @@ function montarSigners(d){
 const locks = new Set();
 function acquireLock(key){ if (locks.has(key)) return false; locks.add(key); return true; }
 function releaseLock(key){ locks.delete(key); }
-async function preflightDNS(){}
+async function preflightDNS(){ /* opcional: warmup */ }
 
 /* =========================
- * D4Sign
+ * D4Sign (validados)
  * =======================*/
 async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, varsObj) {
   const base = 'https://secure.d4sign.com.br';
@@ -1051,81 +1076,31 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
 
-  const titleSanitized = sanitizeForD4Sign(title || 'Contrato', true);
+  const titleSanitized = String(title||'Contrato').replace(/[\x00-\x1F\x7F-\x9F]/g,'');
 
   const varsObjValidated = {};
-  const keepEmptyKeys = [
-    'TEMPLATE_UUID_CONTRATO',
-    'data_de_pagamento_da_pesquisa',
-    'valor_da_pesquisa',
-    'forma_de_pagamento_da_pesquisa',
-    'Contratante 2',
-    'dados para contato 2',
-    'dados para contato 1',
-    'servico_2','Nome da Marca_2','tipo de marca_2','Classe_2',
-    'servico_3','Nome da Marca_3','tipo de marca_3','Classe_3',
-    'Quantidade depósitos/processos de MARCA',
-    'Descrição do serviço - MARCA',
-    'Quantidade depósitos/processos de PATENTE',
-    'Descrição do serviço - PATENTE',
-    'Risco',
-    'risco_da_marca',
-    'CPF','CNPJ','CPF/CNPJ','E-mail','telefone',
-    'Cabeçalho - SERVIÇOS',
-    'Cabeçalho - SERVIÇOS 2',
-    'Detalhes do serviço - MARCA',
-    'Detalhes do serviço - MARCA 2',
-    'Detalhes do serviço - PATENTE',
-    'Detalhes do serviço - PATENTE 2'
-  ];
-
   for (const [key, value] of Object.entries(varsObj || {})) {
-    const keepEmpty = keepEmptyKeys.includes(key) || key.startsWith('marcas-espec_') || key.startsWith('marcas2-espec_');
-    if (value === null || value === undefined) {
-      varsObjValidated[key] = keepEmpty ? '' : '---';
-    } else {
-      const strValue = String(value);
-      const allowBreaks =
-        key === 'Detalhes do serviço - MARCA' ||
-        key === 'Detalhes do serviço - MARCA 2' ||
-        key === 'Detalhes do serviço - PATENTE' ||
-        key === 'Detalhes do serviço - PATENTE 2' ||
-        key === 'Cabeçalho - SERVIÇOS' ||
-        key === 'Cabeçalho - SERVIÇOS 2';
-      let cleaned = sanitizeForD4Sign(strValue, keepEmpty, { allowBreaks });
-      if (keepEmpty && cleaned === '---') cleaned = '';
-      varsObjValidated[key] = cleaned;
-    }
+    let v = value==null ? '' : String(value);
+    v = v.replace(/[\x00-\x1F\x7F-\x9F]/g,'').trim();
+    varsObjValidated[key] = v;
   }
 
   const body = { name_document: titleSanitized, templates: { [templateId]: varsObjValidated } };
-  console.log(`[D4SIGN] Criando documento: ${titleSanitized}, Template: ${templateId}, Campos: ${Object.keys(varsObjValidated).length}`);
 
-  try {
-    const res = await fetchWithRetry(url.toString(), {
-      method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
 
-    const text = await res.text();
-    let json; 
-    try { json = JSON.parse(text); } catch (e) { console.error('[ERRO D4SIGN WORD - JSON parse]', e.message, text.substring(0, 500)); json = null; }
+  const text = await res.text();
+  let json; 
+  try { json = JSON.parse(text); } catch { json = null; }
 
-    if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
-      console.error('[ERRO D4SIGN WORD]', res.status, text.substring(0, 1000));
-      const varsPreview = Object.keys(varsObjValidated).reduce((acc, k) => {
-        const v = String(varsObjValidated[k] || '');
-        acc[k] = v.length > 50 ? v.substring(0, 50) + '...' : v;
-        return acc;
-      }, {});
-      console.error('[D4SIGN VARS PREVIEW]', JSON.stringify(varsPreview, null, 2));
-      throw new Error(`Falha D4Sign(WORD): ${res.status} - ${text.substring(0, 200)}`);
-    }
-    return json.uuid || json.uuid_document;
-  } catch (e) {
-    console.error('[ERRO D4SIGN WORD - Exception]', e.message);
-    throw e;
+  if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
+    console.error('[ERRO D4SIGN WORD]', res.status, text.substring(0, 1000));
+    throw new Error(`Falha D4Sign(WORD): ${res.status} - ${text.substring(0, 200)}`);
   }
+  return json.uuid || json.uuid_document;
 }
 async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
   const base = 'https://secure.d4sign.com.br';
@@ -1158,7 +1133,7 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
     console.error('[ERRO D4SIGN download]', res.status, text);
     throw new Error(`Falha ao gerar URL de download: ${res.status}`);
   }
-  return json;
+  return json; // { url, name }
 }
 async function getDocumentStatus(tokenAPI, cryptKey, uuidDocument) {
   const base = 'https://secure.d4sign.com.br';
@@ -1166,21 +1141,31 @@ async function getDocumentStatus(tokenAPI, cryptKey, uuidDocument) {
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
   try {
-    const res = await fetchWithRetry(url.toString(), { method: 'GET', headers: { 'Accept': 'application/json' } }, { attempts: 3, baseDelayMs: 500, timeoutMs: 10000 });
+    const res = await fetchWithRetry(url.toString(), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    }, { attempts: 3, baseDelayMs: 500, timeoutMs: 10000 });
     const text = await res.text();
     let json; try { json = JSON.parse(text); } catch { return null; }
     return json;
-  } catch (e) {
-    console.warn('[WARN D4SIGN getStatus]', e.message);
+  } catch {
     return null;
   }
 }
-async function sendToSigner(tokenAPI, cryptKey, uuidDocument, { message = '', skip_email = '0', workflow = '0' } = {}) {
+async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
+  message = '',
+  skip_email = '0',
+  workflow = '0'
+} = {}) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
   url.searchParams.set('cryptKey', cryptKey);
   const body = { message, skip_email, workflow, tokenAPI };
-  const res = await fetchWithRetry(url.toString(), { method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
   if (!res.ok) {
     console.error('[ERRO D4SIGN sendtosigner]', res.status, text);
@@ -1196,14 +1181,13 @@ async function moveCardToPhaseSafe(cardId, phaseId){
   if (!phaseId) return;
   await gql(`mutation($input: MoveCardToPhaseInput!){
     moveCardToPhase(input:$input){ card{ id } }
-  }`, { input: { card_id: Number(cardId), destination_phase_id: Number(phaseId) } }).catch(e=>{
-    console.warn('[WARN] moveCardToPhaseSafe]', e.message||e);
-  });
+  }`, { input: { card_id: Number(cardId), destination_phase_id: Number(phaseId) } }).catch(()=>{});
 }
 
 /* =========================
- * Rotas — VENDEDOR
+ * Rotas — VENDEDOR (UX)
  * =======================*/
+// Página de revisão
 app.get('/lead/:token', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
@@ -1234,9 +1218,7 @@ app.get('/lead/:token', async (req, res) => {
     <h2>Contratante(s)</h2>
     <div class="grid">
       <div><div class="label">Nome</div><div>${d.nome||'-'}</div></div>
-      <div><div class="label">Nacionalidade</div><div>${d.nacionalidade||'-'}</div></div>
-      <div><div class="label">Estado Civíl</div><div>${d.estado_civil||'-'}</div></div>
-      <div><div class="label">CPF/CNPJ (seleção)</div><div>${d.selecao_cnpj_ou_cpf||'-'}</div></div>
+      <div><div class="label">Estado Civil</div><div>${d.estado_civil||'-'}</div></div>
       <div><div class="label">CPF (campo)</div><div>${d.cpf_campo||'-'}</div></div>
       <div><div class="label">CNPJ (campo)</div><div>${d.cnpj_campo||'-'}</div></div>
       <div><div class="label">RG</div><div>${d.rg||'-'}</div></div>
@@ -1247,46 +1229,14 @@ app.get('/lead/:token', async (req, res) => {
       <div><div class="label">E-mail</div><div>${d.email||'-'}</div></div>
       <div><div class="label">Telefone</div><div>${d.telefone||'-'}</div></div>
       <div><div class="label">Email para envio do contrato</div><div>${d.email_envio_contrato||'-'}</div></div>
-    </div>
-
-    <h2>Marca</h2>
-    <div class="grid3">
-      <div><div class="label">Nome da marca</div><div>${d.titulo||'-'}</div></div>
-      <div><div class="label">Classes (apenas números)</div><div>${d.classe||'-'}</div></div>
-      <div><div class="label">CLASSES E ESPECIFICAÇÕES</div><div>${(d.marcas_espec||'').replace(/\n/g,'<br>')||'-'}</div></div>
-      <div><div class="label">Risco da marca</div><div>${d.risco_marca||'-'}</div></div>
-      <div><div class="label">Qtd. de marcas</div><div>${d.qtd_marca||'0'}</div></div>
+      <div><div class="label">Email Cotitular</div><div>${d.email_cotitular_envio||'-'}</div></div>
     </div>
 
     <h2>Serviços</h2>
-    <div class="grid">
-      <div><div class="label">Serviços (lista)</div><div>${(d.servicos||[]).join(', ') || '-'}</div></div>
-      <div><div class="label">Serviço (normalizado para contrato)</div><div><strong>${d.servico || '-'}</strong></div></div>
-    </div>
-
-    <h2>Remuneração — Assessoria</h2>
     <div class="grid3">
-      <div><div class="label">Valor total</div><div>${d.valor_total||'-'}</div></div>
-      <div><div class="label">Parcelas</div><div>${String(d.parcelas||'1')}</div></div>
-      <div><div class="label">Forma de pagamento</div><div>${d.forma_pagto_assessoria||'-'}</div></div>
-      <div><div class="label">Data de pagamento (Assessoria)</div><div>${d.data_pagto_assessoria||'-'}</div></div>
-    </div>
-
-    <h2>Taxa</h2>
-    <div class="grid3">
-      <div><div class="label">Valor da Taxa</div><div>${d.valor_taxa_brl || '-'}</div></div>
-      <div><div class="label">Forma de pagamento (Taxa)</div><div>${d.forma_pagto_taxa || '-'}</div></div>
-      <div><div class="label">Data de pagamento (Taxa)</div><div>${d.data_pagto_taxa || '-'}</div></div>
-    </div>
-
-    <h2>Endereço (CNPJ)</h2>
-    <div class="grid3">
-      <div><div class="label">CEP</div><div>${d.cep_cnpj || '-'}</div></div>
-      <div><div class="label">Rua/Av</div><div>${d.rua_cnpj || '-'}</div></div>
-      <div><div class="label">Número</div><div>${d.numero_cnpj || '-'}</div></div>
-      <div><div class="label">Bairro</div><div>${d.bairro_cnpj || '-'}</div></div>
-      <div><div class="label">Cidade</div><div>${d.cidade_cnpj || '-'}</div></div>
-      <div><div class="label">UF</div><div>${d.uf_cnpj || '-'}</div></div>
+      <div><div class="label">Template escolhido</div><div>${d.templateToUse===process.env.TEMPLATE_UUID_CONTRATO? 'Contrato de Marca' : 'Contrato de Outros Serviços'}</div></div>
+      <div><div class="label">Qtd Descrição MARCA</div><div>${d.qtd_desc.MARCA||'-'}</div></div>
+      <div><div class="label">Risco agregado</div><div>${d.risco_agregado||'-'}</div></div>
     </div>
 
     <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
@@ -1304,7 +1254,7 @@ app.get('/lead/:token', async (req, res) => {
   }
 });
 
-// Gera o documento
+// Gera o documento e mostra ações
 app.post('/lead/:token/generate', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
@@ -1318,27 +1268,31 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     const now = new Date();
     const nowInfo = { dia: now.getDate(), mes: now.getMonth()+1, ano: now.getFullYear() };
-    const add = montarADDWord(d, nowInfo);
+
+    const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO;
+    const add = isMarcaTemplate ? montarVarsParaTemplateMarca(d, nowInfo)
+                                : montarVarsParaTemplateOutros(d, nowInfo);
     const signers = montarSigners(d);
 
     const uuidSafe = COFRES_UUIDS[d.vendedor] || DEFAULT_COFRE_UUID;
     if (!uuidSafe) throw new Error(`Cofre não configurado para vendedor: ${d.vendedor}`);
 
-    const uuidDoc = await makeDocFromWordTemplate(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe, TEMPLATE_UUID_CONTRATO, d.titulo || card.title, add);
+    const uuidDoc = await makeDocFromWordTemplate(
+      D4SIGN_TOKEN,
+      D4SIGN_CRYPT_KEY,
+      uuidSafe,
+      d.templateToUse,
+      d.titulo || card.title,
+      add
+    );
     console.log(`[D4SIGN] Documento criado: ${uuidDoc}`);
 
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    try {
-      const status = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-      if (status) console.log(`[D4SIGN] Status do documento: ${JSON.stringify(status).substring(0, 200)}`);
-    } catch (e) {
-      console.warn('[WARN] Não foi possível verificar status do documento:', e.message);
-    }
+    await new Promise(r=>setTimeout(r, 3000));
+    try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch {}
 
     await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
-    console.log(`[D4SIGN] Signatários cadastrados para: ${uuidDoc}`);
-    await new Promise(resolve => setTimeout(resolve, 2000));
 
+    await new Promise(r=>setTimeout(r, 2000));
     await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
 
     releaseLock(lockKey);
@@ -1379,6 +1333,7 @@ app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
     const { cardId } = parseLeadToken(req.params.token);
     if (!cardId) throw new Error('token inválido');
     const uuidDoc = req.params.uuid;
+
     const { url: downloadUrl } = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, { type: 'PDF', language: 'pt' });
     return res.redirect(302, downloadUrl);
   } catch (e) {
@@ -1417,7 +1372,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 });
 
 /* =========================
- * Link no Pipefy
+ * Geração do link no Pipefy
  * =======================*/
 app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
   try {
@@ -1489,7 +1444,7 @@ app.get('/debug/card', async (req,res)=>{
     const card = await getCard(cardId);
     res.json({
       id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
-      fields: (card.fields||[]).map(f => ({ name:f.name, id:f.field?.id, type:f.field?.type, value:f.value }))
+      fields: (card.fields||[]).map(f => ({ name:f.name, id:f.field?.id, type:f.field?.type, value:f.value, array_value:f.array_value }))
     });
   }catch(e){ res.status(500).json({ error:String(e.message||e) }); }
 });
