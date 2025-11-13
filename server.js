@@ -253,7 +253,7 @@ function extractAssigneeNames(raw){
   if (Array.isArray(val)){ for (const it of val) push(typeof it==='string'? it : (it?.name||it?.username||it?.email||it?.value)); }
   else if (typeof val==='object'&&val){ push(val.name||val.username||val.email||val.value); }
   else if (typeof val==='string'){ const m = val.match(/^\s*\[.*\]\s*$/)? tryParse(val) : null; if (m && Array.isArray(m)) m.forEach(x=>push(typeof x==='string'? x : (x?.name||x?.email))); else push(val); }
-  return [...new Set(out.filter(Boolean))]];
+  return [...new Set(out.filter(Boolean))];
 }
 function resolveCofreUuidByCard(card){
   if (!card) return DEFAULT_COFRE_UUID || null;
