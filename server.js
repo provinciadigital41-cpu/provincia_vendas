@@ -177,13 +177,19 @@ function parseLeadToken(token){
 async function gql(query, variables){
   const r = await fetch(PIPE_GRAPHQL_ENDPOINT, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${PIPE_API_KEY}', 'Content-Type': 'application/json' },
+    headers: {
+      'Authorization': `Bearer ${PIPE_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify({ query, variables })
   });
-  const j = await r.json();
-  if (!r.ok || j.errors) throw new Error(`Pipefy GQL: ${r.status} ${JSON.stringify(j.errors||{})}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j?.errors) {
+    throw new Error(`Pipefy GQL: ${r.status} ${JSON.stringify(j.errors || {})}`);
+  }
   return j.data;
 }
+
 async function getCard(cardId){
   const data = await gql(`query($id: ID!){
     card(id:$id){
