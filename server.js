@@ -1512,17 +1512,15 @@ async function findCardIdByD4Uuid(uuidDocument) {
   if (!edges.length) return null;
 
   return edges[0].node.id;
-}
+};
 
 // ===============================
 // NOVO — ANEXA CONTRATO ASSINADO NO CAMPO DE ANEXO
 // ===============================
-async function anexarContratoAssinadoNoCard(cardId, downloadUrl, fileName){
-  const value = JSON.stringify([
-    { url: downloadUrl, filename: fileName || 'Contrato-assinado.pdf' }
-  ]);
+async function anexarContratoAssinadoNoCard(cardId, downloadUrl, fileName) {
+  const newValue = [downloadUrl];
 
-  await updateCardField(cardId, 'contrato', value);
+  await updateCardField(cardId, 'contrato', newValue);
 };
 
 /* =========================
