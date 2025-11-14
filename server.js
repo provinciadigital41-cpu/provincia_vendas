@@ -1487,10 +1487,16 @@ async function findCardIdByD4Uuid(uuidDocument){
     query($pipeId: ID!, $uuid: String!){
       cards(
         pipe_id: $pipeId,
-        search: { field_id: "d4_uuid_contrato", value: $uuid },
+        search: {
+          terms: [
+            { field: "d4_uuid_contrato", value: $uuid }
+          ]
+        },
         first: 1
       ){
-        edges{ node{ id } }
+        edges{
+          node{ id }
+        }
       }
     }
   `;
