@@ -1482,26 +1482,32 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 // ===============================
 // NOVO — LOCALIZA CARD PELO UUID DO DOCUMENTO D4SIGN
 // ===============================
-async function findCardIdByD4Uuid(uuidDocument){
+async function findCardIdByD4Uuid(uuidDocument) {
   const query = `
-    query($pipeId: ID!, $fieldId: String!, $value: String!){
-      findCards(
-        pipe_id: $pipeId,
-        search:{ fieldId: $fieldId, fieldValue: $value }
-      ){
-        edges{ node{ id } }
+    query($value: String!) {
+      cards(
+        search: {
+          fields: [
+            { field: "d4_uuid_contrato", value: $value }
+          ]
+        }
+      ) {
+        edges {
+          node {
+            id
+          }
+        }
       }
     }
   `;
 
   const data = await gql(query, {
-    pipeId: Number(NOVO_PIPE_ID),
-    fieldId: "d4_uuid_contrato",
     value: uuidDocument
   });
 
-  const edges = data?.findCards?.edges || [];
+  const edges = data?.cards?.edges || [];
   if (!edges.length) return null;
+
   return edges[0].node.id;
 }
 
