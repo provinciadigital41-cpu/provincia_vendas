@@ -59,6 +59,7 @@ let {
 
   DEFAULT_COFRE_UUID
 } = process.env;
+NOVO_PIPE_ID = NOVO_PIPE_ID || '306505295';
 
 PORT = PORT || 3000;
 PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql';
@@ -1502,7 +1503,7 @@ async function findCardIdByD4Uuid(uuidDocument) {
   `;
 
   const data = await gql(query, {
-    pipeId: Number(NOVO_PIPE_ID),
+    pipeId: NOVO_PIPE_ID,
     fieldId: "d4_uuid_contrato",
     fieldValue: uuidDocument
   });
