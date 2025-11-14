@@ -1484,31 +1484,24 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 // ===============================
 async function findCardIdByD4Uuid(uuidDocument){
   const query = `
-    query($pipeId: ID!, $uuid: String!){
-      cards(
+    query($pipeId: ID!, $fieldId: String!, $value: String!){
+      findCards(
         pipe_id: $pipeId,
-        search: {
-          terms: [
-            { field: "d4_uuid_contrato", value: $uuid }
-          ]
-        },
-        first: 1
+        search:{ fieldId: $fieldId, fieldValue: $value }
       ){
-        edges{
-          node{ id }
-        }
+        edges{ node{ id } }
       }
     }
   `;
 
   const data = await gql(query, {
     pipeId: Number(NOVO_PIPE_ID),
-    uuid: uuidDocument
+    fieldId: "d4_uuid_contrato",
+    value: uuidDocument
   });
 
-  const edges = data?.cards?.edges || [];
+  const edges = data?.findCards?.edges || [];
   if (!edges.length) return null;
-
   return edges[0].node.id;
 }
 
