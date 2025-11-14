@@ -1102,6 +1102,36 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   }
   return json.uuid || json.uuid_document;
 }
+
+// ===============================
+// NOVO — REGISTRAR WEBHOOK POR DOCUMENTO D4SIGN
+// ===============================
+async function registerWebhookForDocument(tokenAPI, cryptKey, uuidDocument, urlWebhook){
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidDocument}/webhooks`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+
+  const body = { url: urlWebhook };
+
+  const res = await fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = null; }
+
+  if (!res.ok) {
+    console.error('[ERRO webhook D4Sign]', res.status, text.substring(0, 1000));
+    throw new Error(`Falha ao cadastrar webhook: ${res.status}`);
+  }
+
+  return json;
+}
+
 async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/createlist`, base);
@@ -1187,6 +1217,68 @@ async function moveCardToPhaseSafe(cardId, phaseId){
 /* =========================
  * Rotas — VENDEDOR (UX)
  * =======================*/
+// ===============================
+// NOVO — POSTBACK DO D4SIGN (DOCUMENTO FINALIZADO)
+// ===============================
+app.post('/d4sign/postback', async (req, res) => {
+  try {
+    const { uuid, type_post } = req.body || {};
+
+    if (!uuid) {
+      console.warn('[POSTBACK D4SIGN] Sem UUID no body');
+      return res.status(200).json({ ok: true });
+    }
+
+    // type_post = "1" → documento finalizado/assinado
+    if (String(type_post) !== '1') {
+      console.log('[POSTBACK D4SIGN] Evento ignorado:', type_post);
+      return res.status(200).json({ ok: true });
+    }
+
+    console.log('[POSTBACK D4SIGN] Documento finalizado:', uuid);
+
+    const cardId = await findCardIdByD4Uuid(uuid);
+    if (!cardId) {
+      console.warn('[POSTBACK D4SIGN] Nenhum card encontrado para uuid:', uuid);
+      return res.status(200).json({ ok: true });
+    }
+
+    // 1. mover card para fase final (primeiro)
+    try {
+      await moveCardToPhaseSafe(cardId, 339299694);
+      console.log('[POSTBACK D4SIGN] Card movido para fase 339299694');
+    } catch (e) {
+      console.error('[POSTBACK D4SIGN] Erro ao mover card:', e.message);
+    }
+
+    // 2. pegar link do PDF assinado
+    let info;
+    try {
+      info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuid, {
+        type: 'PDF',
+        language: 'pt'
+      });
+    } catch (e) {
+      console.error('[POSTBACK D4SIGN] Erro ao buscar download:', e.message);
+      return res.status(200).json({ ok: true });
+    }
+
+    // 3. anexar PDF no campo de arquivo
+    try {
+      await anexarContratoAssinadoNoCard(cardId, info.url, info.name);
+      console.log('[POSTBACK D4SIGN] PDF anexado ao card');
+    } catch (e) {
+      console.error('[POSTBACK D4SIGN] Erro ao anexar contrato:', e.message);
+    }
+
+    return res.status(200).json({ ok: true });
+
+  } catch (e) {
+    console.error('[POSTBACK D4SIGN] Erro geral:', e.message);
+    return res.status(200).json({ ok: true });
+  }
+});
+
 app.get('/lead/:token', async (req, res) => {
   try {
     const { cardId } = parseLeadToken(req.params.token);
@@ -1281,6 +1373,30 @@ app.post('/lead/:token/generate', async (req, res) => {
       add
     );
     console.log(`[D4SIGN] Documento criado: ${uuidDoc}`);
+    // ===============================
+// NOVO — Cadastrar webhook deste documento
+// ===============================
+try {
+  await registerWebhookForDocument(
+    D4SIGN_TOKEN,
+    D4SIGN_CRYPT_KEY,
+    uuidDoc,
+    `${PUBLIC_BASE_URL}/d4sign/postback`
+  );
+  console.log('[D4SIGN] Webhook registrado no documento.');
+} catch (e) {
+  console.error('[ERRO] Falha ao registrar webhook:', e.message);
+}
+
+// ===============================
+// NOVO — Salvar UUID do documento no card
+// ===============================
+try {
+  await updateCardField(card.id, 'd4_uuid_contrato', uuidDoc);
+  console.log('[D4SIGN] UUID salvo no card.');
+} catch (e) {
+  console.error('[ERRO] Falha ao salvar uuid no card:', e.message);
+}
 
     await new Promise(r=>setTimeout(r, 3000));
     try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch {}
@@ -1363,6 +1479,43 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     return res.status(400).send('Falha ao enviar para assinatura.');
   }
 });
+// ===============================
+// NOVO — LOCALIZA CARD PELO UUID DO DOCUMENTO D4SIGN
+// ===============================
+async function findCardIdByD4Uuid(uuidDocument){
+  const query = `
+    query($pipeId: ID!, $uuid: String!){
+      cards(
+        pipe_id: $pipeId,
+        search: { field_id: "d4_uuid_contrato", value: $uuid },
+        first: 1
+      ){
+        edges{ node{ id } }
+      }
+    }
+  `;
+
+  const data = await gql(query, {
+    pipeId: Number(NOVO_PIPE_ID),
+    uuid: uuidDocument
+  });
+
+  const edges = data?.cards?.edges || [];
+  if (!edges.length) return null;
+
+  return edges[0].node.id;
+}
+
+// ===============================
+// NOVO — ANEXA CONTRATO ASSINADO NO CAMPO DE ANEXO
+// ===============================
+async function anexarContratoAssinadoNoCard(cardId, downloadUrl, fileName){
+  const value = JSON.stringify([
+    { url: downloadUrl, filename: fileName || 'Contrato-assinado.pdf' }
+  ]);
+
+  await updateCardField(cardId, 'contrato', value);
+};
 
 /* =========================
  * Geração do link no Pipefy
