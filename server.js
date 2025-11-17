@@ -1208,12 +1208,59 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
 /* =========================
  * Fase Pipefy
  * =======================*/
-async function moveCardToPhaseSafe(cardId, phaseId){
-  if (!phaseId) return;
-  await gql(`mutation($input: MoveCardToPhaseInput!){
-    moveCardToPhase(input:$input){ card{ id } }
-  }`, { input: { card_id: Number(cardId), destination_phase_id: Number(phaseId) } }).catch(()=>{});
-}
+async function moveCardToPhaseSafe(cardId, phaseId) {
+  if (!phaseId) {
+    console.warn('[moveCardToPhaseSafe] phaseId vazio, nada a mover. cardId =', cardId);
+    return;
+  }
+
+  try {
+    console.log('[moveCardToPhaseSafe] Tentando mover card', cardId, 'para fase', phaseId);
+
+    const data = await gql(`
+      mutation($input: MoveCardToPhaseInput!){
+        moveCardToPhase(input:$input){
+          card{
+            id
+            current_phase{
+              id
+              name
+            }
+          }
+        }
+      }
+    `, {
+      input: {
+        card_id: Number(cardId),
+        destination_phase_id: Number(phaseId)
+      }
+    });
+
+    const moved = data?.moveCardToPhase?.card;
+    if (moved) {
+      console.log(
+        '[moveCardToPhaseSafe] Move ok. Card',
+        moved.id,
+        'agora na fase',
+        moved.current_phase?.id,
+        '(' + (moved.current_phase?.name || 'sem nome') + ')'
+      );
+    } else {
+      console.warn('[moveCardToPhaseSafe] Resposta sem card retornado para cardId =', cardId, 'phaseId =', phaseId, 'data =', JSON.stringify(data));
+    }
+  } catch (e) {
+    console.error(
+      '[moveCardToPhaseSafe] Erro ao mover card',
+      cardId,
+      'para fase',
+      phaseId,
+      '=>',
+      e.message || e
+    );
+    // Se quiser que o fluxo continue mesmo com falha de move, comente a linha abaixo
+    // throw e;
+  }
+};
 
 /* =========================
  * Rotas — VENDEDOR (UX)
