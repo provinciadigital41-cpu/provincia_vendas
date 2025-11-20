@@ -149,15 +149,49 @@ const COFRES_UUIDS = {
   'FILIAL PALMAS - TO': COFRE_UUID_FILIALPALMAS_TO
 };
 
-// Função para obter o nome do cofre a partir do UUID
+// Função para obter o nome da variável do cofre a partir do UUID
 function getNomeCofreByUuid(uuidCofre) {
   if (!uuidCofre) return 'Cofre não identificado';
-  for (const [nomeEquipe, uuid] of Object.entries(COFRES_UUIDS)) {
-    if (uuid === uuidCofre) {
-      return nomeEquipe;
-    }
+  
+  // Mapeamento reverso: UUID -> Nome da variável
+  const mapeamento = {
+    [COFRE_UUID_EDNA]: 'COFRE_UUID_EDNA',
+    [COFRE_UUID_GREYCE]: 'COFRE_UUID_GREYCE',
+    [COFRE_UUID_MARIANA]: 'COFRE_UUID_MARIANA',
+    [COFRE_UUID_VALDEIR]: 'COFRE_UUID_VALDEIR',
+    [COFRE_UUID_DEBORA]: 'COFRE_UUID_DEBORA',
+    [COFRE_UUID_MAYKON]: 'COFRE_UUID_MAYKON',
+    [COFRE_UUID_JEFERSON]: 'COFRE_UUID_JEFERSON',
+    [COFRE_UUID_RONALDO]: 'COFRE_UUID_RONALDO',
+    [COFRE_UUID_BRENDA]: 'COFRE_UUID_BRENDA',
+    [COFRE_UUID_MAURO]: 'COFRE_UUID_MAURO',
+    [COFRE_UUID_REPRESENTANTESCLEISON]: 'COFRE_UUID_REPRESENTANTESCLEISON',
+    [COFRE_UUID_FILIALSAOPAULO]: 'COFRE_UUID_FILIALSAOPAULO',
+    [COFRE_UUID_REPRESENTANTELUAN]: 'COFRE_UUID_REPRESENTANTELUAN',
+    [COFRE_UUID_PROVINCIADIGITAL_LUCAANTONIAZZI]: 'COFRE_UUID_PROVINCIADIGITAL_LUCAANTONIAZZI',
+    [COFRE_UUID_REPRESENTANTEVINICIUS]: 'COFRE_UUID_REPRESENTANTEVINICIUS',
+    [COFRE_UUID_FILIALPORTOALEGRE2]: 'COFRE_UUID_FILIALPORTOALEGRE2',
+    [COFRE_UUID_FILIALBRASILIA]: 'COFRE_UUID_FILIALBRASILIA',
+    [COFRE_UUID_FILIALCAMPINAS]: 'COFRE_UUID_FILIALCAMPINAS',
+    [COFRE_UUID_FILIALVITORIA2]: 'COFRE_UUID_FILIALVITORIA2',
+    [COFRE_UUID_FILIALJOINVILLE]: 'COFRE_UUID_FILIALJOINVILLE',
+    [COFRE_UUID_FILIALVITORIA1]: 'COFRE_UUID_FILIALVITORIA1',
+    [COFRE_UUID_FILIALBELEM]: 'COFRE_UUID_FILIALBELEM',
+    [COFRE_UUID_FILIALJUNDIAI2]: 'COFRE_UUID_FILIALJUNDIAI2',
+    [COFRE_UUID_FILIAL_SAOJOSERIOPRETO2]: 'COFRE_UUID_FILIAL_SAOJOSERIOPRETO2',
+    [COFRE_UUID_FILIALPRES_PRUDENTE]: 'COFRE_UUID_FILIALPRES_PRUDENTE',
+    [COFRE_UUID_FILIALMANAUS]: 'COFRE_UUID_FILIALMANAUS',
+    [COFRE_UUID_FILIALGUARULHOS]: 'COFRE_UUID_FILIALGUARULHOS',
+    [COFRE_UUID_FILIALMARINGA]: 'COFRE_UUID_FILIALMARINGA',
+    [COFRE_UUID_FILIALRIBEIRAOPRETO]: 'COFRE_UUID_FILIALRIBEIRAOPRETO',
+    [COFRE_UUID_FILIALPALMAS_TO]: 'COFRE_UUID_FILIALPALMAS_TO'
+  };
+  
+  if (uuidCofre === DEFAULT_COFRE_UUID) {
+    return 'DEFAULT_COFRE_UUID';
   }
-  return 'Cofre não identificado';
+  
+  return mapeamento[uuidCofre] || 'Cofre não identificado';
 }
 
 /* =========================
@@ -1612,15 +1646,33 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     // NOVO — Seleciona cofre pela "Equipe contrato"
     const equipeContrato = getEquipeContratoFromCard(card);
+    let uuidSafe = null;
+    let cofreUsadoPadrao = false;
+    let nomeCofreUsado = '';
+
     if (!equipeContrato) {
-      console.error('[LEAD-GENERATE] Campo "Equipe contrato" não encontrado ou sem valor no card', card.id);
-      throw new Error('Campo "Equipe contrato" não encontrado ou sem valor no card.');
+      console.warn('[LEAD-GENERATE] Campo "Equipe contrato" não encontrado ou sem valor no card', card.id);
+      // Usa cofre padrão
+      uuidSafe = DEFAULT_COFRE_UUID;
+      cofreUsadoPadrao = true;
+      nomeCofreUsado = 'DEFAULT_COFRE_UUID';
+      console.log('[LEAD-GENERATE] Usando cofre padrão (DEFAULT_COFRE_UUID)');
+    } else {
+      uuidSafe = COFRES_UUIDS[equipeContrato];
+      if (!uuidSafe) {
+        console.warn(`[LEAD-GENERATE] Equipe contrato "${equipeContrato}" sem cofre mapeado. Usando cofre padrão.`);
+        // Usa cofre padrão
+        uuidSafe = DEFAULT_COFRE_UUID;
+        cofreUsadoPadrao = true;
+        nomeCofreUsado = 'DEFAULT_COFRE_UUID';
+      } else {
+        // Cofre válido encontrado
+        nomeCofreUsado = getNomeCofreByUuid(uuidSafe);
+      }
     }
 
-    const uuidSafe = COFRES_UUIDS[equipeContrato];
     if (!uuidSafe) {
-      console.error(`[LEAD-GENERATE] Equipe contrato "${equipeContrato}" sem cofre mapeado em COFRES_UUIDS.`);
-      throw new Error(`Equipe contrato "${equipeContrato}" sem cofre configurado.`);
+      throw new Error('Nenhum cofre disponível. Configure DEFAULT_COFRE_UUID ou mapeie a equipe.');
     }
 
     const uuidDoc = await makeDocFromWordTemplate(
@@ -1736,6 +1788,12 @@ if (TEMPLATE_UUID_PROCURACAO) {
 <div class="box">
   <h2>${uuidProcuracao ? 'Contrato e procuração gerados com sucesso' : 'Contrato gerado com sucesso'}</h2>
   <p class="muted">UUID do documento: ${uuidDoc}</p>
+  ${cofreUsadoPadrao ? `
+  <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:12px;margin:16px 0;border-radius:4px">
+    <strong>⚠️ Atenção:</strong> A equipe "${equipeContrato || 'não informada'}" não possui cofre configurado. 
+    Documentos salvos no cofre padrão: <strong>${nomeCofreUsado}</strong>
+  </div>
+  ` : ''}
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato${uuidProcuracao ? ' e Procuração' : ''}</a>
     <form method="POST" action="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/send" style="display:inline">
@@ -1793,10 +1851,14 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       
       // Buscar equipe contrato para identificar o cofre
       const equipeContrato = getEquipeContratoFromCard(card);
+      let uuidCofre = null;
       if (equipeContrato && COFRES_UUIDS[equipeContrato]) {
-        const uuidCofre = COFRES_UUIDS[equipeContrato];
-        nomeCofre = getNomeCofreByUuid(uuidCofre);
+        uuidCofre = COFRES_UUIDS[equipeContrato];
       }
+      if (!uuidCofre) {
+        uuidCofre = DEFAULT_COFRE_UUID;
+      }
+      nomeCofre = getNomeCofreByUuid(uuidCofre);
     } catch (e) {
       console.warn('[SEND] Erro ao buscar informações do card:', e.message);
     }
@@ -1826,14 +1888,11 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 
     const okHtml = `
 <!doctype html><meta charset="utf-8"><title>Documento enviado</title>
-<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px} .info-box{background:#f0f7ff;border-left:4px solid #0066cc;padding:12px;margin:16px 0;border-radius:4px}</style>
+<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px}</style>
 <div class="box">
-  <h2>${uuidProcuracao ? 'Contrato e procuração enviados com sucesso' : 'Contrato e procuração enviados com sucesso'}</h2>
+  <h2>${uuidProcuracao ? 'Contrato e procuração enviados com sucesso' : 'Contrato enviado com sucesso'}</h2>
   <p>${uuidProcuracao ? 'Contrato e procuração foram enviados.' : 'O contrato foi enviado.'}</p>
-  <p>Os signatários foram notificados.</p>
-  <div class="info-box">
-    <strong>📁 Cofre:</strong> ${nomeCofre}
-  </div>
+  <p>Os signatários foram notificados. Salvo no cofre: ${nomeCofre}</p>
   <p><a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}">Voltar</a></p>
 </div>`;
     return res.status(200).send(okHtml);
