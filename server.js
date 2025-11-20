@@ -1989,7 +1989,8 @@ async function enviarContrato(token, uuidDoc) {
     const data = await response.json();
     
     if (response.ok && data.success) {
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso</span>';
+      const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso.' + cofreMsg + '</span>';
       btn.textContent = 'Contrato enviado';
       btn.style.background = '#28a745';
       btn.disabled = true;
@@ -2023,7 +2024,8 @@ async function enviarProcuracao(token, uuidProcuracao) {
     const data = await response.json();
     
     if (response.ok && data.success) {
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso</span>';
+      const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso.' + cofreMsg + '</span>';
       btn.textContent = 'Procuração enviada';
       btn.style.background = '#28a745';
       btn.disabled = true;
