@@ -1379,7 +1379,38 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
     body: JSON.stringify(body)
   }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
-  if (!res.ok) { console.error('[ERRO D4SIGN createlist]', res.status, text); throw new Error(`Falha ao cadastrar signatários: ${res.status}`); }
+  
+  if (!res.ok) {
+    console.error('[ERRO D4SIGN createlist]', res.status, text);
+    
+    let jsonResponse = null;
+    try {
+      jsonResponse = JSON.parse(text);
+    } catch (e) {
+      // Não é JSON
+    }
+    
+    const mensagem = jsonResponse?.message || text || '';
+    const mensagemLower = String(mensagem).toLowerCase();
+    
+    let mensagemAmigavel = 'Não foi possível cadastrar os signatários no documento.';
+    
+    if (mensagemLower.includes('email') || mensagemLower.includes('inválido')) {
+      mensagemAmigavel = 'Um ou mais emails dos signatários são inválidos. Verifique se os emails estão corretos.';
+    } else if (mensagemLower.includes('documento') || mensagemLower.includes('document')) {
+      mensagemAmigavel = 'O documento não está pronto para receber signatários. Aguarde alguns instantes.';
+    } else if (res.status === 404) {
+      mensagemAmigavel = 'Documento não encontrado. O documento pode ter sido excluído.';
+    } else if (res.status === 422) {
+      mensagemAmigavel = 'Os dados dos signatários não são válidos. Verifique se todos os campos estão preenchidos corretamente.';
+    }
+    
+    const erro = new Error(mensagemAmigavel);
+    erro.statusCode = res.status;
+    erro.responseText = text;
+    throw erro;
+  }
+  
   return text;
 }
 async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', language = 'pt' } = {}) {
@@ -1418,6 +1449,57 @@ async function getDocumentStatus(tokenAPI, cryptKey, uuidDocument) {
     return null;
   }
 }
+// Função para traduzir erros da API D4Sign em mensagens amigáveis
+function traduzirErroD4Sign(status, responseText, jsonResponse) {
+  const statusCode = status;
+  const mensagem = jsonResponse?.message || responseText || '';
+  const mensagemLower = String(mensagem).toLowerCase();
+  
+  // Erros comuns e suas traduções
+  if (statusCode === 400) {
+    if (mensagemLower.includes('signatário') || mensagemLower.includes('signer')) {
+      return 'Não foi possível enviar porque não há signatários cadastrados no documento. Por favor, verifique se os emails dos signatários estão corretos.';
+    }
+    if (mensagemLower.includes('documento') || mensagemLower.includes('document')) {
+      return 'O documento não está pronto para ser enviado. Aguarde alguns instantes e tente novamente.';
+    }
+    if (mensagemLower.includes('já enviado') || mensagemLower.includes('already sent')) {
+      return 'Este documento já foi enviado para assinatura anteriormente.';
+    }
+    return 'Dados inválidos. Verifique se o documento existe e está configurado corretamente.';
+  }
+  
+  if (statusCode === 401 || statusCode === 403) {
+    return 'Não foi possível autenticar na plataforma de assinatura. Verifique as credenciais de acesso.';
+  }
+  
+  if (statusCode === 404) {
+    return 'Documento não encontrado. O documento pode ter sido excluído ou o identificador está incorreto.';
+  }
+  
+  if (statusCode === 422) {
+    if (mensagemLower.includes('email') || mensagemLower.includes('inválido')) {
+      return 'Um ou mais emails dos signatários são inválidos. Verifique os emails cadastrados.';
+    }
+    return 'O documento não pode ser enviado no estado atual. Verifique se todos os dados estão preenchidos corretamente.';
+  }
+  
+  if (statusCode === 429) {
+    return 'Muitas tentativas de envio. Aguarde alguns minutos antes de tentar novamente.';
+  }
+  
+  if (statusCode >= 500) {
+    return 'O serviço de assinatura está temporariamente indisponível. Tente novamente em alguns instantes.';
+  }
+  
+  // Mensagem genérica com detalhes se disponível
+  if (mensagem) {
+    return `Erro ao enviar documento: ${mensagem}`;
+  }
+  
+  return `Não foi possível enviar o documento. Código de erro: ${statusCode}`;
+}
+
 async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
   message = '',
   skip_email = '0',
@@ -1427,16 +1509,40 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
   const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
   url.searchParams.set('cryptKey', cryptKey);
   const body = { message, skip_email, workflow, tokenAPI };
+  
+  console.log(`[SEND] Tentando enviar documento ${uuidDocument} para assinatura...`);
+  console.log(`[SEND] Parâmetros: skip_email=${skip_email}, workflow=${workflow}`);
+  
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  
   const text = await res.text();
-  if (!res.ok) {
-    console.error('[ERRO D4SIGN sendtosigner]', res.status, text);
-    throw new Error(`Falha ao enviar para assinatura: ${res.status}`);
+  let jsonResponse = null;
+  try {
+    jsonResponse = JSON.parse(text);
+  } catch (e) {
+    // Não é JSON, continua com o texto
   }
+  
+  if (!res.ok) {
+    console.error('[ERRO D4SIGN sendtosigner]', {
+      status: res.status,
+      statusText: res.statusText,
+      response: text.substring(0, 500),
+      uuid: uuidDocument
+    });
+    
+    const mensagemAmigavel = traduzirErroD4Sign(res.status, text, jsonResponse);
+    const erro = new Error(mensagemAmigavel);
+    erro.statusCode = res.status;
+    erro.responseText = text;
+    throw erro;
+  }
+  
+  console.log(`[SEND] Documento ${uuidDocument} enviado com sucesso.`);
   return text;
 }
 
@@ -1872,22 +1978,69 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       }
       nomeCofre = getNomeCofreByUuid(uuidCofre);
       
-      // Preparar signatários para usar na procuração
-      if (uuidProcuracao) {
-        const d = await montarDados(card);
-        signers = montarSigners(d);
-      }
+      // Preparar signatários (serão usados tanto para contrato quanto para procuração)
+      const d = await montarDados(card);
+      signers = montarSigners(d);
+      console.log('[SEND] Signatários preparados:', signers.map(s => s.email).join(', '));
     } catch (e) {
       console.warn('[SEND] Erro ao buscar informações do card:', e.message);
     }
 
+    // Verificar status do contrato antes de enviar
+    await new Promise(r=>setTimeout(r, 2000));
+    try { 
+      await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); 
+      console.log('[SEND] Status do contrato verificado.');
+    } catch (e) {
+      console.warn('[SEND] Aviso ao verificar status do contrato:', e.message);
+    }
+    
+    // Garantir que os signatários estão cadastrados no contrato antes de enviar
+    if (!signers) {
+      try {
+        if (!card) {
+          card = await getCard(cardId);
+        }
+        const d = await montarDados(card);
+        signers = montarSigners(d);
+        console.log('[SEND] Signatários do contrato preparados:', signers.map(s => s.email).join(', '));
+      } catch (e) {
+        console.error('[SEND] Erro ao preparar signatários do contrato:', e.message);
+        const erro = new Error('Não foi possível preparar os dados dos signatários. Verifique se o card possui todas as informações necessárias (nome, email, etc.).');
+        erro.causa = e.message;
+        throw erro;
+      }
+    }
+    
+    if (signers && signers.length > 0) {
+      try {
+        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
+        console.log('[SEND] Signatários do contrato confirmados/cadastrados:', signers.map(s => s.email).join(', '));
+      } catch (e) {
+        console.warn('[SEND] Aviso ao cadastrar signatários do contrato (podem já estar cadastrados):', e.message);
+        // Não bloqueia se já estiverem cadastrados, mas loga o aviso
+      }
+    } else {
+      const erro = new Error('Nenhum signatário encontrado para o contrato. Verifique se há email configurado no card do Pipefy.');
+      erro.tipo = 'SEM_SIGNATARIOS';
+      throw erro;
+    }
+    
+    // Aguardar um pouco antes de enviar
+    await new Promise(r=>setTimeout(r, 2000));
+    
     // Enviar contrato
-    await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
-      message: 'Olá! Há um documento aguardando sua assinatura.',
-      skip_email: '0',
-      workflow: '0'
-    });
-    console.log('[SEND] Contrato enviado para assinatura:', uuidDoc);
+    try {
+      await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
+        message: 'Olá! Há um documento aguardando sua assinatura.',
+        skip_email: '0',
+        workflow: '0'
+      });
+      console.log('[SEND] Contrato enviado para assinatura:', uuidDoc);
+    } catch (e) {
+      console.error('[ERRO] Falha ao enviar contrato:', e.message);
+      throw e; // Propaga o erro para que o usuário saiba
+    }
 
     // Enviar procuração também, se existir
     if (uuidProcuracao && signers) {
@@ -1937,8 +2090,91 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     return res.status(200).send(okHtml);
 
   } catch (e) {
-    console.error('[ERRO sendtosigner]', e.message || e);
-    return res.status(400).send('Falha ao enviar para assinatura.');
+    console.error('[ERRO sendtosigner]', {
+      message: e.message || e,
+      stack: e.stack,
+      cardId: cardId,
+      uuidDoc: uuidDoc,
+      uuidProcuracao: uuidProcuracao,
+      statusCode: e.statusCode
+    });
+    
+    // Determinar tipo de erro e mensagem amigável
+    let tituloErro = 'Erro ao enviar documentos';
+    let mensagemErro = e.message || 'Não foi possível enviar os documentos para assinatura.';
+    let detalhesAdicionais = '';
+    
+    // Erros específicos por tipo
+    if (e.tipo === 'SEM_SIGNATARIOS' || (e.message && e.message.includes('Nenhum signatário'))) {
+      tituloErro = 'Signatários não encontrados';
+      mensagemErro = 'Não foi possível encontrar signatários para enviar o documento.';
+      detalhesAdicionais = 'Verifique se há emails cadastrados no card do Pipefy (campo "Email para envio do contrato" ou "Email de contato").';
+    } else if (e.message && e.message.includes('preparar os dados dos signatários')) {
+      tituloErro = 'Erro ao preparar dados';
+      mensagemErro = 'Não foi possível preparar os dados dos signatários.';
+      detalhesAdicionais = 'Verifique se o card possui todas as informações necessárias: nome do contratante, email de contato e demais dados obrigatórios.';
+    } else if (e.message && e.message.includes('não encontrado') || e.message && e.message.includes('não foi encontrado')) {
+      tituloErro = 'Documento não encontrado';
+      mensagemErro = 'O documento não foi encontrado no sistema de assinatura.';
+      detalhesAdicionais = 'O documento pode ter sido excluído ou o identificador está incorreto. Tente gerar o contrato novamente.';
+    } else if (e.message && e.message.includes('autenticar') || e.message && e.message.includes('autenticação')) {
+      tituloErro = 'Erro de autenticação';
+      mensagemErro = 'Não foi possível autenticar no sistema de assinatura.';
+      detalhesAdicionais = 'Entre em contato com o suporte técnico para verificar as credenciais de acesso.';
+    } else if (e.message && e.message.includes('indisponível') || e.message && e.message.includes('temporariamente')) {
+      tituloErro = 'Serviço temporariamente indisponível';
+      mensagemErro = 'O serviço de assinatura está temporariamente fora do ar.';
+      detalhesAdicionais = 'Tente novamente em alguns minutos. Se o problema persistir, entre em contato com o suporte.';
+    } else if (e.message && e.message.includes('já foi enviado') || e.message && e.message.includes('já enviado')) {
+      tituloErro = 'Documento já enviado';
+      mensagemErro = 'Este documento já foi enviado para assinatura anteriormente.';
+      detalhesAdicionais = 'Verifique o status do documento no D4Sign ou aguarde a conclusão do processo de assinatura.';
+    } else if (e.message && (e.message.includes('email') || e.message.includes('Email'))) {
+      tituloErro = 'Erro com emails dos signatários';
+      mensagemErro = 'Há um problema com os emails dos signatários.';
+      detalhesAdicionais = 'Verifique se os emails estão corretos, válidos e no formato adequado (exemplo@dominio.com).';
+    } else if (e.statusCode === 400) {
+      tituloErro = 'Dados inválidos';
+      mensagemErro = 'Os dados enviados não são válidos.';
+      detalhesAdicionais = 'Verifique se o documento existe e está configurado corretamente no sistema de assinatura.';
+    } else if (e.statusCode === 404) {
+      tituloErro = 'Documento não encontrado';
+      mensagemErro = 'O documento não foi encontrado no sistema de assinatura.';
+      detalhesAdicionais = 'O documento pode ter sido excluído. Tente gerar o contrato novamente.';
+    } else if (e.statusCode >= 500) {
+      tituloErro = 'Erro no servidor';
+      mensagemErro = 'Ocorreu um erro no servidor de assinatura.';
+      detalhesAdicionais = 'O problema é temporário. Tente novamente em alguns minutos.';
+    }
+    
+    const errorHtml = `
+<!doctype html><meta charset="utf-8"><title>Erro ao enviar</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;margin:0}
+  .box{background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:600px;width:92%}
+  h2{color:#d32f2f;margin:0 0 16px;font-size:24px}
+  .error-box{background:#ffebee;border-left:4px solid #d32f2f;padding:16px;border-radius:4px;margin:20px 0}
+  .error-box strong{display:block;margin-bottom:8px;color:#c62828;font-size:16px}
+  .error-box p{margin:8px 0;color:#424242;line-height:1.6}
+  .detalhes{background:#f5f5f5;padding:12px;border-radius:4px;margin:16px 0;font-size:14px;color:#616161}
+  .btn{display:inline-block;padding:12px 24px;border-radius:8px;text-decoration:none;background:#1976d2;color:#fff;font-weight:600;margin-top:16px}
+  .btn:hover{background:#1565c0}
+  .icon{font-size:48px;text-align:center;margin-bottom:16px}
+</style>
+<div class="box">
+  <div class="icon">⚠️</div>
+  <h2>${tituloErro}</h2>
+  <div class="error-box">
+    <strong>O que aconteceu?</strong>
+    <p>${mensagemErro}</p>
+    ${detalhesAdicionais ? `<div class="detalhes"><strong>Dica:</strong> ${detalhesAdicionais}</div>` : ''}
+  </div>
+  <p style="color:#757575;font-size:14px;margin-top:20px">
+    Se o problema persistir, entre em contato com o suporte técnico.
+  </p>
+  <a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}" class="btn">Voltar e tentar novamente</a>
+</div>`;
+    return res.status(400).send(errorHtml);
   }
 });
 // ===============================
