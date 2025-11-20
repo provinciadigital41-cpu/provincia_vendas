@@ -1866,10 +1866,15 @@ if (TEMPLATE_UUID_PROCURACAO) {
     // Cadastrar signatários da procuração (mesmos do contrato)
     await new Promise(r=>setTimeout(r, 2000));
     try {
-      await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-      console.log('[D4SIGN] Signatários da procuração cadastrados:', signers.map(s => s.email).join(', '));
+      if (signers && signers.length > 0) {
+        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
+        console.log('[D4SIGN] Signatários da procuração cadastrados:', signers.map(s => s.email).join(', '));
+      } else {
+        console.warn('[D4SIGN] Nenhum signatário disponível para cadastrar na procuração');
+      }
     } catch (e) {
       console.error('[ERRO] Falha ao cadastrar signatários da procuração:', e.message);
+      // Não bloqueia, mas loga o erro para debug
     }
   } catch (e) {
     console.error('[ERRO] Falha ao gerar procuração:', e.message);
@@ -1951,11 +1956,26 @@ app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
 });
 
 app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
+  const { cardId } = parseLeadToken(req.params.token);
+  if (!cardId) {
+    return res.status(400).send('Token inválido');
+  }
+  const uuidDoc = req.params.uuid;
+  
+  // Proteção contra envio duplicado
+  const lockKey = `send:${cardId}:${uuidDoc}`;
+  if (!acquireLock(lockKey)) {
+    return res.status(200).send(`
+<!doctype html><meta charset="utf-8"><title>Processando</title>
+<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px;text-align:center}</style>
+<div class="box">
+  <h2>⏳ Processando...</h2>
+  <p>O documento já está sendo enviado. Aguarde alguns instantes.</p>
+  <p><a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}">Voltar</a></p>
+</div>`);
+  }
+  
   try {
-    const { cardId } = parseLeadToken(req.params.token);
-    if (!cardId) throw new Error('token inválido');
-    const uuidDoc = req.params.uuid;
-
     // Buscar informações do card (procuração e equipe para identificar o cofre)
     let uuidProcuracao = null;
     let nomeCofre = 'Cofre não identificado';
@@ -2043,41 +2063,58 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     }
 
     // Enviar procuração também, se existir
-    if (uuidProcuracao && signers) {
+    if (uuidProcuracao) {
       try {
-        // Verificar status do documento antes de enviar
-        await new Promise(r=>setTimeout(r, 2000));
-        try { 
-          await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao); 
-        } catch (e) {
-          console.warn('[SEND] Erro ao verificar status da procuração:', e.message);
+        // Garantir que temos signatários
+        if (!signers || signers.length === 0) {
+          console.warn('[SEND] Procuração encontrada mas não há signatários disponíveis. Preparando signatários...');
+          if (!card) {
+            card = await getCard(cardId);
+          }
+          const d = await montarDados(card);
+          signers = montarSigners(d);
+          console.log('[SEND] Signatários da procuração preparados:', signers.map(s => s.email).join(', '));
         }
         
-        // Garantir que os signatários estão cadastrados antes de enviar
-        try {
-          await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-          console.log('[SEND] Signatários da procuração confirmados/cadastrados.');
-        } catch (e) {
-          console.warn('[SEND] Aviso ao cadastrar signatários da procuração (podem já estar cadastrados):', e.message);
+        if (signers && signers.length > 0) {
+          // Verificar status do documento antes de enviar
+          await new Promise(r=>setTimeout(r, 2000));
+          try { 
+            await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao); 
+          } catch (e) {
+            console.warn('[SEND] Erro ao verificar status da procuração:', e.message);
+          }
+          
+          // Garantir que os signatários estão cadastrados antes de enviar
+          try {
+            await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
+            console.log('[SEND] Signatários da procuração confirmados/cadastrados:', signers.map(s => s.email).join(', '));
+          } catch (e) {
+            console.warn('[SEND] Aviso ao cadastrar signatários da procuração (podem já estar cadastrados):', e.message);
+            // Continua mesmo se falhar, pois podem já estar cadastrados
+          }
+          
+          // Aguardar um pouco antes de enviar
+          await new Promise(r=>setTimeout(r, 2000));
+          
+          await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, {
+            message: 'Olá! Há uma procuração aguardando sua assinatura.',
+            skip_email: '0',
+            workflow: '0'
+          });
+          console.log('[SEND] Procuração enviada para assinatura:', uuidProcuracao);
+        } else {
+          console.error('[SEND] Não foi possível preparar signatários para a procuração');
         }
-        
-        // Aguardar um pouco antes de enviar
-        await new Promise(r=>setTimeout(r, 2000));
-        
-        await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, {
-          message: 'Olá! Há uma procuração aguardando sua assinatura.',
-          skip_email: '0',
-          workflow: '0'
-        });
-        console.log('[SEND] Procuração enviada para assinatura:', uuidProcuracao);
       } catch (e) {
         console.error('[ERRO] Falha ao enviar procuração:', e.message);
-        // Continua mesmo se a procuração falhar
+        // Continua mesmo se a procuração falhar, mas loga o erro
       }
-    } else if (uuidProcuracao) {
-      console.warn('[SEND] Procuração encontrada mas não foi possível preparar signatários');
     }
 
+    // Liberar lock após envio bem-sucedido
+    releaseLock(lockKey);
+    
     const okHtml = `
 <!doctype html><meta charset="utf-8"><title>Documento enviado</title>
 <style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px}</style>
@@ -2090,6 +2127,14 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     return res.status(200).send(okHtml);
 
   } catch (e) {
+    // Liberar lock em caso de erro
+    try {
+      const lockKey = `send:${cardId}:${uuidDoc}`;
+      releaseLock(lockKey);
+    } catch (lockErr) {
+      // Ignora erro ao liberar lock
+    }
+    
     console.error('[ERRO sendtosigner]', {
       message: e.message || e,
       stack: e.stack,
