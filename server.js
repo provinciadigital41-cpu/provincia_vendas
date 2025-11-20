@@ -619,6 +619,8 @@ async function montarDados(card){
   const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
   const emailCotitularEnvio = by['copy_of_email_para_envio_do_contrato'] || '';
   const telefoneCotitularEnvio = by['copy_of_telefone_para_envio_do_contrato'] || '';
+  // Telefone para envio do contrato (campo específico)
+  const telefoneEnvioContrato = by['telefone_para_envio_do_contrato'] || getFirstByNames(card, ['telefone para envio do contrato', 'telefone para envio']) || contatoTelefone || '';
 
   // Documento (CPF/CNPJ) principal
   const doc = pickDocumento(card);
@@ -822,6 +824,10 @@ async function montarDados(card){
     // Email para assinatura
     email_envio_contrato: emailEnvioContrato,
     email_cotitular_envio: emailCotitularEnvio,
+    
+    // Telefone para envio
+    telefone_envio_contrato: telefoneEnvioContrato,
+    telefone_cotitular_envio: telefoneCotitularEnvio,
 
     // MARCA 1..5: linhas e cabeçalhos do formulário
     cabecalho_servicos_1: headersServicos.h1,
@@ -1286,13 +1292,51 @@ function montarVarsParaTemplateProcuracao(d, nowInfo){
 }
 
 // Assinantes: principal + empresa + cotitular quando houver
-function montarSigners(d){
+function montarSigners(d, incluirTelefone = false){
   const list = [];
   const emailPrincipal = d.email_envio_contrato || d.email || '';
-  if (emailPrincipal) list.push({ email: emailPrincipal, name: d.nome || d.titulo || emailPrincipal, act:'1', foreign:'0', send_email:'1' });
-  if (d.email_cotitular_envio) list.push({ email: d.email_cotitular_envio, name: 'Cotitular', act:'1', foreign:'0', send_email:'1' });
-  if (EMAIL_ASSINATURA_EMPRESA) list.push({ email: EMAIL_ASSINATURA_EMPRESA, name: 'Empresa', act:'1', foreign:'0', send_email:'1' });
-  const seen={}; return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
+  const telefonePrincipal = d.telefone_envio_contrato || d.telefone || '';
+  
+  if (emailPrincipal) {
+    const signer = { 
+      email: emailPrincipal, 
+      name: d.nome || d.titulo || emailPrincipal, 
+      act:'1', 
+      foreign:'0', 
+      send_email:'1' 
+    };
+    if (incluirTelefone && telefonePrincipal) {
+      signer.phone = normalizePhone(telefonePrincipal);
+    }
+    list.push(signer);
+  }
+  
+  if (d.email_cotitular_envio) {
+    const signer = { 
+      email: d.email_cotitular_envio, 
+      name: 'Cotitular', 
+      act:'1', 
+      foreign:'0', 
+      send_email:'1' 
+    };
+    if (incluirTelefone && d.telefone_cotitular_envio) {
+      signer.phone = normalizePhone(d.telefone_cotitular_envio);
+    }
+    list.push(signer);
+  }
+  
+  if (EMAIL_ASSINATURA_EMPRESA) {
+    list.push({ 
+      email: EMAIL_ASSINATURA_EMPRESA, 
+      name: 'Empresa', 
+      act:'1', 
+      foreign:'0', 
+      send_email:'1' 
+    });
+  }
+  
+  const seen={}; 
+  return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
 }
 
 /* =========================
@@ -1368,12 +1412,28 @@ async function registerWebhookForDocument(tokenAPI, cryptKey, uuidDocument, urlW
   return json;
 }
 
-async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers) {
+async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, usarWhatsApp = false) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/createlist`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
-  const body = { signers: signers.map(s => ({ email: s.email, name: s.name, act: s.act || '1', foreign: s.foreign || '0', send_email: s.send_email || '1' })) };
+  const body = { 
+    signers: signers.map(s => {
+      const signer = { 
+        email: s.email, 
+        name: s.name, 
+        act: s.act || '1', 
+        foreign: s.foreign || '0', 
+        send_email: usarWhatsApp ? '0' : (s.send_email || '1')
+      };
+      // Se for WhatsApp e tiver telefone, incluir
+      if (usarWhatsApp && s.phone) {
+        signer.phone = s.phone;
+        signer.send_whatsapp = '1';
+      }
+      return signer;
+    }) 
+  };
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -1953,7 +2013,8 @@ if (TEMPLATE_UUID_PROCURACAO) {
   ` : ''}
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
-    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}')" id="btn-enviar-contrato">Enviar contrato para assinatura</button>
+    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
+    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp" style="background:#25D366">Enviar por WhatsApp</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
@@ -1962,7 +2023,8 @@ if (TEMPLATE_UUID_PROCURACAO) {
     <p class="muted">UUID da procuração: ${uuidProcuracao}</p>
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
-      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}')" id="btn-enviar-procuracao">Enviar procuração para assinatura</button>
+      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
+      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp" style="background:#25D366">Enviar por WhatsApp</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
@@ -1972,16 +2034,18 @@ if (TEMPLATE_UUID_PROCURACAO) {
   </div>
 </div>
 <script>
-async function enviarContrato(token, uuidDoc) {
-  const btn = document.getElementById('btn-enviar-contrato');
+async function enviarContrato(token, uuidDoc, canal) {
+  const btnEmail = document.getElementById('btn-enviar-contrato-email');
+  const btnWhatsapp = document.getElementById('btn-enviar-contrato-whatsapp');
   const statusDiv = document.getElementById('status-contrato');
+  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
   
   btn.disabled = true;
   btn.textContent = 'Enviando...';
-  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando contrato...</span>';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando contrato por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'email') + '...</span>';
   
   try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/send', {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/send?canal=' + encodeURIComponent(canal), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -1990,33 +2054,44 @@ async function enviarContrato(token, uuidDoc) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso.' + cofreMsg + '</span>';
+      const canalMsg = canal === 'whatsapp' ? ' por WhatsApp' : ' por email';
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + canalMsg + '.' + cofreMsg + '</span>';
       btn.textContent = 'Contrato enviado';
       btn.style.background = '#28a745';
       btn.disabled = true;
+      // Desabilitar o outro botão também
+      if (canal === 'whatsapp') {
+        btnEmail.disabled = true;
+        btnEmail.style.opacity = '0.6';
+      } else {
+        btnWhatsapp.disabled = true;
+        btnWhatsapp.style.opacity = '0.6';
+      }
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Contrato: ' + errorMsg + '</span>';
       btn.disabled = false;
-      btn.textContent = 'Tentar novamente';
+      btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
     }
   } catch (error) {
     statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Contrato: Erro ao enviar - ' + error.message + '</span>';
     btn.disabled = false;
-    btn.textContent = 'Tentar novamente';
+    btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
   }
 }
 
-async function enviarProcuracao(token, uuidProcuracao) {
-  const btn = document.getElementById('btn-enviar-procuracao');
+async function enviarProcuracao(token, uuidProcuracao, canal) {
+  const btnEmail = document.getElementById('btn-enviar-procuracao-email');
+  const btnWhatsapp = document.getElementById('btn-enviar-procuracao-whatsapp');
   const statusDiv = document.getElementById('status-procuracao');
+  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
   
   btn.disabled = true;
   btn.textContent = 'Enviando...';
-  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração...</span>';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'email') + '...</span>';
   
   try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send', {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send?canal=' + encodeURIComponent(canal), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -2025,20 +2100,29 @@ async function enviarProcuracao(token, uuidProcuracao) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso.' + cofreMsg + '</span>';
+      const canalMsg = canal === 'whatsapp' ? ' por WhatsApp' : ' por email';
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + canalMsg + '.' + cofreMsg + '</span>';
       btn.textContent = 'Procuração enviada';
       btn.style.background = '#28a745';
       btn.disabled = true;
+      // Desabilitar o outro botão também
+      if (canal === 'whatsapp') {
+        btnEmail.disabled = true;
+        btnEmail.style.opacity = '0.6';
+      } else {
+        btnWhatsapp.disabled = true;
+        btnWhatsapp.style.opacity = '0.6';
+      }
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Procuração: ' + errorMsg + '</span>';
       btn.disabled = false;
-      btn.textContent = 'Tentar novamente';
+      btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
     }
   } catch (error) {
     statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Procuração: Erro ao enviar - ' + error.message + '</span>';
     btn.disabled = false;
-    btn.textContent = 'Tentar novamente';
+    btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
   }
 }
 </script>`;
@@ -2070,9 +2154,10 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Token inválido' });
   }
   const uuidDoc = req.params.uuid;
+  const canal = req.query.canal || 'email'; // 'email' ou 'whatsapp'
   
   // Proteção contra envio duplicado
-  const lockKey = `send:${cardId}:${uuidDoc}`;
+  const lockKey = `send:${cardId}:${uuidDoc}:${canal}`;
   if (!acquireLock(lockKey)) {
     return res.status(200).json({ success: false, message: 'Documento já está sendo enviado. Aguarde alguns instantes.' });
   }
@@ -2106,11 +2191,26 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       
       // Preparar signatários
       const d = await montarDados(card);
-      signers = montarSigners(d);
-      console.log(`[SEND] Enviando ${isProcuracao ? 'procuração' : 'contrato'}. Signatários preparados:`, signers.map(s => s.email).join(', '));
+      
+      // Validar se tem email/telefone conforme o canal
+      if (canal === 'whatsapp') {
+        const telefoneEnvio = d.telefone_envio_contrato || d.telefone || '';
+        if (!telefoneEnvio) {
+          throw new Error('Telefone para envio do contrato não encontrado. Verifique o campo "Telefone para envio do contrato" no card do Pipefy.');
+        }
+        signers = montarSigners(d, true); // incluir telefone
+      } else {
+        const emailEnvio = d.email_envio_contrato || d.email || '';
+        if (!emailEnvio) {
+          throw new Error('Email para envio do contrato não encontrado. Verifique o campo "Email para envio do contrato" no card do Pipefy.');
+        }
+        signers = montarSigners(d, false);
+      }
+      
+      console.log(`[SEND] Enviando ${isProcuracao ? 'procuração' : 'contrato'} por ${canal}. Signatários preparados:`, signers.map(s => s.email).join(', '));
     } catch (e) {
       console.warn('[SEND] Erro ao buscar informações do card:', e.message);
-      throw new Error('Não foi possível buscar informações do card: ' + e.message);
+      throw e;
     }
 
     // Verificar status do documento antes de enviar
@@ -2129,26 +2229,39 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
           card = await getCard(cardId);
         }
         const d = await montarDados(card);
-        signers = montarSigners(d);
+        
+        // Validar novamente conforme o canal
+        if (canal === 'whatsapp') {
+          const telefoneEnvio = d.telefone_envio_contrato || d.telefone || '';
+          if (!telefoneEnvio) {
+            throw new Error('Telefone para envio do contrato não encontrado. Verifique o campo "Telefone para envio do contrato" no card do Pipefy.');
+          }
+          signers = montarSigners(d, true);
+        } else {
+          const emailEnvio = d.email_envio_contrato || d.email || '';
+          if (!emailEnvio) {
+            throw new Error('Email para envio do contrato não encontrado. Verifique o campo "Email para envio do contrato" no card do Pipefy.');
+          }
+          signers = montarSigners(d, false);
+        }
+        
         console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} preparados:`, signers.map(s => s.email).join(', '));
       } catch (e) {
         console.error(`[SEND] Erro ao preparar signatários do ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
-        const erro = new Error('Não foi possível preparar os dados dos signatários. Verifique se o card possui todas as informações necessárias (nome, email, etc.).');
-        erro.causa = e.message;
-        throw erro;
+        throw e;
       }
     }
     
     if (signers && signers.length > 0) {
       try {
-        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
+        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers, canal === 'whatsapp');
         console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} confirmados/cadastrados:`, signers.map(s => s.email).join(', '));
       } catch (e) {
         console.warn(`[SEND] Aviso ao cadastrar signatários do ${isProcuracao ? 'procuração' : 'contrato'} (podem já estar cadastrados):`, e.message);
         // Não bloqueia se já estiverem cadastrados, mas loga o aviso
       }
     } else {
-      const erro = new Error(`Nenhum signatário encontrado para o ${isProcuracao ? 'procuração' : 'contrato'}. Verifique se há email configurado no card do Pipefy.`);
+      const erro = new Error(`Nenhum signatário encontrado para o ${isProcuracao ? 'procuração' : 'contrato'}. Verifique se há ${canal === 'whatsapp' ? 'telefone' : 'email'} configurado no card do Pipefy.`);
       erro.tipo = 'SEM_SIGNATARIOS';
       throw erro;
     }
@@ -2162,12 +2275,15 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         ? 'Olá! Há uma procuração aguardando sua assinatura.'
         : 'Olá! Há um documento aguardando sua assinatura.';
       
+      // Se for WhatsApp, não enviar email
+      const skip_email = canal === 'whatsapp' ? '1' : '0';
+      
       await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
         message: mensagem,
-        skip_email: '0',
+        skip_email: skip_email,
         workflow: '0'
       });
-      console.log(`[SEND] ${isProcuracao ? 'Procuração' : 'Contrato'} enviado para assinatura:`, uuidDoc);
+      console.log(`[SEND] ${isProcuracao ? 'Procuração' : 'Contrato'} enviado para assinatura por ${canal}:`, uuidDoc);
     } catch (e) {
       console.error(`[ERRO] Falha ao enviar ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
       throw e; // Propaga o erro para que o usuário saiba
