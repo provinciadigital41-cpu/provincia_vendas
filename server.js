@@ -1473,27 +1473,36 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
       };
       
       // Configurar envio por email ou WhatsApp
-      if (usarWhatsApp && s.phone) {
-        // O telefone já deve estar formatado com +55 pela função montarSigners
-        // Mas vamos garantir que está no formato correto
-        let phoneFormatted = String(s.phone).trim();
-        // Remover todos os caracteres não numéricos exceto +
-        phoneFormatted = phoneFormatted.replace(/[^\d+]/g, '');
-        
-        // Se não começar com +, adicionar +55 (Brasil)
-        if (!phoneFormatted.startsWith('+')) {
-          // Se começar com 0, remover
-          if (phoneFormatted.startsWith('0')) {
-            phoneFormatted = phoneFormatted.substring(1);
+      if (usarWhatsApp) {
+        // Se for WhatsApp, verificar se tem telefone
+        if (s.phone) {
+          // O telefone já deve estar formatado com +55 pela função montarSigners
+          // Mas vamos garantir que está no formato correto
+          let phoneFormatted = String(s.phone).trim();
+          // Remover todos os caracteres não numéricos exceto +
+          phoneFormatted = phoneFormatted.replace(/[^\d+]/g, '');
+          
+          // Se não começar com +, adicionar +55 (Brasil)
+          if (!phoneFormatted.startsWith('+')) {
+            // Se começar com 0, remover
+            if (phoneFormatted.startsWith('0')) {
+              phoneFormatted = phoneFormatted.substring(1);
+            }
+            // Adicionar código do país Brasil (+55)
+            phoneFormatted = '+55' + phoneFormatted;
           }
-          // Adicionar código do país Brasil (+55)
-          phoneFormatted = '+55' + phoneFormatted;
+          
+          signer.phone = phoneFormatted;
+          signer.send_whatsapp = '1';
+          signer.send_email = '0';
+          console.log(`[CADASTRO] Signatário ${s.name} configurado para WhatsApp: ${phoneFormatted} (email: ${s.email})`);
+        } else {
+          // Se não tiver telefone mas for WhatsApp, manter como email para este signatário
+          // (pode ser o signatário da empresa que não precisa de WhatsApp)
+          signer.send_email = s.send_email || '1';
+          signer.send_whatsapp = '0';
+          console.log(`[CADASTRO] Signatário ${s.name} sem telefone, mantido como email (WhatsApp solicitado mas sem telefone)`);
         }
-        
-        signer.phone = phoneFormatted;
-        signer.send_whatsapp = '1';
-        signer.send_email = '0';
-        console.log(`[CADASTRO] Signatário ${s.name} configurado para WhatsApp: ${phoneFormatted} (email: ${s.email})`);
       } else {
         signer.send_email = s.send_email || '1';
         signer.send_whatsapp = '0';
@@ -2267,6 +2276,11 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
           throw new Error('Telefone para envio do contrato não encontrado. Verifique o campo "Telefone para envio do contrato" no card do Pipefy.');
         }
         signers = montarSigners(d, true); // incluir telefone
+        console.log(`[SEND] Signatários preparados para WhatsApp:`, signers.map(s => ({
+          name: s.name,
+          email: s.email,
+          phone: s.phone || 'SEM TELEFONE'
+        })));
       } else {
         const emailEnvio = d.email_envio_contrato || d.email || '';
         if (!emailEnvio) {
@@ -2330,6 +2344,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
           }
           console.log(`[SEND] Cadastrando ${signersComTelefone.length} signatário(s) com telefone para WhatsApp`);
           console.log(`[SEND] Telefones:`, signersComTelefone.map(s => `${s.name}: ${s.phone}`).join(', '));
+          console.log(`[DEBUG] Signatários antes de cadastrar (canal: ${canal}):`, 
+            JSON.stringify(signers.map(s => ({ 
+              name: s.name, 
+              email: s.email, 
+              phone: s.phone 
+            })), null, 2));
         }
         await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers, canal === 'whatsapp');
         console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} confirmados/cadastrados para ${canal}:`, signers.map(s => {
@@ -2650,3 +2670,4 @@ app.listen(PORT, () => {
   });
   console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
 });
+
