@@ -41,6 +41,7 @@ let {
   D4SIGN_CRYPT_KEY,
   TEMPLATE_UUID_CONTRATO,           // Modelo de Marca
   TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
+  TEMPLATE_UUID_PROCURACAO,         // Modelo de Procuração
 
   // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
@@ -90,6 +91,7 @@ if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
 if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
+if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
 
 // Cofres mapeados por EQUIPE (campo "Equipe contrato" no Pipefy)
 // ⚠️ ATENÇÃO: as chaves DEVEM ser exatamente os valores de "Equipe contrato"
@@ -146,6 +148,17 @@ const COFRES_UUIDS = {
   'FILIAL RIBEIRAO PRETO': COFRE_UUID_FILIALRIBEIRAOPRETO,
   'FILIAL PALMAS - TO': COFRE_UUID_FILIALPALMAS_TO
 };
+
+// Função para obter o nome do cofre a partir do UUID
+function getNomeCofreByUuid(uuidCofre) {
+  if (!uuidCofre) return 'Cofre não identificado';
+  for (const [nomeEquipe, uuid] of Object.entries(COFRES_UUIDS)) {
+    if (uuid === uuidCofre) {
+      return nomeEquipe;
+    }
+  }
+  return 'Cofre não identificado';
+}
 
 /* =========================
  * Helpers gerais
@@ -1173,6 +1186,71 @@ function montarVarsParaTemplateOutros(d, nowInfo){
   return base;
 }
 
+// Procuração
+function montarVarsParaTemplateProcuracao(d, nowInfo){
+  const dia = String(nowInfo.dia).padStart(2,'0');
+  const mesExtenso = monthNamePt(nowInfo.mes);
+  const ano = String(nowInfo.ano);
+
+  // Formata CPF/CNPJ
+  const cpfDigits = onlyDigits(d.cpf || d.cpf_campo || '');
+  const cnpjDigits = onlyDigits(d.cnpj || d.cnpj_campo || '');
+  const cpfFmt = cpfDigits.length === 11 
+    ? cpfDigits.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+    : '';
+  const cnpjFmt = cnpjDigits.length === 14
+    ? cnpjDigits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+    : '';
+
+  const base = {
+    // Identificação do outorgante
+    'Contratante 1': d.contratante_1_texto || d.nome || '',
+    'Contratante 2': d.contratante_2_texto || '',
+    'Nome': d.nome || '',
+    'CPF': cpfFmt || '',
+    'CNPJ': cnpjFmt || '',
+    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
+    'RG': d.rg || '',
+    'Estado Civil': d.estado_civil || '',
+    'Estado Civíl': d.estado_civil || '',
+
+    // Endereço
+    'Rua': d.rua_cnpj || '',
+    'Bairro': d.bairro_cnpj || '',
+    'Número': d.numero_cnpj || '',
+    'Cidade': d.cidade_cnpj || '',
+    'UF': d.uf_cnpj || '',
+    'CEP': d.cep_cnpj || '',
+    'Endereço completo': [
+      d.rua_cnpj ? `Rua ${d.rua_cnpj}` : '',
+      d.numero_cnpj ? `nº ${d.numero_cnpj}` : '',
+      d.bairro_cnpj ? `Bairro ${d.bairro_cnpj}` : '',
+      d.cidade_cnpj && d.uf_cnpj ? `${d.cidade_cnpj} - ${d.uf_cnpj}` : (d.cidade_cnpj || d.uf_cnpj || ''),
+      d.cep_cnpj ? `CEP: ${d.cep_cnpj}` : ''
+    ].filter(Boolean).join(', '),
+
+    // Contato
+    'E-mail': d.email || '',
+    'Telefone': d.telefone || '',
+    'dados para contato 1': d.dados_contato_1 || '',
+    'dados para contato 2': d.dados_contato_2 || '',
+
+    // Datas
+    'Dia': dia,
+    'Mês': mesExtenso,
+    'Mes': mesExtenso,
+    'Ano': ano,
+    'Data': `${dia} de ${mesExtenso} de ${ano}`,
+
+    // Informações do contrato relacionadas
+    'Título': d.titulo || '',
+    'Serviços': d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.OUTROS || '',
+    'Risco': d.risco_agregado || ''
+  };
+
+  return base;
+}
+
 // Assinantes: principal + empresa + cotitular quando houver
 function montarSigners(d){
   const list = [];
@@ -1553,7 +1631,7 @@ app.post('/lead/:token/generate', async (req, res) => {
       d.titulo || card.title,
       add
     );
-    console.log(`[D4SIGN] Documento criado: ${uuidDoc}`);
+    console.log(`[D4SIGN] Contrato criado: ${uuidDoc}`);
 
 // ===============================
 // NOVO — Cadastrar webhook deste documento
@@ -1575,9 +1653,61 @@ try {
 // ===============================
 try {
   await updateCardField(card.id, 'd4_uuid_contrato', uuidDoc);
-  console.log('[D4SIGN] UUID salvo no card.');
+  console.log('[D4SIGN] UUID do contrato salvo no card.');
 } catch (e) {
-  console.error('[ERRO] Falha ao salvar uuid no card:', e.message);
+  console.error('[ERRO] Falha ao salvar uuid do contrato no card:', e.message);
+}
+
+// ===============================
+// NOVO — GERAR PROCURAÇÃO
+// ===============================
+let uuidProcuracao = null;
+if (TEMPLATE_UUID_PROCURACAO) {
+  try {
+    const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+    uuidProcuracao = await makeDocFromWordTemplate(
+      D4SIGN_TOKEN,
+      D4SIGN_CRYPT_KEY,
+      uuidSafe,
+      TEMPLATE_UUID_PROCURACAO,
+      `Procuração - ${d.titulo || card.title || 'Contrato'}`,
+      varsProcuracao
+    );
+    console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao}`);
+
+    // Salvar UUID da procuração no card
+    try {
+      await updateCardField(card.id, 'd4_uuid_procuracao', uuidProcuracao);
+      console.log('[D4SIGN] UUID da procuração salvo no card.');
+    } catch (e) {
+      console.error('[ERRO] Falha ao salvar uuid da procuração no card:', e.message);
+    }
+
+    // Registrar webhook da procuração (opcional - se quiser rastrear quando for assinada)
+    try {
+      await registerWebhookForDocument(
+        D4SIGN_TOKEN,
+        D4SIGN_CRYPT_KEY,
+        uuidProcuracao,
+        `${PUBLIC_BASE_URL}/d4sign/postback`
+      );
+      console.log('[D4SIGN] Webhook da procuração registrado.');
+    } catch (e) {
+      console.error('[ERRO] Falha ao registrar webhook da procuração:', e.message);
+    }
+
+    // Cadastrar signatários da procuração (mesmos do contrato)
+    await new Promise(r=>setTimeout(r, 2000));
+    try {
+      await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
+      console.log('[D4SIGN] Signatários da procuração cadastrados.');
+    } catch (e) {
+      console.error('[ERRO] Falha ao cadastrar signatários da procuração:', e.message);
+    }
+  } catch (e) {
+    console.error('[ERRO] Falha ao gerar procuração:', e.message);
+    // Não bloqueia o fluxo se a procuração falhar
+  }
 }
 
     await new Promise(r=>setTimeout(r, 3000));
@@ -1597,18 +1727,31 @@ try {
   body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;color:#111;margin:0}
   .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:640px;width:92%}
   h2{margin:0 0 12px}
+  h3{margin:24px 0 8px;font-size:16px}
   .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
   .btn{display:inline-block;padding:12px 16px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600}
   .muted{color:#666}
+  .section{margin-top:24px;padding-top:24px;border-top:1px solid #eee}
 </style>
 <div class="box">
-  <h2>Contrato gerado com sucesso</h2>
+  <h2>${uuidProcuracao ? 'Contrato e procuração gerados com sucesso' : 'Contrato gerado com sucesso'}</h2>
   <p class="muted">UUID do documento: ${uuidDoc}</p>
   <div class="row">
-    <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF</a>
+    <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato${uuidProcuracao ? ' e Procuração' : ''}</a>
     <form method="POST" action="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/send" style="display:inline">
-      <button class="btn" type="submit">Enviar para assinatura</button>
+      <button class="btn" type="submit">Enviar contrato${uuidProcuracao ? ' e procuração' : ''} para assinatura</button>
     </form>
+  </div>
+  ${uuidProcuracao ? `
+  <div class="section">
+    <h3>Procuração gerada com sucesso</h3>
+    <p class="muted">UUID da procuração: ${uuidProcuracao}</p>
+    <div class="row">
+      <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
+    </div>
+  </div>
+  ` : ''}
+  <div class="row" style="margin-top:24px">
     <a class="btn" href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(token)}">Voltar</a>
   </div>
 </div>`;
@@ -1640,18 +1783,57 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     if (!cardId) throw new Error('token inválido');
     const uuidDoc = req.params.uuid;
 
+    // Buscar informações do card (procuração e equipe para identificar o cofre)
+    let uuidProcuracao = null;
+    let nomeCofre = 'Cofre não identificado';
+    try {
+      const card = await getCard(cardId);
+      const by = toById(card);
+      uuidProcuracao = by['d4_uuid_procuracao'] || null;
+      
+      // Buscar equipe contrato para identificar o cofre
+      const equipeContrato = getEquipeContratoFromCard(card);
+      if (equipeContrato && COFRES_UUIDS[equipeContrato]) {
+        const uuidCofre = COFRES_UUIDS[equipeContrato];
+        nomeCofre = getNomeCofreByUuid(uuidCofre);
+      }
+    } catch (e) {
+      console.warn('[SEND] Erro ao buscar informações do card:', e.message);
+    }
+
+    // Enviar contrato
     await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
       message: 'Olá! Há um documento aguardando sua assinatura.',
       skip_email: '0',
       workflow: '0'
     });
+    console.log('[SEND] Contrato e procuração foram enviados para assinatura:', uuidDoc);
+
+    // Enviar procuração também, se existir
+    if (uuidProcuracao) {
+      try {
+        await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, {
+          message: 'Olá! Há uma procuração aguardando sua assinatura.',
+          skip_email: '0',
+          workflow: '0'
+        });
+        console.log('[SEND] Procuração enviada para assinatura:', uuidProcuracao);
+      } catch (e) {
+        console.error('[ERRO] Falha ao enviar procuração:', e.message);
+        // Continua mesmo se a procuração falhar
+      }
+    }
 
     const okHtml = `
 <!doctype html><meta charset="utf-8"><title>Documento enviado</title>
-<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px}</style>
+<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px} .info-box{background:#f0f7ff;border-left:4px solid #0066cc;padding:12px;margin:16px 0;border-radius:4px}</style>
 <div class="box">
-  <h2>Documento enviado para assinatura</h2>
+  <h2>${uuidProcuracao ? 'Contrato e procuração enviados com sucesso' : 'Contrato e procuração enviados com sucesso'}</h2>
+  <p>${uuidProcuracao ? 'Contrato e procuração foram enviados.' : 'O contrato foi enviado.'}</p>
   <p>Os signatários foram notificados.</p>
+  <div class="info-box">
+    <strong>📁 Cofre:</strong> ${nomeCofre}
+  </div>
   <p><a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}">Voltar</a></p>
 </div>`;
     return res.status(200).send(okHtml);
@@ -1663,6 +1845,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 });
 // ===============================
 // NOVO — LOCALIZA CARD PELO UUID DO DOCUMENTO D4SIGN
+// Busca tanto no campo de contrato quanto no de procuração
 // ===============================
 async function findCardIdByD4Uuid(uuidDocument) {
   const query = `
@@ -1683,16 +1866,31 @@ async function findCardIdByD4Uuid(uuidDocument) {
     }
   `;
 
-  const data = await gql(query, {
+  // Primeiro tenta buscar pelo campo de contrato
+  let data = await gql(query, {
     pipeId: NOVO_PIPE_ID,
     fieldId: "d4_uuid_contrato",
     fieldValue: uuidDocument
   });
 
-  const edges = data?.findCards?.edges || [];
-  if (!edges.length) return null;
+  let edges = data?.findCards?.edges || [];
+  if (edges.length) {
+    return edges[0].node.id;
+  }
 
-  return edges[0].node.id;
+  // Se não encontrou, tenta buscar pelo campo de procuração
+  data = await gql(query, {
+    pipeId: NOVO_PIPE_ID,
+    fieldId: "d4_uuid_procuracao",
+    fieldValue: uuidDocument
+  });
+
+  edges = data?.findCards?.edges || [];
+  if (edges.length) {
+    return edges[0].node.id;
+  }
+
+  return null;
 };
 
 // ===============================
