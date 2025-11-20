@@ -318,6 +318,28 @@ async function updateCardField(cardId, fieldId, newValue){
   }`, { input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue } });
 }
 
+async function createCardComment(cardId, comment){
+  try {
+    const data = await gql(`mutation($input: CreateCardCommentInput!){
+      createCardComment(input:$input){
+        comment{
+          id
+          text
+        }
+      }
+    }`, { 
+      input: { 
+        card_id: Number(cardId), 
+        text: comment 
+      } 
+    });
+    return data?.createCardComment?.comment;
+  } catch (e) {
+    console.error('[ERRO createCardComment]', e.message || e);
+    throw e;
+  }
+}
+
 /* =========================
  * Parsing de campos do card
  * =======================*/
@@ -2195,11 +2217,11 @@ app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
 });
 
 app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
-  const { cardId } = parseLeadToken(req.params.token);
+    const { cardId } = parseLeadToken(req.params.token);
   if (!cardId) {
     return res.status(400).json({ success: false, message: 'Token inválido' });
   }
-  const uuidDoc = req.params.uuid;
+    const uuidDoc = req.params.uuid;
   const canal = req.query.canal || 'email'; // 'email' ou 'whatsapp'
   
   // Proteção contra envio duplicado
@@ -2337,12 +2359,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       
       // Se for WhatsApp, não enviar email
       const skip_email = canal === 'whatsapp' ? '1' : '0';
-      
-      await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
+
+    await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
         message: mensagem,
         skip_email: skip_email,
-        workflow: '0'
-      });
+      workflow: '0'
+    });
       console.log(`[SEND] ${isProcuracao ? 'Procuração' : 'Contrato'} enviado para assinatura por ${canal}:`, uuidDoc);
     } catch (e) {
       console.error(`[ERRO] Falha ao enviar ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
@@ -2492,7 +2514,7 @@ async function findCardIdByD4Uuid(uuidDocument) {
 
   edges = data?.findCards?.edges || [];
   if (edges.length) {
-    return edges[0].node.id;
+  return edges[0].node.id;
   }
 
   return null;
@@ -2501,3 +2523,130 @@ async function findCardIdByD4Uuid(uuidDocument) {
 // ===============================
 // NOVO — ANEXA CONTRATO ASSINADO NO CAMPO DE ANEXO
 // ===============================
+async function anexarContratoAssinadoNoCard(cardId, downloadUrl, fileName) {
+  const newValue = [downloadUrl];
+
+  await updateCardField(cardId, 'contrato', newValue);
+};
+
+/* =========================
+ * Geração do link no Pipefy
+ * =======================*/
+app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
+  try {
+    const cardId = req.body.cardId || req.body.card_id || req.query.cardId || req.query.card_id;
+    if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
+
+    const card = await getCard(cardId);
+    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
+      return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
+    }
+    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
+      return res.status(400).json({ error: 'Card não está na fase esperada' });
+    }
+
+    const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
+    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
+
+    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
+
+    // Enviar mensagem no card com o link
+    try {
+      const mensagem = `📋 Link para revisar e gerar o contrato:\n\n${url}\n\nClique no link acima para revisar os dados e gerar o contrato.`;
+      await createCardComment(cardId, mensagem);
+      console.log('[CRIAR-LINK] Mensagem enviada no card com o link');
+    } catch (e) {
+      console.error('[CRIAR-LINK] Erro ao enviar mensagem no card:', e.message);
+      // Não bloqueia o fluxo se falhar ao enviar comentário
+    }
+
+    return res.json({ ok:true, link:url });
+  } catch (e) {
+    console.error('[ERRO criar-link]', e.message||e);
+    return res.status(500).json({ error: String(e.message||e) });
+  }
+});
+app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
+  try {
+    const cardId = req.query.cardId || req.query.card_id;
+    if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
+
+    const card = await getCard(cardId);
+    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
+      return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
+    }
+    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
+      return res.status(400).json({ error: 'Card não está na fase esperada' });
+    }
+
+    const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
+    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
+
+    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
+
+    // Enviar mensagem no card com o link
+    try {
+      const mensagem = `📋 Link para revisar e gerar o contrato:\n\n${url}\n\nClique no link acima para revisar os dados e gerar o contrato.`;
+      await createCardComment(cardId, mensagem);
+      console.log('[CRIAR-LINK] Mensagem enviada no card com o link');
+    } catch (e) {
+      console.error('[CRIAR-LINK] Erro ao enviar mensagem no card:', e.message);
+      // Não bloqueia o fluxo se falhar ao enviar comentário
+    }
+
+    return res.json({ ok:true, link:url });
+  } catch (e) {
+    console.error('[ERRO criar-link]', e.message||e);
+    return res.status(500).json({ error: String(e.message||e) });
+  }
+});
+
+/* =========================
+ * Debug / Health
+ * =======================*/
+app.get('/_echo/*', (req, res) => {
+  res.json({
+    method: req.method,
+    originalUrl: req.originalUrl,
+    path: req.path,
+    baseUrl: req.baseUrl,
+    host: req.get('host'),
+    href: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+    headers: req.headers,
+    query: req.query,
+  });
+});
+app.get('/debug/card', async (req,res)=>{
+  try{
+    const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
+    const card = await getCard(cardId);
+    res.json({
+      id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
+      fields: (card.fields||[]).map(f => ({ name:f.name, id:f.field?.id, type:f.field?.type, value:f.value, array_value:f.array_value }))
+    });
+  }catch(e){ res.status(500).json({ error:String(e.message||e) }); }
+});
+app.get('/health', (_req,res)=> res.json({ ok:true }));
+
+/* =========================
+ * Start
+ * =======================*/
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+  const list=[];
+  app._router.stack.forEach(m=>{
+    if (m.route && m.route.path){
+      const methods = Object.keys(m.route.methods).map(x=>x.toUpperCase()).join(',');
+      list.push(`${methods} ${m.route.path}`);
+    } else if (m.name==='router' && m.handle?.stack){
+      m.handle.stack.forEach(h=>{
+        const route = h.route;
+        if (route){
+          const methods = Object.keys(route.methods).map(x=>x.toUpperCase()).join(',');
+          list.push(`${methods} ${route.path}`);
+        }
+      });
+    }
+  });
+  console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
+});
