@@ -1634,7 +1634,7 @@ app.post('/d4sign/postback', async (req, res) => {
 
     // 1. mover card para fase final (primeiro)
     try {
-      await moveCardToPhaseSafe(cardId, 339299694);
+      // Movimentação de card removida conforme solicitado
       console.log('[POSTBACK D4SIGN] Card movido para fase 339299694');
     } catch (e) {
       console.error('[POSTBACK D4SIGN] Erro ao mover card:', e.message);
@@ -1864,17 +1864,54 @@ if (TEMPLATE_UUID_PROCURACAO) {
     }
 
     // Cadastrar signatários da procuração (mesmos do contrato)
-    await new Promise(r=>setTimeout(r, 2000));
-    try {
-      if (signers && signers.length > 0) {
-        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-        console.log('[D4SIGN] Signatários da procuração cadastrados:', signers.map(s => s.email).join(', '));
-      } else {
-        console.warn('[D4SIGN] Nenhum signatário disponível para cadastrar na procuração');
+    // Garantir que temos signatários antes de cadastrar
+    if (!signers || signers.length === 0) {
+      console.warn('[D4SIGN] Signatários não disponíveis no escopo, preparando novamente...');
+      try {
+        signers = montarSigners(d);
+        if (signers && signers.length > 0) {
+          console.log('[D4SIGN] Signatários preparados para procuração:', signers.map(s => s.email).join(', '));
+        } else {
+          console.error('[D4SIGN] ERRO CRÍTICO: Não foi possível preparar signatários. Verifique se há emails no card.');
+        }
+      } catch (e) {
+        console.error('[D4SIGN] Erro ao preparar signatários para procuração:', e.message);
       }
-    } catch (e) {
-      console.error('[ERRO] Falha ao cadastrar signatários da procuração:', e.message);
-      // Não bloqueia, mas loga o erro para debug
+    }
+    
+    // Tentar cadastrar signatários com múltiplas tentativas
+    await new Promise(r=>setTimeout(r, 2000));
+    let signatariosCadastrados = false;
+    const maxTentativas = 3;
+    
+    for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+      try {
+        if (signers && signers.length > 0) {
+          await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
+          console.log(`[D4SIGN] Signatários da procuração cadastrados com sucesso (tentativa ${tentativa}/${maxTentativas}):`, signers.map(s => s.email).join(', '));
+          signatariosCadastrados = true;
+          break;
+        } else {
+          console.error(`[D4SIGN] ERRO (tentativa ${tentativa}/${maxTentativas}): Nenhum signatário disponível. Verifique se há emails no card.`);
+          if (tentativa < maxTentativas) {
+            // Tentar preparar signatários novamente
+            await new Promise(r=>setTimeout(r, 1000));
+            signers = montarSigners(d);
+          }
+        }
+      } catch (e) {
+        console.error(`[ERRO] Falha ao cadastrar signatários da procuração (tentativa ${tentativa}/${maxTentativas}):`, e.message);
+        if (tentativa < maxTentativas) {
+          await new Promise(r=>setTimeout(r, 2000));
+          // Tentar novamente
+        } else {
+          console.error('[D4SIGN] ERRO CRÍTICO: Não foi possível cadastrar signatários após múltiplas tentativas.');
+        }
+      }
+    }
+    
+    if (!signatariosCadastrados) {
+      console.error('[D4SIGN] AVISO: Procuração criada mas signatários não foram cadastrados. Será necessário cadastrar manualmente.');
     }
   } catch (e) {
     console.error('[ERRO] Falha ao gerar procuração:', e.message);
@@ -1888,7 +1925,7 @@ if (TEMPLATE_UUID_PROCURACAO) {
     await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
 
     await new Promise(r=>setTimeout(r, 2000));
-    await moveCardToPhaseSafe(card.id, PHASE_ID_CONTRATO_ENVIADO);
+    // Movimentação de card removida conforme solicitado
 
     releaseLock(lockKey);
 
