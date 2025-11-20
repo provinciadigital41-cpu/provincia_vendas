@@ -1735,6 +1735,15 @@ if (TEMPLATE_UUID_PROCURACAO) {
       console.error('[ERRO] Falha ao salvar uuid da procuração no card:', e.message);
     }
 
+    // Aguardar documento estar pronto
+    await new Promise(r=>setTimeout(r, 3000));
+    try { 
+      await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao); 
+      console.log('[D4SIGN] Status da procuração verificado.');
+    } catch (e) {
+      console.warn('[D4SIGN] Aviso ao verificar status da procuração:', e.message);
+    }
+
     // Registrar webhook da procuração (opcional - se quiser rastrear quando for assinada)
     try {
       await registerWebhookForDocument(
@@ -1752,7 +1761,7 @@ if (TEMPLATE_UUID_PROCURACAO) {
     await new Promise(r=>setTimeout(r, 2000));
     try {
       await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-      console.log('[D4SIGN] Signatários da procuração cadastrados.');
+      console.log('[D4SIGN] Signatários da procuração cadastrados:', signers.map(s => s.email).join(', '));
     } catch (e) {
       console.error('[ERRO] Falha ao cadastrar signatários da procuração:', e.message);
     }
@@ -1844,8 +1853,11 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     // Buscar informações do card (procuração e equipe para identificar o cofre)
     let uuidProcuracao = null;
     let nomeCofre = 'Cofre não identificado';
+    let card = null;
+    let signers = null;
+    
     try {
-      const card = await getCard(cardId);
+      card = await getCard(cardId);
       const by = toById(card);
       uuidProcuracao = by['d4_uuid_procuracao'] || null;
       
@@ -1859,6 +1871,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         uuidCofre = DEFAULT_COFRE_UUID;
       }
       nomeCofre = getNomeCofreByUuid(uuidCofre);
+      
+      // Preparar signatários para usar na procuração
+      if (uuidProcuracao) {
+        const d = await montarDados(card);
+        signers = montarSigners(d);
+      }
     } catch (e) {
       console.warn('[SEND] Erro ao buscar informações do card:', e.message);
     }
@@ -1869,11 +1887,30 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       skip_email: '0',
       workflow: '0'
     });
-    console.log('[SEND] Contrato e procuração foram enviados para assinatura:', uuidDoc);
+    console.log('[SEND] Contrato enviado para assinatura:', uuidDoc);
 
     // Enviar procuração também, se existir
-    if (uuidProcuracao) {
+    if (uuidProcuracao && signers) {
       try {
+        // Verificar status do documento antes de enviar
+        await new Promise(r=>setTimeout(r, 2000));
+        try { 
+          await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao); 
+        } catch (e) {
+          console.warn('[SEND] Erro ao verificar status da procuração:', e.message);
+        }
+        
+        // Garantir que os signatários estão cadastrados antes de enviar
+        try {
+          await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
+          console.log('[SEND] Signatários da procuração confirmados/cadastrados.');
+        } catch (e) {
+          console.warn('[SEND] Aviso ao cadastrar signatários da procuração (podem já estar cadastrados):', e.message);
+        }
+        
+        // Aguardar um pouco antes de enviar
+        await new Promise(r=>setTimeout(r, 2000));
+        
         await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, {
           message: 'Olá! Há uma procuração aguardando sua assinatura.',
           skip_email: '0',
@@ -1884,6 +1921,8 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         console.error('[ERRO] Falha ao enviar procuração:', e.message);
         // Continua mesmo se a procuração falhar
       }
+    } else if (uuidProcuracao) {
+      console.warn('[SEND] Procuração encontrada mas não foi possível preparar signatários');
     }
 
     const okHtml = `
