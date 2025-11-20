@@ -1306,7 +1306,19 @@ function montarSigners(d, incluirTelefone = false){
       send_email:'1' 
     };
     if (incluirTelefone && telefonePrincipal) {
-      signer.phone = normalizePhone(telefonePrincipal);
+      // Formatar telefone para formato internacional (+55...)
+      let phone = telefonePrincipal.replace(/[^\d+]/g, '');
+      // Se não começar com +, adicionar +55 (Brasil)
+      if (!phone.startsWith('+')) {
+        // Se começar com 0, remover
+        if (phone.startsWith('0')) {
+          phone = phone.substring(1);
+        }
+        // Adicionar código do país Brasil (+55)
+        phone = '+55' + phone;
+      }
+      signer.phone = phone;
+      console.log(`[SIGNERS] Telefone preparado para ${signer.name}: ${signer.phone}`);
     }
     list.push(signer);
   }
@@ -1320,7 +1332,19 @@ function montarSigners(d, incluirTelefone = false){
       send_email:'1' 
     };
     if (incluirTelefone && d.telefone_cotitular_envio) {
-      signer.phone = normalizePhone(d.telefone_cotitular_envio);
+      // Formatar telefone para formato internacional (+55...)
+      let phone = d.telefone_cotitular_envio.replace(/[^\d+]/g, '');
+      // Se não começar com +, adicionar +55 (Brasil)
+      if (!phone.startsWith('+')) {
+        // Se começar com 0, remover
+        if (phone.startsWith('0')) {
+          phone = phone.substring(1);
+        }
+        // Adicionar código do país Brasil (+55)
+        phone = '+55' + phone;
+      }
+      signer.phone = phone;
+      console.log(`[SIGNERS] Telefone preparado para ${signer.name}: ${signer.phone}`);
     }
     list.push(signer);
   }
@@ -1423,17 +1447,41 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
         email: s.email, 
         name: s.name, 
         act: s.act || '1', 
-        foreign: s.foreign || '0', 
-        send_email: usarWhatsApp ? '0' : (s.send_email || '1')
+        foreign: s.foreign || '0'
       };
-      // Se for WhatsApp e tiver telefone, incluir
+      
+      // Configurar envio por email ou WhatsApp
       if (usarWhatsApp && s.phone) {
-        signer.phone = s.phone;
+        // O telefone já deve estar formatado com +55 pela função montarSigners
+        // Mas vamos garantir que está no formato correto
+        let phoneFormatted = String(s.phone).trim();
+        // Remover todos os caracteres não numéricos exceto +
+        phoneFormatted = phoneFormatted.replace(/[^\d+]/g, '');
+        
+        // Se não começar com +, adicionar +55 (Brasil)
+        if (!phoneFormatted.startsWith('+')) {
+          // Se começar com 0, remover
+          if (phoneFormatted.startsWith('0')) {
+            phoneFormatted = phoneFormatted.substring(1);
+          }
+          // Adicionar código do país Brasil (+55)
+          phoneFormatted = '+55' + phoneFormatted;
+        }
+        
+        signer.phone = phoneFormatted;
         signer.send_whatsapp = '1';
+        signer.send_email = '0';
+        console.log(`[CADASTRO] Signatário ${s.name} configurado para WhatsApp: ${phoneFormatted} (email: ${s.email})`);
+      } else {
+        signer.send_email = s.send_email || '1';
+        signer.send_whatsapp = '0';
       }
+      
       return signer;
     }) 
   };
+  
+  console.log(`[CADASTRO] Cadastrando signatários para ${usarWhatsApp ? 'WhatsApp' : 'email'}:`, JSON.stringify(body, null, 2));
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -2011,10 +2059,20 @@ if (TEMPLATE_UUID_PROCURACAO) {
     Documentos salvos no cofre padrão: <strong>${nomeCofreUsado}</strong>
   </div>
   ` : ''}
+  ${d.telefone_envio_contrato || d.telefone ? `
+  <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
+    <strong>Telefone para WhatsApp:</strong> ${d.telefone_envio_contrato || d.telefone || 'Não informado'}
+  </div>
+  ` : ''}
+  ${d.email_envio_contrato || d.email ? `
+  <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
+    <strong>Email para envio:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}
+  </div>
+  ` : ''}
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
     <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
-    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp" style="background:#25D366">Enviar por WhatsApp</button>
+    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">Enviar por WhatsApp</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
@@ -2024,7 +2082,7 @@ if (TEMPLATE_UUID_PROCURACAO) {
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
       <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
-      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp" style="background:#25D366">Enviar por WhatsApp</button>
+      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp">Enviar por WhatsApp</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
@@ -2054,19 +2112,13 @@ async function enviarContrato(token, uuidDoc, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const canalMsg = canal === 'whatsapp' ? ' por WhatsApp' : ' por email';
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + canalMsg + '.' + cofreMsg + '</span>';
-      btn.textContent = 'Contrato enviado';
+      const destinoMsg = canal === 'whatsapp' 
+        ? (data.telefone ? ' para ' + data.telefone + ' por WhatsApp' : ' por WhatsApp')
+        : (data.email ? ' para ' + data.email + ' por email' : ' por email');
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>';
+      btn.textContent = canal === 'whatsapp' ? 'Enviado por WhatsApp' : 'Enviado por Email';
       btn.style.background = '#28a745';
       btn.disabled = true;
-      // Desabilitar o outro botão também
-      if (canal === 'whatsapp') {
-        btnEmail.disabled = true;
-        btnEmail.style.opacity = '0.6';
-      } else {
-        btnWhatsapp.disabled = true;
-        btnWhatsapp.style.opacity = '0.6';
-      }
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Contrato: ' + errorMsg + '</span>';
@@ -2100,19 +2152,13 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const canalMsg = canal === 'whatsapp' ? ' por WhatsApp' : ' por email';
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + canalMsg + '.' + cofreMsg + '</span>';
-      btn.textContent = 'Procuração enviada';
+      const destinoMsg = canal === 'whatsapp' 
+        ? (data.telefone ? ' para ' + data.telefone + ' por WhatsApp' : ' por WhatsApp')
+        : (data.email ? ' para ' + data.email + ' por email' : ' por email');
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>';
+      btn.textContent = canal === 'whatsapp' ? 'Enviado por WhatsApp' : 'Enviado por Email';
       btn.style.background = '#28a745';
       btn.disabled = true;
-      // Desabilitar o outro botão também
-      if (canal === 'whatsapp') {
-        btnEmail.disabled = true;
-        btnEmail.style.opacity = '0.6';
-      } else {
-        btnWhatsapp.disabled = true;
-        btnWhatsapp.style.opacity = '0.6';
-      }
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Procuração: ' + errorMsg + '</span>';
@@ -2254,11 +2300,25 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     
     if (signers && signers.length > 0) {
       try {
+        // Para WhatsApp, precisamos garantir que os signatários tenham telefone
+        if (canal === 'whatsapp') {
+          const signersComTelefone = signers.filter(s => s.phone);
+          if (signersComTelefone.length === 0) {
+            throw new Error('Nenhum signatário possui telefone cadastrado para envio por WhatsApp.');
+          }
+          console.log(`[SEND] Cadastrando ${signersComTelefone.length} signatário(s) com telefone para WhatsApp`);
+          console.log(`[SEND] Telefones:`, signersComTelefone.map(s => `${s.name}: ${s.phone}`).join(', '));
+        }
         await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers, canal === 'whatsapp');
-        console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} confirmados/cadastrados:`, signers.map(s => s.email).join(', '));
+        console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} confirmados/cadastrados para ${canal}:`, signers.map(s => {
+          if (canal === 'whatsapp' && s.phone) {
+            return `${s.name} (${s.phone})`;
+          }
+          return `${s.name} (${s.email})`;
+        }).join(', '));
       } catch (e) {
-        console.warn(`[SEND] Aviso ao cadastrar signatários do ${isProcuracao ? 'procuração' : 'contrato'} (podem já estar cadastrados):`, e.message);
-        // Não bloqueia se já estiverem cadastrados, mas loga o aviso
+        console.error(`[SEND] Erro ao cadastrar signatários do ${isProcuracao ? 'procuração' : 'contrato'} para ${canal}:`, e.message);
+        throw e; // Propaga o erro para que o usuário saiba
       }
     } else {
       const erro = new Error(`Nenhum signatário encontrado para o ${isProcuracao ? 'procuração' : 'contrato'}. Verifique se há ${canal === 'whatsapp' ? 'telefone' : 'email'} configurado no card do Pipefy.`);
@@ -2289,6 +2349,19 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       throw e; // Propaga o erro para que o usuário saiba
     }
 
+    // Buscar email/telefone usado para incluir na resposta
+    let emailUsado = null;
+    let telefoneUsado = null;
+    if (!card) {
+      card = await getCard(cardId);
+    }
+    const dFinal = await montarDados(card);
+    if (canal === 'whatsapp') {
+      telefoneUsado = dFinal.telefone_envio_contrato || dFinal.telefone || null;
+    } else {
+      emailUsado = dFinal.email_envio_contrato || dFinal.email || null;
+    }
+    
     // Liberar lock após envio bem-sucedido
     releaseLock(lockKey);
     
@@ -2296,7 +2369,9 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       success: true,
       message: `${isProcuracao ? 'Procuração' : 'Contrato'} enviado com sucesso. Os signatários foram notificados.`,
       tipo: isProcuracao ? 'procuração' : 'contrato',
-      cofre: nomeCofre
+      cofre: nomeCofre,
+      email: emailUsado,
+      telefone: telefoneUsado
     });
 
   } catch (e) {
@@ -2426,110 +2501,3 @@ async function findCardIdByD4Uuid(uuidDocument) {
 // ===============================
 // NOVO — ANEXA CONTRATO ASSINADO NO CAMPO DE ANEXO
 // ===============================
-async function anexarContratoAssinadoNoCard(cardId, downloadUrl, fileName) {
-  const newValue = [downloadUrl];
-
-  await updateCardField(cardId, 'contrato', newValue);
-};
-
-/* =========================
- * Geração do link no Pipefy
- * =======================*/
-app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
-  try {
-    const cardId = req.body.cardId || req.body.card_id || req.query.cardId || req.query.card_id;
-    if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
-
-    const card = await getCard(cardId);
-    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
-      return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
-    }
-    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
-      return res.status(400).json({ error: 'Card não está na fase esperada' });
-    }
-
-    const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
-    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
-
-    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
-
-    return res.json({ ok:true, link:url });
-  } catch (e) {
-    console.error('[ERRO criar-link]', e.message||e);
-    return res.status(500).json({ error: String(e.message||e) });
-  }
-});
-app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
-  try {
-    const cardId = req.query.cardId || req.query.card_id;
-    if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
-
-    const card = await getCard(cardId);
-    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
-      return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
-    }
-    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
-      return res.status(400).json({ error: 'Card não está na fase esperada' });
-    }
-
-    const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
-    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
-
-    await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
-
-    return res.json({ ok:true, link:url });
-  } catch (e) {
-    console.error('[ERRO criar-link]', e.message||e);
-    return res.status(500).json({ error: String(e.message||e) });
-  }
-});
-
-/* =========================
- * Debug / Health
- * =======================*/
-app.get('/_echo/*', (req, res) => {
-  res.json({
-    method: req.method,
-    originalUrl: req.originalUrl,
-    path: req.path,
-    baseUrl: req.baseUrl,
-    host: req.get('host'),
-    href: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
-    headers: req.headers,
-    query: req.query,
-  });
-});
-app.get('/debug/card', async (req,res)=>{
-  try{
-    const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
-    const card = await getCard(cardId);
-    res.json({
-      id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
-      fields: (card.fields||[]).map(f => ({ name:f.name, id:f.field?.id, type:f.field?.type, value:f.value, array_value:f.array_value }))
-    });
-  }catch(e){ res.status(500).json({ error:String(e.message||e) }); }
-});
-app.get('/health', (_req,res)=> res.json({ ok:true }));
-
-/* =========================
- * Start
- * =======================*/
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  const list=[];
-  app._router.stack.forEach(m=>{
-    if (m.route && m.route.path){
-      const methods = Object.keys(m.route.methods).map(x=>x.toUpperCase()).join(',');
-      list.push(`${methods} ${m.route.path}`);
-    } else if (m.name==='router' && m.handle?.stack){
-      m.handle.stack.forEach(h=>{
-        const route = h.route;
-        if (route){
-          const methods = Object.keys(route.methods).map(x=>x.toUpperCase()).join(',');
-          list.push(`${methods} ${route.path}`);
-        }
-      });
-    }
-  });
-  console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
-});
