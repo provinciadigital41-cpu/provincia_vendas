@@ -1952,24 +1952,94 @@ if (TEMPLATE_UUID_PROCURACAO) {
   </div>
   ` : ''}
   <div class="row">
-    <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato${uuidProcuracao ? ' e Procuração' : ''}</a>
-    <form method="POST" action="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/send" style="display:inline">
-      <button class="btn" type="submit">Enviar contrato${uuidProcuracao ? ' e procuração' : ''} para assinatura</button>
-    </form>
+    <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
+    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}')" id="btn-enviar-contrato">Enviar contrato para assinatura</button>
   </div>
+  <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
   <div class="section">
     <h3>Procuração gerada com sucesso</h3>
     <p class="muted">UUID da procuração: ${uuidProcuracao}</p>
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
+      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}')" id="btn-enviar-procuracao">Enviar procuração para assinatura</button>
     </div>
+    <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
   ` : ''}
   <div class="row" style="margin-top:24px">
     <a class="btn" href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(token)}">Voltar</a>
   </div>
-</div>`;
+</div>
+<script>
+async function enviarContrato(token, uuidDoc) {
+  const btn = document.getElementById('btn-enviar-contrato');
+  const statusDiv = document.getElementById('status-contrato');
+  
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando contrato...</span>';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso</span>';
+      btn.textContent = 'Contrato enviado';
+      btn.style.background = '#28a745';
+      btn.disabled = true;
+    } else {
+      const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
+      statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Contrato: ' + errorMsg + '</span>';
+      btn.disabled = false;
+      btn.textContent = 'Tentar novamente';
+    }
+  } catch (error) {
+    statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Contrato: Erro ao enviar - ' + error.message + '</span>';
+    btn.disabled = false;
+    btn.textContent = 'Tentar novamente';
+  }
+}
+
+async function enviarProcuracao(token, uuidProcuracao) {
+  const btn = document.getElementById('btn-enviar-procuracao');
+  const statusDiv = document.getElementById('status-procuracao');
+  
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração...</span>';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso</span>';
+      btn.textContent = 'Procuração enviada';
+      btn.style.background = '#28a745';
+      btn.disabled = true;
+    } else {
+      const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
+      statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Procuração: ' + errorMsg + '</span>';
+      btn.disabled = false;
+      btn.textContent = 'Tentar novamente';
+    }
+  } catch (error) {
+    statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Procuração: Erro ao enviar - ' + error.message + '</span>';
+    btn.disabled = false;
+    btn.textContent = 'Tentar novamente';
+  }
+}
+</script>`;
     return res.status(200).send(html);
 
   } catch (e) {
@@ -1995,34 +2065,31 @@ app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
 app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
   const { cardId } = parseLeadToken(req.params.token);
   if (!cardId) {
-    return res.status(400).send('Token inválido');
+    return res.status(400).json({ success: false, message: 'Token inválido' });
   }
   const uuidDoc = req.params.uuid;
   
   // Proteção contra envio duplicado
   const lockKey = `send:${cardId}:${uuidDoc}`;
   if (!acquireLock(lockKey)) {
-    return res.status(200).send(`
-<!doctype html><meta charset="utf-8"><title>Processando</title>
-<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px;text-align:center}</style>
-<div class="box">
-  <h2>⏳ Processando...</h2>
-  <p>O documento já está sendo enviado. Aguarde alguns instantes.</p>
-  <p><a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}">Voltar</a></p>
-</div>`);
+    return res.status(200).json({ success: false, message: 'Documento já está sendo enviado. Aguarde alguns instantes.' });
   }
   
   try {
-    // Buscar informações do card (procuração e equipe para identificar o cofre)
-    let uuidProcuracao = null;
-    let nomeCofre = 'Cofre não identificado';
+    // Buscar informações do card para identificar o tipo de documento
     let card = null;
     let signers = null;
+    let nomeCofre = 'Cofre não identificado';
+    let isProcuracao = false;
     
     try {
       card = await getCard(cardId);
       const by = toById(card);
-      uuidProcuracao = by['d4_uuid_procuracao'] || null;
+      const uuidProcuracaoCard = by['d4_uuid_procuracao'] || null;
+      const uuidContratoCard = by['d4_uuid_contrato'] || null;
+      
+      // Determinar se é contrato ou procuração
+      isProcuracao = (uuidProcuracaoCard === uuidDoc);
       
       // Buscar equipe contrato para identificar o cofre
       const equipeContrato = getEquipeContratoFromCard(card);
@@ -2035,34 +2102,35 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       }
       nomeCofre = getNomeCofreByUuid(uuidCofre);
       
-      // Preparar signatários (serão usados tanto para contrato quanto para procuração)
+      // Preparar signatários
       const d = await montarDados(card);
       signers = montarSigners(d);
-      console.log('[SEND] Signatários preparados:', signers.map(s => s.email).join(', '));
+      console.log(`[SEND] Enviando ${isProcuracao ? 'procuração' : 'contrato'}. Signatários preparados:`, signers.map(s => s.email).join(', '));
     } catch (e) {
       console.warn('[SEND] Erro ao buscar informações do card:', e.message);
+      throw new Error('Não foi possível buscar informações do card: ' + e.message);
     }
 
-    // Verificar status do contrato antes de enviar
+    // Verificar status do documento antes de enviar
     await new Promise(r=>setTimeout(r, 2000));
     try { 
       await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); 
-      console.log('[SEND] Status do contrato verificado.');
+      console.log(`[SEND] Status do ${isProcuracao ? 'procuração' : 'contrato'} verificado.`);
     } catch (e) {
-      console.warn('[SEND] Aviso ao verificar status do contrato:', e.message);
+      console.warn(`[SEND] Aviso ao verificar status do ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
     }
     
-    // Garantir que os signatários estão cadastrados no contrato antes de enviar
-    if (!signers) {
+    // Garantir que os signatários estão cadastrados antes de enviar
+    if (!signers || signers.length === 0) {
       try {
         if (!card) {
           card = await getCard(cardId);
         }
         const d = await montarDados(card);
         signers = montarSigners(d);
-        console.log('[SEND] Signatários do contrato preparados:', signers.map(s => s.email).join(', '));
+        console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} preparados:`, signers.map(s => s.email).join(', '));
       } catch (e) {
-        console.error('[SEND] Erro ao preparar signatários do contrato:', e.message);
+        console.error(`[SEND] Erro ao preparar signatários do ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
         const erro = new Error('Não foi possível preparar os dados dos signatários. Verifique se o card possui todas as informações necessárias (nome, email, etc.).');
         erro.causa = e.message;
         throw erro;
@@ -2072,13 +2140,13 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     if (signers && signers.length > 0) {
       try {
         await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
-        console.log('[SEND] Signatários do contrato confirmados/cadastrados:', signers.map(s => s.email).join(', '));
+        console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} confirmados/cadastrados:`, signers.map(s => s.email).join(', '));
       } catch (e) {
-        console.warn('[SEND] Aviso ao cadastrar signatários do contrato (podem já estar cadastrados):', e.message);
+        console.warn(`[SEND] Aviso ao cadastrar signatários do ${isProcuracao ? 'procuração' : 'contrato'} (podem já estar cadastrados):`, e.message);
         // Não bloqueia se já estiverem cadastrados, mas loga o aviso
       }
     } else {
-      const erro = new Error('Nenhum signatário encontrado para o contrato. Verifique se há email configurado no card do Pipefy.');
+      const erro = new Error(`Nenhum signatário encontrado para o ${isProcuracao ? 'procuração' : 'contrato'}. Verifique se há email configurado no card do Pipefy.`);
       erro.tipo = 'SEM_SIGNATARIOS';
       throw erro;
     }
@@ -2086,82 +2154,32 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     // Aguardar um pouco antes de enviar
     await new Promise(r=>setTimeout(r, 2000));
     
-    // Enviar contrato
+    // Enviar documento (contrato ou procuração)
     try {
+      const mensagem = isProcuracao 
+        ? 'Olá! Há uma procuração aguardando sua assinatura.'
+        : 'Olá! Há um documento aguardando sua assinatura.';
+      
       await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
-        message: 'Olá! Há um documento aguardando sua assinatura.',
+        message: mensagem,
         skip_email: '0',
         workflow: '0'
       });
-      console.log('[SEND] Contrato enviado para assinatura:', uuidDoc);
+      console.log(`[SEND] ${isProcuracao ? 'Procuração' : 'Contrato'} enviado para assinatura:`, uuidDoc);
     } catch (e) {
-      console.error('[ERRO] Falha ao enviar contrato:', e.message);
+      console.error(`[ERRO] Falha ao enviar ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
       throw e; // Propaga o erro para que o usuário saiba
-    }
-
-    // Enviar procuração também, se existir
-    if (uuidProcuracao) {
-      try {
-        // Garantir que temos signatários
-        if (!signers || signers.length === 0) {
-          console.warn('[SEND] Procuração encontrada mas não há signatários disponíveis. Preparando signatários...');
-          if (!card) {
-            card = await getCard(cardId);
-          }
-          const d = await montarDados(card);
-          signers = montarSigners(d);
-          console.log('[SEND] Signatários da procuração preparados:', signers.map(s => s.email).join(', '));
-        }
-        
-        if (signers && signers.length > 0) {
-          // Verificar status do documento antes de enviar
-          await new Promise(r=>setTimeout(r, 2000));
-          try { 
-            await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao); 
-          } catch (e) {
-            console.warn('[SEND] Erro ao verificar status da procuração:', e.message);
-          }
-          
-          // Garantir que os signatários estão cadastrados antes de enviar
-          try {
-            await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-            console.log('[SEND] Signatários da procuração confirmados/cadastrados:', signers.map(s => s.email).join(', '));
-          } catch (e) {
-            console.warn('[SEND] Aviso ao cadastrar signatários da procuração (podem já estar cadastrados):', e.message);
-            // Continua mesmo se falhar, pois podem já estar cadastrados
-          }
-          
-          // Aguardar um pouco antes de enviar
-          await new Promise(r=>setTimeout(r, 2000));
-          
-          await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, {
-            message: 'Olá! Há uma procuração aguardando sua assinatura.',
-            skip_email: '0',
-            workflow: '0'
-          });
-          console.log('[SEND] Procuração enviada para assinatura:', uuidProcuracao);
-        } else {
-          console.error('[SEND] Não foi possível preparar signatários para a procuração');
-        }
-      } catch (e) {
-        console.error('[ERRO] Falha ao enviar procuração:', e.message);
-        // Continua mesmo se a procuração falhar, mas loga o erro
-      }
     }
 
     // Liberar lock após envio bem-sucedido
     releaseLock(lockKey);
     
-    const okHtml = `
-<!doctype html><meta charset="utf-8"><title>Documento enviado</title>
-<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;background:#f7f7f7} .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:560px}</style>
-<div class="box">
-  <h2>${uuidProcuracao ? 'Contrato e procuração enviados com sucesso' : 'Contrato enviado com sucesso'}</h2>
-  <p>${uuidProcuracao ? 'Contrato e procuração foram enviados.' : 'O contrato foi enviado.'}</p>
-  <p>Os signatários foram notificados. Salvo no cofre: ${nomeCofre}</p>
-  <p><a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}">Voltar</a></p>
-</div>`;
-    return res.status(200).send(okHtml);
+    return res.status(200).json({
+      success: true,
+      message: `${isProcuracao ? 'Procuração' : 'Contrato'} enviado com sucesso. Os signatários foram notificados.`,
+      tipo: isProcuracao ? 'procuração' : 'contrato',
+      cofre: nomeCofre
+    });
 
   } catch (e) {
     // Liberar lock em caso de erro
@@ -2177,7 +2195,6 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       stack: e.stack,
       cardId: cardId,
       uuidDoc: uuidDoc,
-      uuidProcuracao: uuidProcuracao,
       statusCode: e.statusCode
     });
     
@@ -2229,34 +2246,13 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       detalhesAdicionais = 'O problema é temporário. Tente novamente em alguns minutos.';
     }
     
-    const errorHtml = `
-<!doctype html><meta charset="utf-8"><title>Erro ao enviar</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;margin:0}
-  .box{background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:600px;width:92%}
-  h2{color:#d32f2f;margin:0 0 16px;font-size:24px}
-  .error-box{background:#ffebee;border-left:4px solid #d32f2f;padding:16px;border-radius:4px;margin:20px 0}
-  .error-box strong{display:block;margin-bottom:8px;color:#c62828;font-size:16px}
-  .error-box p{margin:8px 0;color:#424242;line-height:1.6}
-  .detalhes{background:#f5f5f5;padding:12px;border-radius:4px;margin:16px 0;font-size:14px;color:#616161}
-  .btn{display:inline-block;padding:12px 24px;border-radius:8px;text-decoration:none;background:#1976d2;color:#fff;font-weight:600;margin-top:16px}
-  .btn:hover{background:#1565c0}
-  .icon{font-size:48px;text-align:center;margin-bottom:16px}
-</style>
-<div class="box">
-  <div class="icon">⚠️</div>
-  <h2>${tituloErro}</h2>
-  <div class="error-box">
-    <strong>O que aconteceu?</strong>
-    <p>${mensagemErro}</p>
-    ${detalhesAdicionais ? `<div class="detalhes"><strong>Dica:</strong> ${detalhesAdicionais}</div>` : ''}
-  </div>
-  <p style="color:#757575;font-size:14px;margin-top:20px">
-    Se o problema persistir, entre em contato com o suporte técnico.
-  </p>
-  <a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}" class="btn">Voltar e tentar novamente</a>
-</div>`;
-    return res.status(400).send(errorHtml);
+    // Retornar JSON para requisições AJAX
+    return res.status(400).json({
+      success: false,
+      message: mensagemErro,
+      detalhes: detalhesAdicionais || '',
+      titulo: tituloErro
+    });
   }
 });
 // ===============================
