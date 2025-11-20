@@ -1871,23 +1871,53 @@ app.get('/lead/:token', async (req, res) => {
 });
 
 app.post('/lead/:token/generate', async (req, res) => {
+  let lockKey = null;
+  let cardId = null;
+  
   try {
-    const { cardId } = parseLeadToken(req.params.token);
-    const lockKey = `lead:${cardId}`;
-    if (!acquireLock(lockKey)) return res.status(200).send('Processando, tente novamente em instantes.');
+    const parsed = parseLeadToken(req.params.token);
+    cardId = parsed.cardId;
+    if (!cardId) {
+      throw new Error('Token inválido: cardId não encontrado');
+    }
+    
+    lockKey = `lead:${cardId}`;
+    if (!acquireLock(lockKey)) {
+      return res.status(200).send('Processando, tente novamente em instantes.');
+    }
 
     preflightDNS().catch(()=>{});
 
     const card = await getCard(cardId);
+    if (!card) {
+      throw new Error(`Card ${cardId} não encontrado no Pipefy`);
+    }
+    
     const d = await montarDados(card);
+    if (!d) {
+      throw new Error('Falha ao montar dados do card');
+    }
 
     const now = new Date();
     const nowInfo = { dia: now.getDate(), mes: now.getMonth()+1, ano: now.getFullYear() };
 
+    // Validar template
+    if (!d.templateToUse) {
+      throw new Error('Template não identificado. Verifique os dados do card.');
+    }
+
     const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO;
     const add = isMarcaTemplate ? montarVarsParaTemplateMarca(d, nowInfo)
                                 : montarVarsParaTemplateOutros(d, nowInfo);
+    
+    if (!add || typeof add !== 'object') {
+      throw new Error('Falha ao montar variáveis do template. Verifique os dados do card.');
+    }
+    
     const signers = montarSigners(d);
+    if (!signers || signers.length === 0) {
+      throw new Error('Nenhum signatário encontrado. Verifique se há email configurado no card.');
+    }
 
     // NOVO — Seleciona cofre pela "Equipe contrato"
     const equipeContrato = getEquipeContratoFromCard(card);
@@ -1920,15 +1950,28 @@ app.post('/lead/:token/generate', async (req, res) => {
       throw new Error('Nenhum cofre disponível. Configure DEFAULT_COFRE_UUID ou mapeie a equipe.');
     }
 
-    const uuidDoc = await makeDocFromWordTemplate(
-      D4SIGN_TOKEN,
-      D4SIGN_CRYPT_KEY,
-      uuidSafe,
-      d.templateToUse,
-      d.titulo || card.title,
-      add
-    );
-    console.log(`[D4SIGN] Contrato criado: ${uuidDoc}`);
+    console.log(`[LEAD-GENERATE] Criando contrato no cofre: ${nomeCofreUsado} (${uuidSafe})`);
+    
+    let uuidDoc = null;
+    try {
+      uuidDoc = await makeDocFromWordTemplate(
+        D4SIGN_TOKEN,
+        D4SIGN_CRYPT_KEY,
+        uuidSafe,
+        d.templateToUse,
+        d.titulo || card.title || 'Contrato',
+        add
+      );
+      
+      if (!uuidDoc) {
+        throw new Error('Falha ao criar documento no D4Sign. O documento não foi criado.');
+      }
+      
+      console.log(`[D4SIGN] Contrato criado: ${uuidDoc}`);
+    } catch (e) {
+      console.error('[ERRO] Falha ao criar documento no D4Sign:', e.message);
+      throw new Error(`Erro ao criar documento no D4Sign: ${e.message}`);
+    }
 
 // ===============================
 // NOVO — Cadastrar webhook deste documento
@@ -2193,8 +2236,47 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     return res.status(200).send(html);
 
   } catch (e) {
-    console.error('[ERRO LEAD-GENERATE]', e.message || e);
-    return res.status(400).send('Falha ao gerar o contrato.');
+    console.error('[ERRO LEAD-GENERATE]', {
+      message: e.message || e,
+      stack: e.stack,
+      cardId: req.params.token ? parseLeadToken(req.params.token)?.cardId : 'N/A'
+    });
+    
+    // Liberar lock em caso de erro
+    try {
+      const { cardId } = parseLeadToken(req.params.token);
+      if (cardId) {
+        const lockKey = `lead:${cardId}`;
+        releaseLock(lockKey);
+      }
+    } catch (lockErr) {
+      // Ignora erro ao liberar lock
+    }
+    
+    // Retornar mensagem de erro mais detalhada
+    const errorMessage = e.message || 'Erro desconhecido ao gerar o contrato';
+    return res.status(400).send(`
+<!doctype html><meta charset="utf-8"><title>Erro ao gerar contrato</title>
+<style>
+  body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;margin:0}
+  .box{background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:600px;width:92%}
+  h2{color:#d32f2f;margin:0 0 16px;font-size:24px}
+  .error-box{background:#ffebee;border-left:4px solid #d32f2f;padding:16px;border-radius:4px;margin:20px 0}
+  .error-box strong{display:block;margin-bottom:8px;color:#c62828}
+  .error-box p{margin:8px 0;color:#424242;line-height:1.6}
+  .btn{display:inline-block;padding:12px 24px;border-radius:8px;text-decoration:none;background:#1976d2;color:#fff;font-weight:600;margin-top:16px}
+</style>
+<div class="box">
+  <h2>❌ Erro ao gerar contrato</h2>
+  <div class="error-box">
+    <strong>O que aconteceu?</strong>
+    <p>${errorMessage}</p>
+  </div>
+  <p style="color:#757575;font-size:14px;margin-top:20px">
+    Verifique os logs do servidor para mais detalhes. Se o problema persistir, entre em contato com o suporte técnico.
+  </p>
+  <a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}" class="btn">Voltar e tentar novamente</a>
+</div>`);
   }
 });
 
