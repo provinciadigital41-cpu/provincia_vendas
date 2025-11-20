@@ -2090,11 +2090,6 @@ if (TEMPLATE_UUID_PROCURACAO) {
     Documentos salvos no cofre padrão: <strong>${nomeCofreUsado}</strong>
   </div>
   ` : ''}
-  ${d.telefone_envio_contrato || d.telefone ? `
-  <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
-    <strong>Telefone para WhatsApp:</strong> ${d.telefone_envio_contrato || d.telefone || 'Não informado'}
-  </div>
-  ` : ''}
   ${d.email_envio_contrato || d.email ? `
   <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
     <strong>Email para envio:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}
@@ -2103,7 +2098,6 @@ if (TEMPLATE_UUID_PROCURACAO) {
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
     <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
-    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">Enviar por WhatsApp</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
@@ -2113,7 +2107,6 @@ if (TEMPLATE_UUID_PROCURACAO) {
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
       <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
-      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp">Enviar por WhatsApp</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
@@ -2125,16 +2118,15 @@ if (TEMPLATE_UUID_PROCURACAO) {
 <script>
 async function enviarContrato(token, uuidDoc, canal) {
   const btnEmail = document.getElementById('btn-enviar-contrato-email');
-  const btnWhatsapp = document.getElementById('btn-enviar-contrato-whatsapp');
   const statusDiv = document.getElementById('status-contrato');
-  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
+  const btn = btnEmail;
   
   btn.disabled = true;
   btn.textContent = 'Enviando...';
-  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando contrato por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'email') + '...</span>';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando contrato por email...</span>';
   
   try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/send?canal=' + encodeURIComponent(canal), {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/send?canal=email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -2143,38 +2135,35 @@ async function enviarContrato(token, uuidDoc, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const destinoMsg = canal === 'whatsapp' 
-        ? (data.telefone ? ' para ' + data.telefone + ' por WhatsApp' : ' por WhatsApp')
-        : (data.email ? ' para ' + data.email + ' por email' : ' por email');
+      const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>';
-      btn.textContent = canal === 'whatsapp' ? 'Enviado por WhatsApp' : 'Enviado por Email';
+      btn.textContent = 'Enviado por Email';
       btn.style.background = '#28a745';
       btn.disabled = true;
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Contrato: ' + errorMsg + '</span>';
       btn.disabled = false;
-      btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
+      btn.textContent = 'Enviar por Email';
     }
   } catch (error) {
     statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Contrato: Erro ao enviar - ' + error.message + '</span>';
     btn.disabled = false;
-    btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
+    btn.textContent = 'Enviar por Email';
   }
 }
 
 async function enviarProcuracao(token, uuidProcuracao, canal) {
   const btnEmail = document.getElementById('btn-enviar-procuracao-email');
-  const btnWhatsapp = document.getElementById('btn-enviar-procuracao-whatsapp');
   const statusDiv = document.getElementById('status-procuracao');
-  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
+  const btn = btnEmail;
   
   btn.disabled = true;
   btn.textContent = 'Enviando...';
-  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'email') + '...</span>';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração por email...</span>';
   
   try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send?canal=' + encodeURIComponent(canal), {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send?canal=email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -2183,23 +2172,21 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const destinoMsg = canal === 'whatsapp' 
-        ? (data.telefone ? ' para ' + data.telefone + ' por WhatsApp' : ' por WhatsApp')
-        : (data.email ? ' para ' + data.email + ' por email' : ' por email');
+      const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>';
-      btn.textContent = canal === 'whatsapp' ? 'Enviado por WhatsApp' : 'Enviado por Email';
+      btn.textContent = 'Enviado por Email';
       btn.style.background = '#28a745';
       btn.disabled = true;
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Procuração: ' + errorMsg + '</span>';
       btn.disabled = false;
-      btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
+      btn.textContent = 'Enviar por Email';
     }
   } catch (error) {
     statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Procuração: Erro ao enviar - ' + error.message + '</span>';
     btn.disabled = false;
-    btn.textContent = canal === 'whatsapp' ? 'Enviar por WhatsApp' : 'Enviar por Email';
+    btn.textContent = 'Enviar por Email';
   }
 }
 </script>`;
@@ -2670,4 +2657,3 @@ app.listen(PORT, () => {
   });
   console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
 });
-
