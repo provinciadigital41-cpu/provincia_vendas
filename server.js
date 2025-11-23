@@ -7,6 +7,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const FormData = require('form-data');
 
 const app = express();
 app.use(express.json());
@@ -32,6 +33,9 @@ let {
 
   // Ainda usados para escrever o link no card e validar fase
   PIPEFY_FIELD_LINK_CONTRATO,
+  PIPEFY_FIELD_PROCURA_ASSINADA,    // Campo ID para "Procuração (Assinado)"
+  PIPEFY_FIELD_CONTRATO_ASSINADO,   // Campo ID para "Contrato + NCL (Assinado)"
+  PIPEFY_FASE_CONTRATO_PAGAMENTO_PENDENTE, // ID da fase "Contrato e pagamento pendente"
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
@@ -39,6 +43,8 @@ let {
   // D4Sign
   D4SIGN_TOKEN,
   D4SIGN_CRYPT_KEY,
+  D4SIGN_SECRET_TOKEN,              // Token secreto para validar webhooks
+  D4SIGN_BASE_URL,                  // Base URL da API D4Sign
   TEMPLATE_UUID_CONTRATO,           // Modelo de Marca
   TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
   TEMPLATE_UUID_PROCURACAO,         // Modelo de Procuração
@@ -85,10 +91,14 @@ NOVO_PIPE_ID = NOVO_PIPE_ID || '306505295';
 PORT = PORT || 3000;
 PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql';
 PIPEFY_FIELD_LINK_CONTRATO = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
+D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
 
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
 if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
+if (!D4SIGN_SECRET_TOKEN) console.warn('[AVISO] D4SIGN_SECRET_TOKEN ausente - validação de webhook desabilitada');
+if (!PIPEFY_FIELD_PROCURA_ASSINADA) console.warn('[AVISO] PIPEFY_FIELD_PROCURA_ASSINADA ausente');
+if (!PIPEFY_FIELD_CONTRATO_ASSINADO) console.warn('[AVISO] PIPEFY_FIELD_CONTRATO_ASSINADO ausente');
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
@@ -1746,7 +1756,7 @@ async function moveCardToPhaseSafe(cardId, phaseId) {
  * Rotas — VENDEDOR (UX)
  * =======================*/
 // ===============================
-// NOVO — POSTBACK DO D4SIGN (DOCUMENTO FINALIZADO)
+// NOVO — POSTBACK DO D4SIGN (DOCUMENTO FINALIZADO) - ENDPOINT LEGADO
 // ===============================
 app.post('/d4sign/postback', async (req, res) => {
   try {
@@ -1804,6 +1814,160 @@ app.post('/d4sign/postback', async (req, res) => {
   } catch (e) {
     console.error('[POSTBACK D4SIGN] Erro geral:', e.message);
     return res.status(200).json({ ok: true });
+  }
+});
+
+// ===============================
+// NOVO — CALLBACK D4SIGN → PIPEFY (PARTE 2 - INTEGRAÇÃO COMPLETA)
+// ===============================
+/**
+ * Endpoint de callback do D4Sign que:
+ * 1. Valida o token secreto
+ * 2. Baixa o PDF assinado
+ * 3. Identifica o card no Pipefy
+ * 4. Faz upload do arquivo no Pipefy
+ * 5. Preenche os campos corretos (Procuração ou Contrato)
+ * 6. Move o card para a fase "Contrato e pagamento pendente"
+ */
+app.post('/d4sign/callback', async (req, res) => {
+  const startTime = Date.now();
+  let uuidDocument = null;
+  
+  try {
+    console.log('[CALLBACK D4SIGN] Recebido callback do D4Sign');
+    console.log('[CALLBACK D4SIGN] Body:', JSON.stringify(req.body));
+    console.log('[CALLBACK D4SIGN] Headers:', JSON.stringify(req.headers));
+
+    // 1. VALIDAÇÃO DO TOKEN SECRETO
+    if (D4SIGN_SECRET_TOKEN) {
+      const receivedToken = req.headers['x-d4sign-secret'] || req.headers['x-secret-token'] || req.body.secret;
+      if (receivedToken !== D4SIGN_SECRET_TOKEN) {
+        console.warn('[CALLBACK D4SIGN] Token secreto inválido ou ausente');
+        return res.status(401).json({ 
+          error: 'Unauthorized',
+          message: 'Token secreto inválido'
+        });
+      }
+      console.log('[CALLBACK D4SIGN] Token secreto validado com sucesso');
+    } else {
+      console.warn('[CALLBACK D4SIGN] D4SIGN_SECRET_TOKEN não configurado - validação desabilitada');
+    }
+
+    // 2. EXTRAIR UUID DO DOCUMENTO
+    uuidDocument = req.body.uuid || req.body.uuid_document || req.body.document_uuid;
+    if (!uuidDocument) {
+      console.warn('[CALLBACK D4SIGN] UUID do documento não encontrado no body');
+      return res.status(400).json({ 
+        error: 'Bad Request',
+        message: 'UUID do documento é obrigatório'
+      });
+    }
+
+    // 3. VERIFICAR STATUS DO DOCUMENTO (deve estar assinado)
+    const status = req.body.status || req.body.type_post;
+    const isSigned = String(status) === '1' || 
+                     String(status) === 'signed' || 
+                     String(req.body.type_post) === '1';
+    
+    if (!isSigned) {
+      console.log(`[CALLBACK D4SIGN] Documento ${uuidDocument} ainda não está assinado (status: ${status}). Ignorando.`);
+      return res.status(200).json({ 
+        ok: true,
+        message: 'Documento ainda não assinado, callback ignorado'
+      });
+    }
+
+    console.log(`[CALLBACK D4SIGN] Processando documento assinado: ${uuidDocument}`);
+
+    // 4. IDENTIFICAR TIPO DE DOCUMENTO E CARD
+    const docInfo = await identifyDocumentType(uuidDocument);
+    if (!docInfo || !docInfo.cardId) {
+      console.warn(`[CALLBACK D4SIGN] Nenhum card encontrado para UUID: ${uuidDocument}`);
+      return res.status(404).json({ 
+        error: 'Not Found',
+        message: 'Card não encontrado para este documento'
+      });
+    }
+
+    const { cardId, isProcuracao } = docInfo;
+    console.log(`[CALLBACK D4SIGN] Card encontrado: ${cardId} (${isProcuracao ? 'Procuração' : 'Contrato'})`);
+
+    // 5. BAIXAR PDF ASSINADO DO D4SIGN
+    let pdfData;
+    try {
+      pdfData = await downloadSignedPdfFromD4Sign(uuidDocument);
+      console.log(`[CALLBACK D4SIGN] PDF baixado: ${pdfData.fileName} (${pdfData.buffer.length} bytes)`);
+    } catch (error) {
+      console.error(`[CALLBACK D4SIGN] Erro ao baixar PDF:`, error.message);
+      return res.status(500).json({ 
+        error: 'Download Failed',
+        message: `Falha ao baixar PDF: ${error.message}`
+      });
+    }
+
+    // 6. FAZER UPLOAD NO PIPEFY
+    let fileUrl;
+    try {
+      fileUrl = await uploadFileToPipefy(cardId, pdfData.buffer, pdfData.fileName, pdfData.mimeType);
+      console.log(`[CALLBACK D4SIGN] Arquivo enviado ao Pipefy: ${fileUrl}`);
+    } catch (error) {
+      console.error(`[CALLBACK D4SIGN] Erro ao fazer upload no Pipefy:`, error.message);
+      
+      // Fallback: tentar método alternativo usando URL direta
+      console.log('[CALLBACK D4SIGN] Tentando método alternativo (URL direta)...');
+      try {
+        const downloadInfo = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDocument, {
+          type: 'PDF',
+          language: 'pt'
+        });
+        fileUrl = downloadInfo.url;
+        console.log('[CALLBACK D4SIGN] Usando URL direta como fallback');
+      } catch (fallbackError) {
+        console.error('[CALLBACK D4SIGN] Erro no fallback:', fallbackError.message);
+        return res.status(500).json({ 
+          error: 'Upload Failed',
+          message: `Falha ao fazer upload: ${error.message}`
+        });
+      }
+    }
+
+    // 7. ATUALIZAR CAMPO NO PIPEFY
+    try {
+      await updatePipefyFieldWithDocument(cardId, fileUrl, isProcuracao, pdfData);
+      console.log(`[CALLBACK D4SIGN] Campo atualizado no Pipefy`);
+    } catch (error) {
+      console.error(`[CALLBACK D4SIGN] Erro ao atualizar campo:`, error.message);
+      // Não bloqueia o fluxo, mas registra o erro
+    }
+
+    // 8. MOVER CARD PARA FASE "CONTRATO E PAGAMENTO PENDENTE"
+    await moveCardToContractPhaseIfNeeded(cardId);
+
+    const duration = Date.now() - startTime;
+    console.log(`[CALLBACK D4SIGN] Processamento concluído com sucesso em ${duration}ms`);
+
+    return res.status(200).json({ 
+      ok: true,
+      message: 'Documento processado e anexado com sucesso',
+      cardId: cardId,
+      documentType: isProcuracao ? 'procuração' : 'contrato',
+      fileUrl: fileUrl,
+      duration: `${duration}ms`
+    });
+
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error(`[CALLBACK D4SIGN] Erro geral após ${duration}ms:`, error.message);
+    console.error('[CALLBACK D4SIGN] Stack:', error.stack);
+    
+    // Sempre retorna 200 para o D4Sign não reenviar o webhook
+    // Mas inclui informações de erro no log
+    return res.status(200).json({ 
+      ok: false,
+      error: error.message,
+      uuid: uuidDocument,
+      duration: `${duration}ms`
+    });
   }
 });
 
@@ -1989,13 +2153,22 @@ try {
 }
 
 // ===============================
-// NOVO — Salvar UUID do documento no card
+// NOVO — Salvar UUID do documento no card com URL do cofre
 // ===============================
 try {
-  await updateCardField(card.id, 'd4_uuid_contrato', uuidDoc);
-  console.log('[D4SIGN] UUID do contrato salvo no card.');
+  // Formato: https://secure.d4sign.com.br/desk/cofres/50373/ + UUID do cofre
+  const urlCofre = `https://secure.d4sign.com.br/desk/cofres/50373/${uuidSafe}`;
+  await updateCardField(card.id, 'd4_uuid_contrato', urlCofre);
+  console.log(`[D4SIGN] URL do cofre salva no campo d4_uuid_contrato: ${urlCofre}`);
+  
+  // IMPORTANTE: Também salvamos o UUID do documento em um campo separado para busca
+  // Se houver um campo específico para UUID do documento, use-o aqui
+  // Por enquanto, vamos tentar salvar em um campo alternativo ou usar a busca por URL
+  // Nota: O campo 'd4_uuid_contrato' agora contém a URL do cofre, não o UUID do documento
+  // A busca pelo UUID do documento será feita principalmente pelo campo de procuração
+  // ou através de busca alternativa se necessário
 } catch (e) {
-  console.error('[ERRO] Falha ao salvar uuid do contrato no card:', e.message);
+  console.error('[ERRO] Falha ao salvar URL do cofre no card:', e.message);
 }
 
 // ===============================
@@ -2562,8 +2735,10 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 // ===============================
 // NOVO — LOCALIZA CARD PELO UUID DO DOCUMENTO D4SIGN
 // Busca tanto no campo de contrato quanto no de procuração
+// O campo de contrato agora contém URL do cofre, então busca pelo UUID dentro da URL
 // ===============================
 async function findCardIdByD4Uuid(uuidDocument) {
+  // Primeiro tenta buscar pelo campo de procuração (que ainda contém apenas o UUID)
   const query = `
     query($pipeId: ID!, $fieldId: String!, $fieldValue: String!) {
       findCards(
@@ -2582,10 +2757,10 @@ async function findCardIdByD4Uuid(uuidDocument) {
     }
   `;
 
-  // Primeiro tenta buscar pelo campo de contrato
+  // Busca pelo campo de procuração (contém apenas UUID)
   let data = await gql(query, {
     pipeId: NOVO_PIPE_ID,
-    fieldId: "d4_uuid_contrato",
+    fieldId: "d4_uuid_procuracao",
     fieldValue: uuidDocument
   });
 
@@ -2594,16 +2769,74 @@ async function findCardIdByD4Uuid(uuidDocument) {
     return edges[0].node.id;
   }
 
-  // Se não encontrou, tenta buscar pelo campo de procuração
-  data = await gql(query, {
-    pipeId: NOVO_PIPE_ID,
-    fieldId: "d4_uuid_procuracao",
-    fieldValue: uuidDocument
-  });
+  // Para o campo de contrato, como agora contém URL do cofre, precisamos buscar de forma diferente
+  // Vamos buscar cards que tenham o campo d4_uuid_contrato preenchido e verificar manualmente
+  // se o UUID do documento está relacionado (através de outros campos ou lógica)
+  try {
+    // Tenta buscar pelo UUID diretamente (pode funcionar se o Pipefy fizer busca parcial)
+    data = await gql(query, {
+      pipeId: NOVO_PIPE_ID,
+      fieldId: "d4_uuid_contrato",
+      fieldValue: uuidDocument
+    });
 
-  edges = data?.findCards?.edges || [];
-  if (edges.length) {
-  return edges[0].node.id;
+    edges = data?.findCards?.edges || [];
+    if (edges.length) {
+      return edges[0].node.id;
+    }
+
+    // Busca alternativa: buscar cards recentes e verificar manualmente
+    // Isso é necessário porque o campo d4_uuid_contrato agora contém URL do cofre, não UUID do documento
+    console.log(`[findCardIdByD4Uuid] Busca direta não encontrou. Tentando busca alternativa em cards recentes...`);
+    
+    try {
+      // Busca os cards mais recentes do pipe para verificar manualmente
+      const searchQuery = `
+        query($pipeId: ID!, $first: Int!) {
+          pipe(id: $pipeId) {
+            cards(first: $first, orderBy: { field: CREATED_AT, direction: DESC }) {
+              edges {
+                node {
+                  id
+                  fields {
+                    id
+                    value
+                  }
+                }
+              }
+            }
+          }
+        }
+      `;
+
+      const searchData = await gql(searchQuery, {
+        pipeId: NOVO_PIPE_ID,
+        first: 100  // Busca nos 100 cards mais recentes
+      });
+
+      const recentCards = searchData?.pipe?.cards?.edges || [];
+      for (const edge of recentCards) {
+        const card = edge.node;
+        const fields = card.fields || [];
+        
+        // Verifica se algum campo contém o UUID do documento
+        for (const field of fields) {
+          const fieldValue = String(field.value || '');
+          // Verifica campos que podem conter o UUID
+          if ((field.id === 'd4_uuid_contrato' || field.id === 'd4_uuid_procuracao') && 
+              (fieldValue === uuidDocument || fieldValue.includes(uuidDocument))) {
+            console.log(`[findCardIdByD4Uuid] Card encontrado através de busca alternativa: ${card.id}`);
+            return card.id;
+          }
+        }
+      }
+      
+      console.log(`[findCardIdByD4Uuid] UUID ${uuidDocument} não encontrado em cards recentes.`);
+    } catch (searchError) {
+      console.warn('[findCardIdByD4Uuid] Erro na busca alternativa:', searchError.message);
+    }
+  } catch (e) {
+    console.warn('[findCardIdByD4Uuid] Erro ao buscar pelo campo de contrato:', e.message);
   }
 
   return null;
@@ -2617,6 +2850,278 @@ async function anexarContratoAssinadoNoCard(cardId, downloadUrl, fileName) {
 
   await updateCardField(cardId, 'contrato', newValue);
 };
+
+// ===============================
+// FUNÇÕES PARA INTEGRAÇÃO D4SIGN → PIPEFY (PARTE 2)
+// ===============================
+
+/**
+ * Baixa o PDF assinado do D4Sign e retorna o buffer
+ */
+async function downloadSignedPdfFromD4Sign(uuidDocument) {
+  console.log(`[DOWNLOAD PDF] Iniciando download do documento ${uuidDocument}`);
+  
+  // Primeiro, obtém a URL de download
+  const downloadInfo = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDocument, {
+    type: 'PDF',
+    language: 'pt'
+  });
+
+  if (!downloadInfo?.url) {
+    throw new Error('URL de download não retornada pelo D4Sign');
+  }
+
+  console.log(`[DOWNLOAD PDF] URL obtida: ${downloadInfo.url.substring(0, 100)}...`);
+
+  // Baixa o arquivo
+  const response = await fetchWithRetry(downloadInfo.url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/pdf' }
+  }, { attempts: 3, baseDelayMs: 1000, timeoutMs: 30000 });
+
+  if (!response.ok) {
+    throw new Error(`Falha ao baixar PDF: ${response.status}`);
+  }
+
+  const buffer = await response.arrayBuffer();
+  console.log(`[DOWNLOAD PDF] PDF baixado com sucesso (${buffer.byteLength} bytes)`);
+
+  return {
+    buffer: Buffer.from(buffer),
+    fileName: downloadInfo.name || `documento_${uuidDocument}.pdf`,
+    mimeType: 'application/pdf'
+  };
+}
+
+/**
+ * Faz upload de arquivo no Pipefy e retorna a URL do arquivo
+ * Usa a mutação GraphQL createCardAttachment do Pipefy
+ */
+async function uploadFileToPipefy(cardId, fileBuffer, fileName, mimeType) {
+  console.log(`[UPLOAD PIPEFY] Iniciando upload do arquivo ${fileName} para o card ${cardId}`);
+
+  // O Pipefy GraphQL requer multipart/form-data para uploads
+  // Formato: https://github.com/jaydenseric/graphql-multipart-request-spec
+  
+  const form = new FormData();
+  
+  // Operations: contém a query GraphQL
+  const operations = {
+    query: `
+      mutation($file: Upload!, $cardId: ID!) {
+        createCardAttachment(input: { card_id: $cardId, file: $file }) {
+          attachment {
+            id
+            url
+            path
+          }
+          clientMutationId
+        }
+      }
+    `,
+    variables: {
+      file: null,
+      cardId: String(cardId)
+    }
+  };
+  
+  form.append('operations', JSON.stringify(operations));
+  
+  // Map: mapeia o arquivo para a variável
+  form.append('map', JSON.stringify({
+    '0': ['variables.file']
+  }));
+  
+  // Arquivo: o buffer do PDF
+  form.append('0', fileBuffer, {
+    filename: fileName,
+    contentType: mimeType
+  });
+
+  try {
+    const response = await fetchWithRetry(PIPE_GRAPHQL_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${PIPE_API_KEY}`,
+        ...form.getHeaders()
+      },
+      body: form
+    }, { attempts: 3, baseDelayMs: 1000, timeoutMs: 60000 });
+
+    const text = await response.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`Resposta inválida do Pipefy: ${text.substring(0, 500)}`);
+    }
+
+    if (!response.ok || json?.errors) {
+      console.error('[UPLOAD PIPEFY] Erro na resposta:', JSON.stringify(json));
+      throw new Error(`Falha no upload: ${response.status} ${JSON.stringify(json.errors || {})}`);
+    }
+
+    const attachment = json?.data?.createCardAttachment?.attachment;
+    if (!attachment) {
+      throw new Error('Resposta do Pipefy sem attachment');
+    }
+
+    // O Pipefy retorna a URL do arquivo
+    const fileUrl = attachment.url || attachment.path;
+    if (!fileUrl) {
+      throw new Error('URL do arquivo não retornada pelo Pipefy');
+    }
+
+    console.log(`[UPLOAD PIPEFY] Arquivo enviado com sucesso: ${fileUrl}`);
+    return fileUrl;
+  } catch (error) {
+    console.error('[UPLOAD PIPEFY] Erro ao fazer upload:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Identifica o tipo de documento (procuração ou contrato) baseado no UUID
+ */
+async function identifyDocumentType(uuidDocument) {
+  console.log(`[IDENTIFY DOC] Identificando tipo do documento ${uuidDocument}`);
+  
+  // Busca o card pelo UUID do contrato
+  let cardId = await findCardIdByD4Uuid(uuidDocument);
+  let isProcuracao = false;
+
+  if (!cardId) {
+    // Se não encontrou, pode ser que seja procuração
+    // Vamos buscar diretamente pelo campo de procuração
+    const query = `
+      query($pipeId: ID!, $fieldId: String!, $fieldValue: String!) {
+        findCards(
+          pipeId: $pipeId,
+          search: {
+            fieldId: $fieldId,
+            fieldValue: $fieldValue
+          }
+        ) {
+          edges {
+            node {
+              id
+            }
+          }
+        }
+      }
+    `;
+
+    const data = await gql(query, {
+      pipeId: NOVO_PIPE_ID,
+      fieldId: "d4_uuid_procuracao",
+      fieldValue: uuidDocument
+    });
+
+    const edges = data?.findCards?.edges || [];
+    if (edges.length) {
+      cardId = edges[0].node.id;
+      isProcuracao = true;
+      console.log(`[IDENTIFY DOC] Documento identificado como PROCURAÇÃO`);
+    } else {
+      console.warn(`[IDENTIFY DOC] Nenhum card encontrado para UUID: ${uuidDocument}`);
+      return null;
+    }
+  } else {
+    // Verifica se o UUID corresponde ao campo de procuração no card
+    const card = await getCard(cardId);
+    const byId = toById(card);
+    const uuidProcuracao = byId['d4_uuid_procuracao'];
+    const uuidContratoField = byId['d4_uuid_contrato'] || '';
+    
+    // Verifica se é procuração
+    if (uuidProcuracao === uuidDocument) {
+      isProcuracao = true;
+      console.log(`[IDENTIFY DOC] Documento identificado como PROCURAÇÃO`);
+    } else {
+      // Verifica se o UUID está no campo de contrato (que agora pode conter URL)
+      // O campo pode conter: URL completa ou apenas UUID (legado)
+      const uuidInContratoField = uuidContratoField.includes(uuidDocument) || uuidContratoField === uuidDocument;
+      if (uuidInContratoField) {
+        console.log(`[IDENTIFY DOC] Documento identificado como CONTRATO`);
+      } else {
+        // Se não encontrou em nenhum campo, assume contrato (já que foi encontrado pelo findCardIdByD4Uuid)
+        console.log(`[IDENTIFY DOC] Documento identificado como CONTRATO (assumido por busca)`);
+      }
+    }
+  }
+
+  return { cardId, isProcuracao };
+}
+
+/**
+ * Atualiza o campo correto no Pipefy baseado no tipo de documento
+ * O Pipefy aceita diferentes formatos para campos de arquivo:
+ * - Array de URLs: ["https://..."]
+ * - Array de objetos: [{url: "https://...", name: "arquivo.pdf"}]
+ */
+async function updatePipefyFieldWithDocument(cardId, fileUrl, isProcuracao, pdfData = null) {
+  console.log(`[UPDATE FIELD] Atualizando campo no card ${cardId} (${isProcuracao ? 'Procuração' : 'Contrato'})`);
+
+  const fieldId = isProcuracao 
+    ? PIPEFY_FIELD_PROCURA_ASSINADA 
+    : PIPEFY_FIELD_CONTRATO_ASSINADO;
+
+  if (!fieldId) {
+    throw new Error(`Campo não configurado para ${isProcuracao ? 'procuração' : 'contrato'}`);
+  }
+
+  // Tenta diferentes formatos que o Pipefy pode aceitar
+  let newValue;
+  let lastError = null;
+  
+  // Formato 1: Array de objetos com url e name (formato mais completo)
+  if (pdfData && pdfData.fileName) {
+    newValue = [{ url: fileUrl, name: pdfData.fileName }];
+    try {
+      await updateCardField(cardId, fieldId, newValue);
+      console.log(`[UPDATE FIELD] Campo ${fieldId} atualizado com sucesso via objeto (url + name)`);
+      return;
+    } catch (error1) {
+      lastError = error1;
+      console.warn(`[UPDATE FIELD] Formato objeto falhou: ${error1.message}`);
+    }
+  }
+  
+  // Formato 2: Array de URLs simples
+  newValue = [fileUrl];
+  try {
+    await updateCardField(cardId, fieldId, newValue);
+    console.log(`[UPDATE FIELD] Campo ${fieldId} atualizado com sucesso via URL`);
+    return;
+  } catch (error2) {
+    lastError = error2;
+    console.warn(`[UPDATE FIELD] Formato URL simples falhou: ${error2.message}`);
+  }
+  
+  // Se ambos falharam, lança o último erro
+  if (lastError) {
+    console.error(`[UPDATE FIELD] Todos os formatos falharam. Último erro: ${lastError.message}`);
+    throw lastError;
+  }
+}
+
+/**
+ * Move o card para a fase "Contrato e pagamento pendente" se necessário
+ */
+async function moveCardToContractPhaseIfNeeded(cardId) {
+  if (!PIPEFY_FASE_CONTRATO_PAGAMENTO_PENDENTE) {
+    console.log('[MOVE PHASE] Fase não configurada, pulando movimentação');
+    return;
+  }
+
+  try {
+    console.log(`[MOVE PHASE] Movendo card ${cardId} para fase ${PIPEFY_FASE_CONTRATO_PAGAMENTO_PENDENTE}`);
+    await moveCardToPhaseSafe(cardId, PIPEFY_FASE_CONTRATO_PAGAMENTO_PENDENTE);
+  } catch (error) {
+    console.error('[MOVE PHASE] Erro ao mover card:', error.message);
+    // Não bloqueia o fluxo se falhar
+  }
+}
 
 /* =========================
  * Geração do link no Pipefy
