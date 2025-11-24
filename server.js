@@ -34,6 +34,8 @@ let {
   PIPEFY_FIELD_LINK_CONTRATO,
   PIPEFY_FIELD_CONTRATO_ASSINADO_D4,   // Campo ID para "Contrato Assinado D4"
   PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, // Campo ID para "Procuração Assinada D4"
+  PIPEFY_FIELD_D4_UUID_CONTRATO,       // Campo ID para "D4 UUID Contrato"
+  PIPEFY_FIELD_D4_UUID_PROCURACAO,      // Campo ID para "D4 UUID Procuracao"
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
@@ -88,6 +90,8 @@ NOVO_PIPE_ID = NOVO_PIPE_ID || '306505295';
 PORT = PORT || 3000;
 PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql';
 PIPEFY_FIELD_LINK_CONTRATO = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
+PIPEFY_FIELD_D4_UUID_CONTRATO = PIPEFY_FIELD_D4_UUID_CONTRATO || 'd4_uuid_contrato';
+PIPEFY_FIELD_D4_UUID_PROCURACAO = PIPEFY_FIELD_D4_UUID_PROCURACAO || 'd4_uuid_procuracao';
 D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
 
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
@@ -95,6 +99,8 @@ if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
 if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
 if (!PIPEFY_FIELD_CONTRATO_ASSINADO_D4) console.warn('[AVISO] PIPEFY_FIELD_CONTRATO_ASSINADO_D4 ausente');
 if (!PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) console.warn('[AVISO] PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 ausente');
+if (!PIPEFY_FIELD_D4_UUID_CONTRATO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID_CONTRATO ausente - usando padrão: d4_uuid_contrato');
+if (!PIPEFY_FIELD_D4_UUID_PROCURACAO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID_PROCURACAO ausente - usando padrão: d4_uuid_procuracao');
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
@@ -1785,8 +1791,8 @@ app.post('/d4sign/postback', async (req, res) => {
     const byId = toById(card);
     
     // Verifica qual campo contém o UUID do documento
-    const uuidContrato = byId['d4_uuid_contrato'] || '';
-    const uuidProcuracao = byId['d4_uuid_procuracao'] || '';
+    const uuidContrato = byId[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
+    const uuidProcuracao = byId[PIPEFY_FIELD_D4_UUID_PROCURACAO] || '';
     
     // Verifica se o UUID está no campo de procuração ou contrato
     const isProcuracaoFinal = (String(uuidProcuracao) === uuid || String(uuidProcuracao).includes(uuid));
@@ -2344,36 +2350,47 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       card = await getCard(cardId);
       const by = toById(card);
       // Verificar se o UUID está nos campos para identificar o tipo
-      const uuidProcuracaoCard = by['d4_uuid_procuracao'] || null;
-      const uuidContratoCard = by['d4_uuid_contrato'] || null;
+      const uuidProcuracaoCard = by[PIPEFY_FIELD_D4_UUID_PROCURACAO] || null;
+      const uuidContratoCard = by[PIPEFY_FIELD_D4_UUID_CONTRATO] || null;
       
       // Determinar se é contrato ou procuração
       // Primeiro verifica se o tipo foi passado como parâmetro
+      console.log(`[SEND] Parâmetros recebidos - tipo: ${tipo}, uuidDoc: ${uuidDoc}`);
+      console.log(`[SEND] Campos do card - uuidProcuracaoCard: ${uuidProcuracaoCard}, uuidContratoCard: ${uuidContratoCard}`);
+      
       if (tipo === 'procuracao') {
         isProcuracao = true;
+        console.log('[SEND] Tipo identificado como PROCURAÇÃO pelo parâmetro tipo');
       } else if (tipo === 'contrato') {
         isProcuracao = false;
+        console.log('[SEND] Tipo identificado como CONTRATO pelo parâmetro tipo');
       }
       // Se o UUID corresponde ao campo de procuração, é procuração
       else if (uuidProcuracaoCard && (String(uuidProcuracaoCard) === uuidDoc || String(uuidProcuracaoCard).includes(uuidDoc))) {
         isProcuracao = true;
+        console.log('[SEND] Tipo identificado como PROCURAÇÃO pelo campo d4_uuid_procuracao');
       } 
       // Se corresponde ao campo de contrato, é contrato
       else if (uuidContratoCard && (String(uuidContratoCard) === uuidDoc || String(uuidContratoCard).includes(uuidDoc))) {
         isProcuracao = false;
+        console.log('[SEND] Tipo identificado como CONTRATO pelo campo d4_uuid_contrato');
       } 
       // Se não encontrou em nenhum campo, verifica qual campo está vazio
       else if (!uuidProcuracaoCard && uuidContratoCard) {
         // Procuração vazia mas contrato preenchido, então este deve ser procuração
         isProcuracao = true;
+        console.log('[SEND] Tipo identificado como PROCURAÇÃO (procuração vazia mas contrato preenchido)');
       } else if (uuidProcuracaoCard && !uuidContratoCard) {
         // Contrato vazio mas procuração preenchida, então este deve ser contrato
         isProcuracao = false;
+        console.log('[SEND] Tipo identificado como CONTRATO (contrato vazio mas procuração preenchida)');
       } else {
         // Ambos vazios - por padrão assume contrato
         isProcuracao = false;
         console.log('[SEND] Ambos campos vazios, assumindo CONTRATO. Se for procuração, passe ?tipo=procuracao na URL.');
       }
+      
+      console.log(`[SEND] isProcuracao final: ${isProcuracao}`);
       
       // Buscar equipe contrato para identificar o cofre
       const equipeContrato = getEquipeContratoFromCard(card);
@@ -2509,17 +2526,23 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       
       // Salvar UUID do documento no campo correto após enviar para assinatura
       try {
+        console.log(`[SEND] Tentando salvar UUID - isProcuracao: ${isProcuracao}, uuidDoc: ${uuidDoc}, cardId: ${cardId}`);
         if (isProcuracao) {
-          // Salva UUID da procuração no campo d4_uuid_procuracao
-          await updateCardField(cardId, 'd4_uuid_procuracao', uuidDoc);
-          console.log(`[SEND] UUID da procuração salvo no campo d4_uuid_procuracao: ${uuidDoc}`);
+          // Salva UUID da procuração no campo D4 UUID Procuracao
+          const fieldId = PIPEFY_FIELD_D4_UUID_PROCURACAO;
+          console.log(`[SEND] Salvando UUID da procuração no campo ${fieldId}...`);
+          await updateCardField(cardId, fieldId, uuidDoc);
+          console.log(`[SEND] ✓ UUID da procuração salvo com sucesso no campo ${fieldId}: ${uuidDoc}`);
         } else {
-          // Salva UUID do contrato no campo d4_uuid_contrato
-          await updateCardField(cardId, 'd4_uuid_contrato', uuidDoc);
-          console.log(`[SEND] UUID do contrato salvo no campo d4_uuid_contrato: ${uuidDoc}`);
+          // Salva UUID do contrato no campo D4 UUID Contrato
+          const fieldId = PIPEFY_FIELD_D4_UUID_CONTRATO;
+          console.log(`[SEND] Salvando UUID do contrato no campo ${fieldId}...`);
+          await updateCardField(cardId, fieldId, uuidDoc);
+          console.log(`[SEND] ✓ UUID do contrato salvo com sucesso no campo ${fieldId}: ${uuidDoc}`);
         }
       } catch (e) {
         console.error(`[ERRO] Falha ao salvar UUID do ${isProcuracao ? 'procuração' : 'contrato'} no card:`, e.message);
+        console.error(`[ERRO] Stack trace:`, e.stack);
         // Não bloqueia o fluxo se falhar ao salvar UUID
       }
     } catch (e) {
@@ -2664,38 +2687,38 @@ async function findCardIdByD4Uuid(uuidDocument) {
     }
   `;
 
-  // Primeiro tenta buscar no campo d4_uuid_contrato
+  // Primeiro tenta buscar no campo D4 UUID Contrato
   try {
     let data = await gql(query, {
       pipeId: NOVO_PIPE_ID,
-      fieldId: "d4_uuid_contrato",
+      fieldId: PIPEFY_FIELD_D4_UUID_CONTRATO,
       fieldValue: uuidDocument
     });
 
     let edges = data?.findCards?.edges || [];
     if (edges.length) {
-      console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo d4_uuid_contrato: ${edges[0].node.id}`);
+      console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo ${PIPEFY_FIELD_D4_UUID_CONTRATO}: ${edges[0].node.id}`);
       return edges[0].node.id;
     }
   } catch (e) {
-    console.warn('[findCardIdByD4Uuid] Erro ao buscar pelo campo d4_uuid_contrato:', e.message);
+    console.warn(`[findCardIdByD4Uuid] Erro ao buscar pelo campo ${PIPEFY_FIELD_D4_UUID_CONTRATO}:`, e.message);
   }
 
-  // Se não encontrou, tenta buscar no campo d4_uuid_procuracao
+  // Se não encontrou, tenta buscar no campo D4 UUID Procuracao
   try {
     let data = await gql(query, {
       pipeId: NOVO_PIPE_ID,
-      fieldId: "d4_uuid_procuracao",
+      fieldId: PIPEFY_FIELD_D4_UUID_PROCURACAO,
       fieldValue: uuidDocument
     });
 
     let edges = data?.findCards?.edges || [];
     if (edges.length) {
-      console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo d4_uuid_procuracao: ${edges[0].node.id}`);
+      console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo ${PIPEFY_FIELD_D4_UUID_PROCURACAO}: ${edges[0].node.id}`);
       return edges[0].node.id;
     }
   } catch (e) {
-    console.warn('[findCardIdByD4Uuid] Erro ao buscar pelo campo d4_uuid_procuracao:', e.message);
+    console.warn(`[findCardIdByD4Uuid] Erro ao buscar pelo campo ${PIPEFY_FIELD_D4_UUID_PROCURACAO}:`, e.message);
   }
 
   // Busca alternativa: buscar cards recentes e verificar manualmente
@@ -2738,8 +2761,8 @@ async function findCardIdByD4Uuid(uuidDocument) {
         // Verifica se algum campo contém o UUID do documento
         for (const field of fields) {
           const fieldValue = String(field.value || '');
-          // Verifica se o UUID está nos campos d4_uuid_contrato ou d4_uuid_procuracao
-          if ((field.id === 'd4_uuid_contrato' || field.id === 'd4_uuid_procuracao') && 
+          // Verifica se o UUID está nos campos D4 UUID Contrato ou D4 UUID Procuracao
+          if ((field.id === PIPEFY_FIELD_D4_UUID_CONTRATO || field.id === PIPEFY_FIELD_D4_UUID_PROCURACAO) && 
               (fieldValue === uuidDocument || fieldValue.includes(uuidDocument))) {
             console.log(`[findCardIdByD4Uuid] Card encontrado através de busca alternativa no campo ${field.id}: ${card.id}`);
             return card.id;
