@@ -1764,7 +1764,9 @@ app.post('/d4sign/postback', async (req, res) => {
     }
 
     // type_post = "1" → documento finalizado/assinado
-    if (String(type_post) !== '1') {
+    // type_post = "4" → documento assinado (também deve ser processado)
+    const isSigned = String(type_post) === '1' || String(type_post) === '4';
+    if (!isSigned) {
       console.log('[POSTBACK D4SIGN] Evento ignorado:', type_post);
       return res.status(200).json({ ok: true });
     }
@@ -2169,7 +2171,6 @@ if (TEMPLATE_UUID_PROCURACAO) {
 </style>
 <div class="box">
   <h2>${uuidProcuracao ? 'Contrato e procuração gerados com sucesso' : 'Contrato gerado com sucesso'}</h2>
-  <p class="muted">UUID do documento: ${uuidDoc}</p>
   ${cofreUsadoPadrao ? `
   <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:12px;margin:16px 0;border-radius:4px">
     <strong>⚠️ Atenção:</strong> A equipe "${equipeContrato || 'não informada'}" não possui cofre configurado. 
@@ -2189,7 +2190,6 @@ if (TEMPLATE_UUID_PROCURACAO) {
   ${uuidProcuracao ? `
   <div class="section">
     <h3>Procuração gerada com sucesso</h3>
-    <p class="muted">UUID da procuração: ${uuidProcuracao}</p>
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
       <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
@@ -2221,7 +2221,7 @@ async function enviarContrato(token, uuidDoc, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do cofre:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
+      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
       const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
       btn.textContent = 'Enviado por Email';
@@ -2259,7 +2259,7 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do cofre:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
+      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
       const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
       btn.textContent = 'Enviado por Email';
@@ -2528,8 +2528,8 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       uuidCofreFinal = DEFAULT_COFRE_UUID;
     }
     
-    // Construir URL do cofre
-    const urlCofre = uuidCofreFinal ? `https://secure.d4sign.com.br/desk/cofres/50373/${uuidCofreFinal}` : null;
+    // Construir URL do cofre (apenas o link base do D4Sign)
+    const urlCofre = 'https://secure.d4sign.com.br/desk';
     
     // Liberar lock após envio bem-sucedido
     releaseLock(lockKey);
@@ -2660,16 +2660,16 @@ async function findCardIdByD4Uuid(uuidDocument) {
   // se o UUID do documento está relacionado (através de outros campos ou lógica)
   try {
     // Tenta buscar pelo UUID diretamente (pode funcionar se o Pipefy fizer busca parcial)
-    data = await gql(query, {
-      pipeId: NOVO_PIPE_ID,
+  data = await gql(query, {
+    pipeId: NOVO_PIPE_ID,
       fieldId: "d4_uuid_contrato",
-      fieldValue: uuidDocument
-    });
+    fieldValue: uuidDocument
+  });
 
-    edges = data?.findCards?.edges || [];
-    if (edges.length) {
-      return edges[0].node.id;
-    }
+  edges = data?.findCards?.edges || [];
+  if (edges.length) {
+  return edges[0].node.id;
+  }
 
     // Busca alternativa: buscar cards recentes e verificar manualmente
     // Isso é necessário porque o campo d4_uuid_contrato agora contém URL do cofre, não UUID do documento
@@ -2681,22 +2681,22 @@ async function findCardIdByD4Uuid(uuidDocument) {
         query($pipeId: ID!, $first: Int!) {
           pipe(id: $pipeId) {
             cards(first: $first, orderBy: { field: CREATED_AT, direction: DESC }) {
-              edges {
-                node {
-                  id
+          edges {
+            node {
+              id
                   fields {
                     id
                     value
                   }
                 }
-              }
             }
           }
         }
-      `;
+      }
+    `;
 
       const searchData = await gql(searchQuery, {
-        pipeId: NOVO_PIPE_ID,
+      pipeId: NOVO_PIPE_ID,
         first: 100  // Busca nos 100 cards mais recentes
       });
 
