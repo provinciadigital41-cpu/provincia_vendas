@@ -2221,8 +2221,9 @@ async function enviarContrato(token, uuidDoc, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
+      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do cofre:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
       const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>';
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
       btn.textContent = 'Enviado por Email';
       btn.style.background = '#28a745';
       btn.disabled = true;
@@ -2258,8 +2259,9 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
+      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do cofre:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
       const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>';
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
       btn.textContent = 'Enviado por Email';
       btn.style.background = '#28a745';
       btn.disabled = true;
@@ -2516,6 +2518,19 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       emailUsado = dFinal.email_envio_contrato || dFinal.email || null;
     }
     
+    // Buscar UUID do cofre novamente para construir a URL
+    const equipeContratoFinal = getEquipeContratoFromCard(card);
+    let uuidCofreFinal = null;
+    if (equipeContratoFinal && COFRES_UUIDS[equipeContratoFinal]) {
+      uuidCofreFinal = COFRES_UUIDS[equipeContratoFinal];
+    }
+    if (!uuidCofreFinal) {
+      uuidCofreFinal = DEFAULT_COFRE_UUID;
+    }
+    
+    // Construir URL do cofre
+    const urlCofre = uuidCofreFinal ? `https://secure.d4sign.com.br/desk/cofres/50373/${uuidCofreFinal}` : null;
+    
     // Liberar lock após envio bem-sucedido
     releaseLock(lockKey);
     
@@ -2524,6 +2539,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       message: `${isProcuracao ? 'Procuração' : 'Contrato'} enviado com sucesso. Os signatários foram notificados.`,
       tipo: isProcuracao ? 'procuração' : 'contrato',
       cofre: nomeCofre,
+      urlCofre: urlCofre,
       email: emailUsado,
       telefone: telefoneUsado
     });
