@@ -2229,7 +2229,7 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
   statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração por email...</span>';
   
   try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send?canal=email', {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send?canal=email&tipo=procuracao', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -2325,6 +2325,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
   }
     const uuidDoc = req.params.uuid;
   const canal = req.query.canal || 'email'; // 'email' ou 'whatsapp'
+  const tipo = req.query.tipo || null; // 'contrato' ou 'procuracao' (opcional)
   
   // Proteção contra envio duplicado
   const lockKey = `send:${cardId}:${uuidDoc}:${canal}`;
@@ -2342,12 +2343,37 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     try {
       card = await getCard(cardId);
       const by = toById(card);
-      // Campo d4_uuid_procuracao não existe mais no Pipefy
-      const uuidProcuracaoCard = null;
+      // Verificar se o UUID está nos campos para identificar o tipo
+      const uuidProcuracaoCard = by['d4_uuid_procuracao'] || null;
       const uuidContratoCard = by['d4_uuid_contrato'] || null;
       
       // Determinar se é contrato ou procuração
-      isProcuracao = (uuidProcuracaoCard === uuidDoc);
+      // Primeiro verifica se o tipo foi passado como parâmetro
+      if (tipo === 'procuracao') {
+        isProcuracao = true;
+      } else if (tipo === 'contrato') {
+        isProcuracao = false;
+      }
+      // Se o UUID corresponde ao campo de procuração, é procuração
+      else if (uuidProcuracaoCard && (String(uuidProcuracaoCard) === uuidDoc || String(uuidProcuracaoCard).includes(uuidDoc))) {
+        isProcuracao = true;
+      } 
+      // Se corresponde ao campo de contrato, é contrato
+      else if (uuidContratoCard && (String(uuidContratoCard) === uuidDoc || String(uuidContratoCard).includes(uuidDoc))) {
+        isProcuracao = false;
+      } 
+      // Se não encontrou em nenhum campo, verifica qual campo está vazio
+      else if (!uuidProcuracaoCard && uuidContratoCard) {
+        // Procuração vazia mas contrato preenchido, então este deve ser procuração
+        isProcuracao = true;
+      } else if (uuidProcuracaoCard && !uuidContratoCard) {
+        // Contrato vazio mas procuração preenchida, então este deve ser contrato
+        isProcuracao = false;
+      } else {
+        // Ambos vazios - por padrão assume contrato
+        isProcuracao = false;
+        console.log('[SEND] Ambos campos vazios, assumindo CONTRATO. Se for procuração, passe ?tipo=procuracao na URL.');
+      }
       
       // Buscar equipe contrato para identificar o cofre
       const equipeContrato = getEquipeContratoFromCard(card);
