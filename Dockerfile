@@ -1,4 +1,4 @@
- Base Debian estável, compatível com HTTPS e ferramentas de rede
+# Base Debian estável, compatível com HTTPS e ferramentas de rede
 FROM node:18-bullseye
 ARG GIT_SHA=manual
 ENV GIT_SHA=$GIT_SHA
@@ -13,8 +13,7 @@ RUN apt-get update &&     apt-get install -y bash curl iputils-ping ca-certifica
 # Dependências do Node
 COPY package.json ./
 # Instala dependências de produção explicitamente
-RUN npm install --production --no-optional && \
-    npm list form-data && \
+RUN npm install --production && \
     npm cache clean --force
 
 # Copia o restante do projeto
