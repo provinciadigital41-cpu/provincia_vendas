@@ -1,4 +1,4 @@
-# Base Debian estável, compatível com HTTPS e ferramentas de rede
+ Base Debian estável, compatível com HTTPS e ferramentas de rede
 FROM node:18-bullseye
 ARG GIT_SHA=manual
 ENV GIT_SHA=$GIT_SHA
@@ -11,9 +11,11 @@ WORKDIR /app
 RUN apt-get update &&     apt-get install -y bash curl iputils-ping ca-certificates libcurl4-openssl-dev &&     update-ca-certificates &&     rm -rf /var/lib/apt/lists/*
 
 # Dependências do Node
-COPY package*.json ./
-# Se houver package-lock.json, usa ci; caso contrário, usa install
-RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
+COPY package.json ./
+# Instala dependências de produção explicitamente
+RUN npm install --production --no-optional && \
+    npm list form-data && \
+    npm cache clean --force
 
 # Copia o restante do projeto
 COPY . .
