@@ -32,6 +32,8 @@ let {
 
   // Ainda usados para escrever o link no card e validar fase
   PIPEFY_FIELD_LINK_CONTRATO,
+  PIPEFY_FIELD_CONTRATO_ASSINADO_D4,   // Campo ID para "Contrato Assinado D4"
+  PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, // Campo ID para "Procuração Assinada D4"
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
@@ -91,6 +93,8 @@ D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
 if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
+if (!PIPEFY_FIELD_CONTRATO_ASSINADO_D4) console.warn('[AVISO] PIPEFY_FIELD_CONTRATO_ASSINADO_D4 ausente');
+if (!PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) console.warn('[AVISO] PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 ausente');
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
@@ -1773,6 +1777,25 @@ app.post('/d4sign/postback', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
+    // Identificar se é contrato ou procuração
+    const card = await getCard(cardId);
+    const byId = toById(card);
+    const uuidProcuracao = byId['d4_uuid_procuracao'];
+    const uuidContratoField = byId['d4_uuid_contrato'] || '';
+    
+    // Verifica se é procuração comparando o UUID
+    const isProcuracao = uuidProcuracao === uuid;
+    
+    // Se não for procuração, verifica se está no campo de contrato (que pode conter URL)
+    const isContrato = !isProcuracao && (uuidContratoField.includes(uuid) || uuidContratoField === uuid);
+    
+    if (!isProcuracao && !isContrato) {
+      // Se não encontrou em nenhum campo, assume contrato por padrão
+      console.log('[POSTBACK D4SIGN] Tipo não identificado, assumindo CONTRATO');
+    }
+
+    console.log(`[POSTBACK D4SIGN] Documento identificado como: ${isProcuracao ? 'PROCURAÇÃO' : 'CONTRATO'}`);
+
     // 1. mover card para fase final (primeiro)
     try {
       // Movimentação de card removida conforme solicitado
@@ -1793,12 +1816,21 @@ app.post('/d4sign/postback', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // 3. anexar PDF no campo de arquivo
+    // 3. anexar PDF no campo correto (Contrato Assinado D4 ou Procuração Assinada D4)
     try {
-      await anexarContratoAssinadoNoCard(cardId, info.url, info.name);
-      console.log('[POSTBACK D4SIGN] PDF anexado ao card');
+      const fieldId = isProcuracao 
+        ? PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 
+        : PIPEFY_FIELD_CONTRATO_ASSINADO_D4;
+
+      if (!fieldId) {
+        console.warn(`[POSTBACK D4SIGN] Campo não configurado para ${isProcuracao ? 'procuração' : 'contrato'}`);
+      } else {
+        const newValue = [info.url];
+        await updateCardField(cardId, fieldId, newValue);
+        console.log(`[POSTBACK D4SIGN] PDF anexado no campo ${fieldId} (${isProcuracao ? 'Procuração' : 'Contrato'} Assinado D4)`);
+      }
     } catch (e) {
-      console.error('[POSTBACK D4SIGN] Erro ao anexar contrato:', e.message);
+      console.error('[POSTBACK D4SIGN] Erro ao anexar documento:', e.message);
     }
 
     return res.status(200).json({ ok: true });
@@ -2683,12 +2715,6 @@ async function findCardIdByD4Uuid(uuidDocument) {
 // ===============================
 // NOVO — ANEXA CONTRATO ASSINADO NO CAMPO DE ANEXO
 // ===============================
-async function anexarContratoAssinadoNoCard(cardId, downloadUrl, fileName) {
-  const newValue = [downloadUrl];
-
-  await updateCardField(cardId, 'contrato', newValue);
-};
-
 /* =========================
  * Geração do link no Pipefy
  * =======================*/
