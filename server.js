@@ -1780,40 +1780,20 @@ app.post('/d4sign/postback', async (req, res) => {
     }
 
     // Identificar se é contrato ou procuração
-    // Verifica em qual campo o UUID do documento foi encontrado (já sabemos pelo findCardIdByD4Uuid)
-    // Mas vamos verificar novamente para ter certeza
+    // Verifica em qual campo o UUID do documento foi encontrado
     const card = await getCard(cardId);
     const byId = toById(card);
     
     // Verifica qual campo contém o UUID do documento
-    // Os campos são arrays, então precisamos verificar se o UUID está no array
-    const contratoAssinado = byId[PIPEFY_FIELD_CONTRATO_ASSINADO_D4];
-    const procuracaoAssinada = byId[PIPEFY_FIELD_PROCURACAO_ASSINADA_D4];
-    
-    // Converte para array se necessário e verifica se contém o UUID
-    const contratoArray = Array.isArray(contratoAssinado) ? contratoAssinado : (contratoAssinado ? [contratoAssinado] : []);
-    const procuracaoArray = Array.isArray(procuracaoAssinada) ? procuracaoAssinada : (procuracaoAssinada ? [procuracaoAssinada] : []);
+    const uuidContrato = byId['d4_uuid_contrato'] || '';
+    const uuidProcuracao = byId['d4_uuid_procuracao'] || '';
     
     // Verifica se o UUID está no campo de procuração ou contrato
-    const uuidNoContrato = contratoArray.some(val => String(val) === uuid || String(val).includes(uuid));
-    const uuidNaProcuracao = procuracaoArray.some(val => String(val) === uuid || String(val).includes(uuid));
+    const isProcuracaoFinal = (String(uuidProcuracao) === uuid || String(uuidProcuracao).includes(uuid));
     
-    let isProcuracaoFinal = false;
-    if (uuidNaProcuracao) {
-      isProcuracaoFinal = true;
-    } else if (uuidNoContrato) {
-      isProcuracaoFinal = false;
-    } else {
-      // Se não encontrou o UUID em nenhum campo, verifica qual está vazio
-      // Se procuração está vazia mas contrato não, assume que é procuração
-      // Se contrato está vazio mas procuração não, assume que é contrato
-      // Se ambos estão vazios, assume contrato por padrão
-      if (procuracaoArray.length === 0 && contratoArray.length > 0) {
-        isProcuracaoFinal = true;
-      } else {
-        isProcuracaoFinal = false;
-        console.log('[POSTBACK D4SIGN] Tipo não identificado claramente, assumindo CONTRATO');
-      }
+    if (!isProcuracaoFinal && String(uuidContrato) !== uuid && !String(uuidContrato).includes(uuid)) {
+      // Se não encontrou em nenhum campo, assume contrato por padrão
+      console.log('[POSTBACK D4SIGN] Tipo não identificado claramente, assumindo CONTRATO');
     }
 
     console.log(`[POSTBACK D4SIGN] Documento identificado como: ${isProcuracaoFinal ? 'PROCURAÇÃO' : 'CONTRATO'}`);
@@ -1840,12 +1820,12 @@ app.post('/d4sign/postback', async (req, res) => {
 
     // 3. anexar PDF no campo correto (Contrato Assinado D4 ou Procuração Assinada D4)
     try {
-      const fieldId = isProcuracao 
+      const fieldId = isProcuracaoFinal 
         ? PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 
         : PIPEFY_FIELD_CONTRATO_ASSINADO_D4;
 
       if (!fieldId) {
-        console.warn(`[POSTBACK D4SIGN] Campo não configurado para ${isProcuracao ? 'procuração' : 'contrato'}`);
+        console.warn(`[POSTBACK D4SIGN] Campo não configurado para ${isProcuracaoFinal ? 'procuração' : 'contrato'}`);
       } else {
         const newValue = [info.url];
         await updateCardField(cardId, fieldId, newValue);
@@ -2045,22 +2025,8 @@ try {
 }
 
 // ===============================
-// NOVO — Salvar UUID do documento no campo "Contrato Assinado D4" para busca futura
+// UUID será salvo quando o documento for enviado para assinatura
 // ===============================
-try {
-  // Salva o UUID do documento no campo "Contrato Assinado D4" para que o callback possa encontrá-lo
-  if (PIPEFY_FIELD_CONTRATO_ASSINADO_D4) {
-    await updateCardField(card.id, PIPEFY_FIELD_CONTRATO_ASSINADO_D4, [uuidDoc]);
-    console.log(`[D4SIGN] UUID do contrato salvo no campo Contrato Assinado D4: ${uuidDoc}`);
-  }
-  
-  // Formato: https://secure.d4sign.com.br/desk/cofres/50373/ + UUID do cofre
-  const urlCofre = `https://secure.d4sign.com.br/desk/cofres/50373/${uuidSafe}`;
-  await updateCardField(card.id, 'd4_uuid_contrato', urlCofre);
-  console.log(`[D4SIGN] URL do cofre salva no campo d4_uuid_contrato: ${urlCofre}`);
-} catch (e) {
-  console.error('[ERRO] Falha ao salvar UUID do contrato no card:', e.message);
-}
 
 // ===============================
 // NOVO — GERAR PROCURAÇÃO
@@ -2079,16 +2045,7 @@ if (TEMPLATE_UUID_PROCURACAO) {
     );
     console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao}`);
 
-    // Salvar UUID da procuração no campo "Procuração Assinada D4" para busca futura
-    try {
-      // Salva o UUID da procuração no campo "Procuração Assinada D4" para que o callback possa encontrá-lo
-      if (PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) {
-        await updateCardField(card.id, PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, [uuidProcuracao]);
-        console.log(`[D4SIGN] UUID da procuração salvo no campo Procuração Assinada D4: ${uuidProcuracao}`);
-      }
-    } catch (e) {
-      console.error('[ERRO] Falha ao salvar uuid da procuração no card:', e.message);
-    }
+    // UUID será salvo quando a procuração for enviada para assinatura
 
     // Aguardar documento estar pronto
     await new Promise(r=>setTimeout(r, 3000));
@@ -2523,6 +2480,22 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       workflow: '0'
     });
       console.log(`[SEND] ${isProcuracao ? 'Procuração' : 'Contrato'} enviado para assinatura por ${canal}:`, uuidDoc);
+      
+      // Salvar UUID do documento no campo correto após enviar para assinatura
+      try {
+        if (isProcuracao) {
+          // Salva UUID da procuração no campo d4_uuid_procuracao
+          await updateCardField(cardId, 'd4_uuid_procuracao', uuidDoc);
+          console.log(`[SEND] UUID da procuração salvo no campo d4_uuid_procuracao: ${uuidDoc}`);
+        } else {
+          // Salva UUID do contrato no campo d4_uuid_contrato
+          await updateCardField(cardId, 'd4_uuid_contrato', uuidDoc);
+          console.log(`[SEND] UUID do contrato salvo no campo d4_uuid_contrato: ${uuidDoc}`);
+        }
+      } catch (e) {
+        console.error(`[ERRO] Falha ao salvar UUID do ${isProcuracao ? 'procuração' : 'contrato'} no card:`, e.message);
+        // Não bloqueia o fluxo se falhar ao salvar UUID
+      }
     } catch (e) {
       console.error(`[ERRO] Falha ao enviar ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
       throw e; // Propaga o erro para que o usuário saiba
@@ -2643,11 +2616,10 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 });
 // ===============================
 // NOVO — LOCALIZA CARD PELO UUID DO DOCUMENTO D4SIGN
-// Busca tanto no campo de contrato quanto no de procuração
-// O campo de contrato agora contém URL do cofre, então busca pelo UUID dentro da URL
+// Busca nos campos d4_uuid_contrato e d4_uuid_procuracao
 // ===============================
 async function findCardIdByD4Uuid(uuidDocument) {
-  // Busca o card pelo UUID do documento nos campos "Contrato Assinado D4" e "Procuração Assinada D4"
+  // Busca o card pelo UUID do documento nos campos d4_uuid_contrato e d4_uuid_procuracao
   const query = `
     query($pipeId: ID!, $fieldId: String!, $fieldValue: String!) {
       findCards(
@@ -2666,42 +2638,38 @@ async function findCardIdByD4Uuid(uuidDocument) {
     }
   `;
 
-  // Primeiro tenta buscar no campo "Contrato Assinado D4"
-  if (PIPEFY_FIELD_CONTRATO_ASSINADO_D4) {
-    try {
-      let data = await gql(query, {
-        pipeId: NOVO_PIPE_ID,
-        fieldId: PIPEFY_FIELD_CONTRATO_ASSINADO_D4,
-        fieldValue: uuidDocument
-      });
+  // Primeiro tenta buscar no campo d4_uuid_contrato
+  try {
+    let data = await gql(query, {
+      pipeId: NOVO_PIPE_ID,
+      fieldId: "d4_uuid_contrato",
+      fieldValue: uuidDocument
+    });
 
-      let edges = data?.findCards?.edges || [];
-      if (edges.length) {
-        console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo Contrato Assinado D4: ${edges[0].node.id}`);
-        return edges[0].node.id;
-      }
-    } catch (e) {
-      console.warn('[findCardIdByD4Uuid] Erro ao buscar pelo campo Contrato Assinado D4:', e.message);
+    let edges = data?.findCards?.edges || [];
+    if (edges.length) {
+      console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo d4_uuid_contrato: ${edges[0].node.id}`);
+      return edges[0].node.id;
     }
+  } catch (e) {
+    console.warn('[findCardIdByD4Uuid] Erro ao buscar pelo campo d4_uuid_contrato:', e.message);
   }
 
-  // Se não encontrou, tenta buscar no campo "Procuração Assinada D4"
-  if (PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) {
-    try {
-      let data = await gql(query, {
-        pipeId: NOVO_PIPE_ID,
-        fieldId: PIPEFY_FIELD_PROCURACAO_ASSINADA_D4,
-        fieldValue: uuidDocument
-      });
+  // Se não encontrou, tenta buscar no campo d4_uuid_procuracao
+  try {
+    let data = await gql(query, {
+      pipeId: NOVO_PIPE_ID,
+      fieldId: "d4_uuid_procuracao",
+      fieldValue: uuidDocument
+    });
 
-      let edges = data?.findCards?.edges || [];
-      if (edges.length) {
-        console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo Procuração Assinada D4: ${edges[0].node.id}`);
-        return edges[0].node.id;
-      }
-    } catch (e) {
-      console.warn('[findCardIdByD4Uuid] Erro ao buscar pelo campo Procuração Assinada D4:', e.message);
+    let edges = data?.findCards?.edges || [];
+    if (edges.length) {
+      console.log(`[findCardIdByD4Uuid] Card encontrado pelo campo d4_uuid_procuracao: ${edges[0].node.id}`);
+      return edges[0].node.id;
     }
+  } catch (e) {
+    console.warn('[findCardIdByD4Uuid] Erro ao buscar pelo campo d4_uuid_procuracao:', e.message);
   }
 
   // Busca alternativa: buscar cards recentes e verificar manualmente
@@ -2744,8 +2712,8 @@ async function findCardIdByD4Uuid(uuidDocument) {
         // Verifica se algum campo contém o UUID do documento
         for (const field of fields) {
           const fieldValue = String(field.value || '');
-          // Verifica se o UUID está nos campos "Contrato Assinado D4" ou "Procuração Assinada D4"
-          if ((field.id === PIPEFY_FIELD_CONTRATO_ASSINADO_D4 || field.id === PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) && 
+          // Verifica se o UUID está nos campos d4_uuid_contrato ou d4_uuid_procuracao
+          if ((field.id === 'd4_uuid_contrato' || field.id === 'd4_uuid_procuracao') && 
               (fieldValue === uuidDocument || fieldValue.includes(uuidDocument))) {
             console.log(`[findCardIdByD4Uuid] Card encontrado através de busca alternativa no campo ${field.id}: ${card.id}`);
             return card.id;
