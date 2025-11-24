@@ -93,7 +93,7 @@ PIPEFY_FIELD_LINK_CONTRATO = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 PIPEFY_FIELD_D4_UUID_CONTRATO = PIPEFY_FIELD_D4_UUID_CONTRATO || 'd4_uuid_contrato';
 PIPEFY_FIELD_D4_UUID_PROCURACAO = PIPEFY_FIELD_D4_UUID_PROCURACAO || 'copy_of_d4_uuid_contrato';
 PIPEFY_FIELD_CONTRATO_ASSINADO_D4 = PIPEFY_FIELD_CONTRATO_ASSINADO_D4 || 'contrato_assinado_d4';
-PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 = PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 || 'procura_o__assinada_d4';
+PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 = PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 || 'procura_o_assinada_d4';
 D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
 
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
@@ -1832,15 +1832,20 @@ app.post('/d4sign/postback', async (req, res) => {
         ? PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 
         : PIPEFY_FIELD_CONTRATO_ASSINADO_D4;
 
+      console.log(`[POSTBACK D4SIGN] Tentando salvar PDF - isProcuracaoFinal: ${isProcuracaoFinal}, fieldId: ${fieldId}`);
+      console.log(`[POSTBACK D4SIGN] Valores dos campos - PIPEFY_FIELD_PROCURACAO_ASSINADA_D4: ${PIPEFY_FIELD_PROCURACAO_ASSINADA_D4}, PIPEFY_FIELD_CONTRATO_ASSINADO_D4: ${PIPEFY_FIELD_CONTRATO_ASSINADO_D4}`);
+
       if (!fieldId) {
         console.warn(`[POSTBACK D4SIGN] Campo não configurado para ${isProcuracaoFinal ? 'procuração' : 'contrato'}`);
       } else {
         const newValue = [info.url];
+        console.log(`[POSTBACK D4SIGN] Salvando PDF no campo ${fieldId} com URL: ${info.url}`);
         await updateCardField(cardId, fieldId, newValue);
-        console.log(`[POSTBACK D4SIGN] PDF anexado no campo ${fieldId} (${isProcuracaoFinal ? 'Procuração' : 'Contrato'} Assinado D4)`);
+        console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo ${fieldId} (${isProcuracaoFinal ? 'Procuração' : 'Contrato'} Assinado D4)`);
       }
     } catch (e) {
       console.error('[POSTBACK D4SIGN] Erro ao anexar documento:', e.message);
+      console.error('[POSTBACK D4SIGN] Stack trace:', e.stack);
     }
 
     return res.status(200).json({ ok: true });
@@ -2077,56 +2082,9 @@ if (TEMPLATE_UUID_PROCURACAO) {
       console.error('[ERRO] Falha ao registrar webhook da procuração:', e.message);
     }
 
-    // Cadastrar signatários da procuração (mesmos do contrato)
-    // Garantir que temos signatários antes de cadastrar
-    if (!signers || signers.length === 0) {
-      console.warn('[D4SIGN] Signatários não disponíveis no escopo, preparando novamente...');
-      try {
-        signers = montarSigners(d);
-        if (signers && signers.length > 0) {
-          console.log('[D4SIGN] Signatários preparados para procuração:', signers.map(s => s.email).join(', '));
-        } else {
-          console.error('[D4SIGN] ERRO CRÍTICO: Não foi possível preparar signatários. Verifique se há emails no card.');
-        }
-      } catch (e) {
-        console.error('[D4SIGN] Erro ao preparar signatários para procuração:', e.message);
-      }
-    }
-    
-    // Tentar cadastrar signatários com múltiplas tentativas
-    await new Promise(r=>setTimeout(r, 2000));
-    let signatariosCadastrados = false;
-    const maxTentativas = 3;
-    
-    for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
-      try {
-        if (signers && signers.length > 0) {
-          await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-          console.log(`[D4SIGN] Signatários da procuração cadastrados com sucesso (tentativa ${tentativa}/${maxTentativas}):`, signers.map(s => s.email).join(', '));
-          signatariosCadastrados = true;
-          break;
-        } else {
-          console.error(`[D4SIGN] ERRO (tentativa ${tentativa}/${maxTentativas}): Nenhum signatário disponível. Verifique se há emails no card.`);
-          if (tentativa < maxTentativas) {
-            // Tentar preparar signatários novamente
-            await new Promise(r=>setTimeout(r, 1000));
-            signers = montarSigners(d);
-          }
-        }
-      } catch (e) {
-        console.error(`[ERRO] Falha ao cadastrar signatários da procuração (tentativa ${tentativa}/${maxTentativas}):`, e.message);
-        if (tentativa < maxTentativas) {
-          await new Promise(r=>setTimeout(r, 2000));
-          // Tentar novamente
-        } else {
-          console.error('[D4SIGN] ERRO CRÍTICO: Não foi possível cadastrar signatários após múltiplas tentativas.');
-        }
-      }
-    }
-    
-    if (!signatariosCadastrados) {
-      console.error('[D4SIGN] AVISO: Procuração criada mas signatários não foram cadastrados. Será necessário cadastrar manualmente.');
-    }
+    // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
+    // Isso evita duplicação de signatários
+    console.log('[D4SIGN] Procuração criada. Signatários serão cadastrados quando o documento for enviado para assinatura.');
   } catch (e) {
     console.error('[ERRO] Falha ao gerar procuração:', e.message);
     // Não bloqueia o fluxo se a procuração falhar
@@ -2136,7 +2094,9 @@ if (TEMPLATE_UUID_PROCURACAO) {
     await new Promise(r=>setTimeout(r, 3000));
     try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch {}
 
-    await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
+    // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
+    // Isso evita duplicação de signatários
+    console.log('[D4SIGN] Contrato criado. Signatários serão cadastrados quando o documento for enviado para assinatura.');
 
     await new Promise(r=>setTimeout(r, 2000));
     // Movimentação de card removida conforme solicitado
