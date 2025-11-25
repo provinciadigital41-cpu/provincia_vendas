@@ -731,19 +731,33 @@ async function montarDados(card){
   
   // Montar cláusula adicional
   let clausulaAdicional = '';
-  if (isFiliais) {
-    // Se for Filiais, não tem cláusula adicional
-    clausulaAdicional = '';
-  } else if (isCreditoProgramado) {
-    // Se for Crédito programado, adiciona a cláusula específica
-    const clausulaExistente = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : '';
-    // Se já houver cláusula existente, concatena; senão, usa apenas a do crédito programado
-    clausulaAdicional = clausulaExistente 
-      ? `${clausulaExistente} ${clausulaCreditoProgramado}`
+  
+  // Texto a ser removido quando for Filiais
+  const textoObservacoesFiliais = /Observações:\s*Entrada\s*R\$\s*R\$\s*440,00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450,00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?/gi;
+  
+  const clausulaExistente = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : '';
+  const clausulaLimpa = clausulaExistente.replace(textoObservacoesFiliais, '').trim();
+  
+  if (isCreditoProgramado) {
+    // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
+    // Se já houver cláusula existente (após limpeza), concatena; senão, usa apenas a do crédito programado
+    clausulaAdicional = clausulaLimpa 
+      ? `${clausulaLimpa} ${clausulaCreditoProgramado}`
       : clausulaCreditoProgramado;
+  } else if (isFiliais) {
+    // Se for Filiais (e não for Crédito programado), remove o texto específico de observações e não tem cláusula adicional
+    clausulaAdicional = clausulaLimpa;
+    // Se após remover ficar vazio, deixa vazio
+    if (!clausulaAdicional) {
+      clausulaAdicional = '';
+    }
   } else {
-    // Caso padrão
-    clausulaAdicional = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : 'Sem aditivos contratuais.';
+    // Caso padrão - remove o texto de observações se existir
+    clausulaAdicional = clausulaLimpa;
+    // Se após remover ficar vazio, usa o padrão
+    if (!clausulaAdicional) {
+      clausulaAdicional = 'Sem aditivos contratuais.';
+    }
   }
 
   // Contratante 1
@@ -2039,6 +2053,15 @@ app.post('/lead/:token/generate', async (req, res) => {
     if (!add || typeof add !== 'object') {
       throw new Error('Falha ao montar variáveis do template. Verifique os dados do card.');
     }
+    
+    // Log para verificar se o número do contrato está sendo passado
+    console.log(`[LEAD-GENERATE] cardId do card: ${d.cardId}`);
+    console.log(`[LEAD-GENERATE] Número do contrato no template (primeiras variações):`, {
+      'N° contrato': add['N° contrato'],
+      'Nº contrato': add['Nº contrato'],
+      'CONTRATO nº': add['CONTRATO nº'],
+      'CONTRATO nº:': add['CONTRATO nº:']
+    });
     
     const signers = montarSigners(d);
     if (!signers || signers.length === 0) {
