@@ -721,13 +721,34 @@ async function montarDados(card){
   // Cláusula adicional - não deve ter observações se filiais_ou_digital for "Filiais"
   const filiaisOuDigital = by['filiais_ou_digital'] || '';
   const isFiliais = String(filiaisOuDigital).toLowerCase().trim() === 'filiais';
-  const clausulaAdicional = isFiliais 
-    ? '' 
-    : ((by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : 'Sem aditivos contratuais.');
+  
+  // Verificar se o tipo de pagamento é "Crédito programado"
+  const tipoPagamento = by['copy_of_tipo_de_pagamento'] || '';
+  const isCreditoProgramado = String(tipoPagamento).trim() === 'Crédito programado';
+  
+  // Texto da cláusula adicional para Crédito programado
+  const clausulaCreditoProgramado = 'Caso o pagamento não seja realizado até a data do vencimento, o benefício concedido será automaticamente cancelado, sendo emitido boleto bancário com os valores previstos em contrato.';
+  
+  // Montar cláusula adicional
+  let clausulaAdicional = '';
+  if (isFiliais) {
+    // Se for Filiais, não tem cláusula adicional
+    clausulaAdicional = '';
+  } else if (isCreditoProgramado) {
+    // Se for Crédito programado, adiciona a cláusula específica
+    const clausulaExistente = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : '';
+    // Se já houver cláusula existente, concatena; senão, usa apenas a do crédito programado
+    clausulaAdicional = clausulaExistente 
+      ? `${clausulaExistente} ${clausulaCreditoProgramado}`
+      : clausulaCreditoProgramado;
+  } else {
+    // Caso padrão
+    clausulaAdicional = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : 'Sem aditivos contratuais.';
+  }
 
   // Contratante 1
   const contratante1Texto = montarTextoContratante({
-    nome: by['raz_o_social_ou_nome_completo_cotitular'] || contatoNome || (by['r_social_ou_n_completo']||''),
+    nome: by['r_social_ou_n_completo'] || contatoNome || '',
     nacionalidade,
     estadoCivil,
     rua: ruaCnpj,
@@ -1080,12 +1101,28 @@ function montarVarsParaTemplateMarca(d, nowInfo){
   const mesExtenso = monthNamePt(nowInfo.mes);
   const ano = String(nowInfo.ano);
 
+  const cardIdStr = String(d.cardId || '');
+  console.log(`[TEMPLATE MARCA] cardId para número do contrato: ${cardIdStr}`);
+  
   const base = {
-    // Identificação
-    'N° contrato': String(d.cardId || ''),
-    'Nº contrato': String(d.cardId || ''),
-    'Numero contrato': String(d.cardId || ''),
-    'Número contrato': String(d.cardId || ''),
+    // Identificação - Número do contrato (múltiplas variações para compatibilidade)
+    'N° contrato': cardIdStr,
+    'Nº contrato': cardIdStr,
+    'Numero contrato': cardIdStr,
+    'Número contrato': cardIdStr,
+    'CONTRATO nº': cardIdStr,
+    'CONTRATO Nº': cardIdStr,
+    'CONTRATO N°': cardIdStr,
+    'CONTRATO nº:': cardIdStr,
+    'CONTRATO Nº:': cardIdStr,
+    'CONTRATO N°:': cardIdStr,
+    'contrato nº': cardIdStr,
+    'contrato n°': cardIdStr,
+    'contrato nº:': cardIdStr,
+    'contrato n°:': cardIdStr,
+    'numero contrato': cardIdStr,
+    'numero do contrato': cardIdStr,
+    'Número do contrato': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
@@ -1186,12 +1223,28 @@ function montarVarsParaTemplateOutros(d, nowInfo){
   const mesExtenso = monthNamePt(nowInfo.mes);
   const ano = String(nowInfo.ano);
 
+  const cardIdStr = String(d.cardId || '');
+  console.log(`[TEMPLATE OUTROS] cardId para número do contrato: ${cardIdStr}`);
+
 const base = {
-    // Identificação
-    'N° contrato': String(d.cardId || ''),
-    'Nº contrato': String(d.cardId || ''),
-    'Numero contrato': String(d.cardId || ''),
-    'Número contrato': String(d.cardId || ''),
+    // Identificação - Número do contrato (múltiplas variações para compatibilidade)
+    'N° contrato': cardIdStr,
+    'Nº contrato': cardIdStr,
+    'Numero contrato': cardIdStr,
+    'Número contrato': cardIdStr,
+    'CONTRATO nº': cardIdStr,
+    'CONTRATO Nº': cardIdStr,
+    'CONTRATO N°': cardIdStr,
+    'CONTRATO nº:': cardIdStr,
+    'CONTRATO Nº:': cardIdStr,
+    'CONTRATO N°:': cardIdStr,
+    'contrato nº': cardIdStr,
+    'contrato n°': cardIdStr,
+    'contrato nº:': cardIdStr,
+    'contrato n°:': cardIdStr,
+    'numero contrato': cardIdStr,
+    'numero do contrato': cardIdStr,
+    'Número do contrato': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
