@@ -718,7 +718,7 @@ async function montarDados(card){
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
   const estadoCivil = by['estado_civ_l'] || '';
 
-  // Cláusula adicional - não deve ter observações se filiais_ou_digital for "Filiais"
+  // Cláusula adicional
   const filiaisOuDigital = by['filiais_ou_digital'] || '';
   const isFiliais = String(filiaisOuDigital).toLowerCase().trim() === 'filiais';
   
@@ -732,10 +732,10 @@ async function montarDados(card){
   // Montar cláusula adicional
   let clausulaAdicional = '';
   
-  // Texto a ser removido quando for Filiais
+  // Texto a ser removido SEMPRE (independente de Filiais ou Digital)
   // Regex atualizada para capturar o texto completo, incluindo quebras de linha e variações
   // Aceita múltiplos espaços, quebras de linha e variações no texto
-  const textoObservacoesFiliais = /Observações:\s*Entrada\s*R\$\s*R\$\s*440[,.]00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450[,.]00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?[\s\n\r]*/gi;
+  const textoObservacoesRemover = /Observações:\s*Entrada\s*R\$\s*R\$\s*440[,.]00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450[,.]00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?[\s\n\r]*/gi;
   
   const clausulaExistente = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : '';
   
@@ -743,36 +743,29 @@ async function montarDados(card){
   console.log(`[CLAUSULA] tipoPagamento: "${tipoPagamento}", isCreditoProgramado: ${isCreditoProgramado}`);
   console.log(`[CLAUSULA] clausulaExistente (antes da limpeza): "${clausulaExistente.substring(0, 200)}"`);
   
-  // Se for Filiais, SEMPRE remove as observações (mesmo que também seja Crédito programado)
-  let clausulaLimpa = clausulaExistente;
-  if (isFiliais) {
-    // Remove o texto de observações quando for Filiais
-    const antesLimpeza = clausulaLimpa;
-    // Tenta múltiplas variações da regex para garantir remoção
-    let clausulaTmp = clausulaExistente;
-    // Primeira tentativa com regex principal
-    clausulaTmp = clausulaTmp.replace(textoObservacoesFiliais, '');
-    // Segunda tentativa - variação mais flexível (aceita qualquer coisa entre as palavras-chave)
-    const regexFlexivel = /Observações[:\s]*Entrada[^\n]*440[^\n]*TAXA[^\n]*6[^\n]*X[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
-    clausulaTmp = clausulaTmp.replace(regexFlexivel, '');
-    // Terceira tentativa - busca por padrão mais simples (apenas palavras-chave)
-    const regexSimples = /Observações[^\n]*440[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
-    clausulaTmp = clausulaTmp.replace(regexSimples, '');
-    // Quarta tentativa - busca parcial por "Observações" seguido de "440" e "450"
-    const regexParcial = /Observações[^\n]*?440[^\n]*?450[^\n]*?assessoria[^\n]*?Crédito[^\n]*?programado[^\n]*/gi;
-    clausulaTmp = clausulaTmp.replace(regexParcial, '');
-    
-    clausulaLimpa = clausulaTmp.trim();
-    console.log(`[CLAUSULA] Filiais detectado - removendo observações`);
-    console.log(`[CLAUSULA] Antes da remoção (${antesLimpeza.length} chars): "${antesLimpeza.substring(0, 300)}"`);
-    console.log(`[CLAUSULA] Depois da remoção (${clausulaLimpa.length} chars): "${clausulaLimpa.substring(0, 300)}"`);
-    console.log(`[CLAUSULA] Texto foi removido? ${antesLimpeza.length !== clausulaLimpa.length} (diferença: ${antesLimpeza.length - clausulaLimpa.length} chars)`);
-    // Remove também variações com quebras de linha
-    clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
-  } else {
-    // Para outros casos, também remove mas mantém o restante
-    clausulaLimpa = clausulaExistente.replace(textoObservacoesFiliais, '').trim();
-  }
+  // SEMPRE remove o texto de observações (independente de Filiais ou Digital)
+  const antesLimpeza = clausulaExistente;
+  // Tenta múltiplas variações da regex para garantir remoção
+  let clausulaTmp = clausulaExistente;
+  // Primeira tentativa com regex principal
+  clausulaTmp = clausulaTmp.replace(textoObservacoesRemover, '');
+  // Segunda tentativa - variação mais flexível (aceita qualquer coisa entre as palavras-chave)
+  const regexFlexivel = /Observações[:\s]*Entrada[^\n]*440[^\n]*TAXA[^\n]*6[^\n]*X[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+  clausulaTmp = clausulaTmp.replace(regexFlexivel, '');
+  // Terceira tentativa - busca por padrão mais simples (apenas palavras-chave)
+  const regexSimples = /Observações[^\n]*440[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+  clausulaTmp = clausulaTmp.replace(regexSimples, '');
+  // Quarta tentativa - busca parcial por "Observações" seguido de "440" e "450"
+  const regexParcial = /Observações[^\n]*?440[^\n]*?450[^\n]*?assessoria[^\n]*?Crédito[^\n]*?programado[^\n]*/gi;
+  clausulaTmp = clausulaTmp.replace(regexParcial, '');
+  
+  let clausulaLimpa = clausulaTmp.trim();
+  console.log(`[CLAUSULA] Removendo observações (sempre)`);
+  console.log(`[CLAUSULA] Antes da remoção (${antesLimpeza.length} chars): "${antesLimpeza.substring(0, 300)}"`);
+  console.log(`[CLAUSULA] Depois da remoção (${clausulaLimpa.length} chars): "${clausulaLimpa.substring(0, 300)}"`);
+  console.log(`[CLAUSULA] Texto foi removido? ${antesLimpeza.length !== clausulaLimpa.length} (diferença: ${antesLimpeza.length - clausulaLimpa.length} chars)`);
+  // Remove também variações com quebras de linha
+  clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
   
   if (isCreditoProgramado) {
     // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
@@ -798,11 +791,11 @@ async function montarDados(card){
     }
   }
   
-  // Se for Filiais, garantir remoção final do texto das observações (mesmo que tenha passado despercebido)
-  if (isFiliais && clausulaAdicional) {
+  // Garantir remoção final do texto das observações (sempre, independente de Filiais ou Digital)
+  if (clausulaAdicional) {
     const antesRemocaoFinal = clausulaAdicional;
     // Aplicar todas as regexes novamente para garantir remoção completa
-    clausulaAdicional = clausulaAdicional.replace(textoObservacoesFiliais, '');
+    clausulaAdicional = clausulaAdicional.replace(textoObservacoesRemover, '');
     // Regex flexível - aceita qualquer coisa entre as palavras-chave
     const regexFlexivelFinal = /Observações[:\s]*Entrada[^\n]*440[^\n]*TAXA[^\n]*6[^\n]*X[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
     clausulaAdicional = clausulaAdicional.replace(regexFlexivelFinal, '');
