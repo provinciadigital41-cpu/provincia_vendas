@@ -733,16 +733,40 @@ async function montarDados(card){
   let clausulaAdicional = '';
   
   // Texto a ser removido quando for Filiais
-  // Regex atualizada para capturar o texto completo, incluindo quebras de linha
-  const textoObservacoesFiliais = /Observações:\s*Entrada\s*R\$\s*R\$\s*440,00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450,00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?[\s\n]*/gi;
+  // Regex atualizada para capturar o texto completo, incluindo quebras de linha e variações
+  // Aceita múltiplos espaços, quebras de linha e variações no texto
+  const textoObservacoesFiliais = /Observações:\s*Entrada\s*R\$\s*R\$\s*440[,.]00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450[,.]00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?[\s\n\r]*/gi;
   
   const clausulaExistente = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : '';
+  
+  console.log(`[CLAUSULA] filiais_ou_digital: "${filiaisOuDigital}", isFiliais: ${isFiliais}`);
+  console.log(`[CLAUSULA] tipoPagamento: "${tipoPagamento}", isCreditoProgramado: ${isCreditoProgramado}`);
+  console.log(`[CLAUSULA] clausulaExistente (antes da limpeza): "${clausulaExistente.substring(0, 200)}"`);
   
   // Se for Filiais, SEMPRE remove as observações (mesmo que também seja Crédito programado)
   let clausulaLimpa = clausulaExistente;
   if (isFiliais) {
     // Remove o texto de observações quando for Filiais
-    clausulaLimpa = clausulaExistente.replace(textoObservacoesFiliais, '').trim();
+    const antesLimpeza = clausulaLimpa;
+    // Tenta múltiplas variações da regex para garantir remoção
+    let clausulaTmp = clausulaExistente;
+    // Primeira tentativa com regex principal
+    clausulaTmp = clausulaTmp.replace(textoObservacoesFiliais, '');
+    // Segunda tentativa - variação mais flexível (aceita qualquer coisa entre as palavras-chave)
+    const regexFlexivel = /Observações[:\s]*Entrada[^\n]*440[^\n]*TAXA[^\n]*6[^\n]*X[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+    clausulaTmp = clausulaTmp.replace(regexFlexivel, '');
+    // Terceira tentativa - busca por padrão mais simples (apenas palavras-chave)
+    const regexSimples = /Observações[^\n]*440[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+    clausulaTmp = clausulaTmp.replace(regexSimples, '');
+    // Quarta tentativa - busca parcial por "Observações" seguido de "440" e "450"
+    const regexParcial = /Observações[^\n]*?440[^\n]*?450[^\n]*?assessoria[^\n]*?Crédito[^\n]*?programado[^\n]*/gi;
+    clausulaTmp = clausulaTmp.replace(regexParcial, '');
+    
+    clausulaLimpa = clausulaTmp.trim();
+    console.log(`[CLAUSULA] Filiais detectado - removendo observações`);
+    console.log(`[CLAUSULA] Antes da remoção (${antesLimpeza.length} chars): "${antesLimpeza.substring(0, 300)}"`);
+    console.log(`[CLAUSULA] Depois da remoção (${clausulaLimpa.length} chars): "${clausulaLimpa.substring(0, 300)}"`);
+    console.log(`[CLAUSULA] Texto foi removido? ${antesLimpeza.length !== clausulaLimpa.length} (diferença: ${antesLimpeza.length - clausulaLimpa.length} chars)`);
     // Remove também variações com quebras de linha
     clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
   } else {
@@ -756,6 +780,7 @@ async function montarDados(card){
     clausulaAdicional = clausulaLimpa 
       ? `${clausulaLimpa}\n\n${clausulaCreditoProgramado}`
       : clausulaCreditoProgramado;
+    console.log(`[CLAUSULA] Crédito programado detectado - adicionando cláusula específica`);
   } else if (isFiliais) {
     // Se for Filiais (e não for Crédito programado), remove o texto específico de observações e não tem cláusula adicional
     clausulaAdicional = clausulaLimpa;
@@ -763,6 +788,7 @@ async function montarDados(card){
     if (!clausulaAdicional) {
       clausulaAdicional = '';
     }
+    console.log(`[CLAUSULA] Filiais (sem crédito programado) - cláusula final: "${clausulaAdicional.substring(0, 200)}"`);
   } else {
     // Caso padrão - remove o texto de observações se existir
     clausulaAdicional = clausulaLimpa;
@@ -771,6 +797,8 @@ async function montarDados(card){
       clausulaAdicional = 'Sem aditivos contratuais.';
     }
   }
+  
+  console.log(`[CLAUSULA] clausulaAdicional final (primeiros 300 chars): "${clausulaAdicional.substring(0, 300)}"`);
 
   // Contratante 1
   const contratante1Texto = montarTextoContratante({
@@ -893,8 +921,12 @@ async function montarDados(card){
     .filter(Boolean)
     .join(', ');
 
+  console.log(`[MONTAR_DADOS] card.id: ${card.id}, tipo: ${typeof card.id}`);
+  const cardIdValue = card.id ? String(card.id) : '';
+  console.log(`[MONTAR_DADOS] cardIdValue: "${cardIdValue}"`);
+  
   return {
-    cardId: card.id,
+    cardId: cardIdValue,
     templateToUse,
 
     // Identificação
@@ -1129,6 +1161,8 @@ function montarVarsParaTemplateMarca(d, nowInfo){
 
   const cardIdStr = String(d.cardId || '');
   console.log(`[TEMPLATE MARCA] cardId para número do contrato: ${cardIdStr}`);
+  console.log(`[TEMPLATE MARCA] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
+  console.log(`[TEMPLATE MARCA] cardIdStr final: "${cardIdStr}"`);
   
   const base = {
     // Identificação - Número do contrato (múltiplas variações para compatibilidade)
@@ -1262,6 +1296,8 @@ function montarVarsParaTemplateOutros(d, nowInfo){
 
   const cardIdStr = String(d.cardId || '');
   console.log(`[TEMPLATE OUTROS] cardId para número do contrato: ${cardIdStr}`);
+  console.log(`[TEMPLATE OUTROS] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
+  console.log(`[TEMPLATE OUTROS] cardIdStr final: "${cardIdStr}"`);
 
 const base = {
     // Identificação - Número do contrato (múltiplas variações para compatibilidade)
@@ -2098,13 +2134,20 @@ app.post('/lead/:token/generate', async (req, res) => {
     }
     
     // Log para verificar se o número do contrato está sendo passado
-    console.log(`[LEAD-GENERATE] cardId do card: ${d.cardId}`);
+    console.log(`[LEAD-GENERATE] ========== DEBUG NÚMERO DO CONTRATO ==========`);
+    console.log(`[LEAD-GENERATE] card.id: ${card.id}, tipo: ${typeof card.id}`);
+    console.log(`[LEAD-GENERATE] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
+    console.log(`[LEAD-GENERATE] isMarcaTemplate: ${isMarcaTemplate}`);
     console.log(`[LEAD-GENERATE] Número do contrato no template (primeiras variações):`, {
       'N° contrato': add['N° contrato'],
       'Nº contrato': add['Nº contrato'],
       'CONTRATO nº': add['CONTRATO nº'],
-      'CONTRATO nº:': add['CONTRATO nº:']
+      'CONTRATO nº:': add['CONTRATO nº:'],
+      'N° de contrato': add['N° de contrato'],
+      'Contrato N°': add['Contrato N°']
     });
+    console.log(`[LEAD-GENERATE] Total de chaves no objeto add: ${Object.keys(add).length}`);
+    console.log(`[LEAD-GENERATE] =============================================`);
     
     const signers = montarSigners(d);
     if (!signers || signers.length === 0) {
