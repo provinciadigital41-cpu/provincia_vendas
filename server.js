@@ -1194,6 +1194,10 @@ function montarVarsParaTemplateMarca(d, nowInfo){
     'Contrato Nº': cardIdStr,
     'Contrato nº': cardIdStr,
     'Contrato n°': cardIdStr,
+    // Campo específico do D4Sign
+    'Número do contrato do bloco físico*': cardIdStr,
+    'Número do contrato do bloco físico': cardIdStr,
+    'Numero do contrato do bloco fisico': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
@@ -1327,6 +1331,10 @@ const base = {
     'Contrato Nº': cardIdStr,
     'Contrato nº': cardIdStr,
     'Contrato n°': cardIdStr,
+    // Campo específico do D4Sign
+    'Número do contrato do bloco físico*': cardIdStr,
+    'Número do contrato do bloco físico': cardIdStr,
+    'Numero do contrato do bloco fisico': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
@@ -2138,6 +2146,7 @@ app.post('/lead/:token/generate', async (req, res) => {
     console.log(`[LEAD-GENERATE] card.id: ${card.id}, tipo: ${typeof card.id}`);
     console.log(`[LEAD-GENERATE] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
     console.log(`[LEAD-GENERATE] isMarcaTemplate: ${isMarcaTemplate}`);
+    console.log(`[LEAD-GENERATE] Campo "Número do contrato do bloco físico*": ${add['Número do contrato do bloco físico*'] || 'NÃO ENCONTRADO'}`);
     console.log(`[LEAD-GENERATE] Número do contrato no template (primeiras variações):`, {
       'N° contrato': add['N° contrato'],
       'Nº contrato': add['Nº contrato'],
