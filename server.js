@@ -733,16 +733,28 @@ async function montarDados(card){
   let clausulaAdicional = '';
   
   // Texto a ser removido quando for Filiais
-  const textoObservacoesFiliais = /Observações:\s*Entrada\s*R\$\s*R\$\s*440,00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450,00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?/gi;
+  // Regex atualizada para capturar o texto completo, incluindo quebras de linha
+  const textoObservacoesFiliais = /Observações:\s*Entrada\s*R\$\s*R\$\s*440,00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450,00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?[\s\n]*/gi;
   
   const clausulaExistente = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : '';
-  const clausulaLimpa = clausulaExistente.replace(textoObservacoesFiliais, '').trim();
+  
+  // Se for Filiais, SEMPRE remove as observações (mesmo que também seja Crédito programado)
+  let clausulaLimpa = clausulaExistente;
+  if (isFiliais) {
+    // Remove o texto de observações quando for Filiais
+    clausulaLimpa = clausulaExistente.replace(textoObservacoesFiliais, '').trim();
+    // Remove também variações com quebras de linha
+    clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
+  } else {
+    // Para outros casos, também remove mas mantém o restante
+    clausulaLimpa = clausulaExistente.replace(textoObservacoesFiliais, '').trim();
+  }
   
   if (isCreditoProgramado) {
     // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
-    // Se já houver cláusula existente (após limpeza), concatena; senão, usa apenas a do crédito programado
+    // Se já houver cláusula existente (após limpeza), concatena com quebra de linha; senão, usa apenas a do crédito programado
     clausulaAdicional = clausulaLimpa 
-      ? `${clausulaLimpa} ${clausulaCreditoProgramado}`
+      ? `${clausulaLimpa}\n\n${clausulaCreditoProgramado}`
       : clausulaCreditoProgramado;
   } else if (isFiliais) {
     // Se for Filiais (e não for Crédito programado), remove o texto específico de observações e não tem cláusula adicional
@@ -1137,6 +1149,17 @@ function montarVarsParaTemplateMarca(d, nowInfo){
     'numero contrato': cardIdStr,
     'numero do contrato': cardIdStr,
     'Número do contrato': cardIdStr,
+    // Variações para cabeçalho
+    'N° de contrato': cardIdStr,
+    'Nº de contrato': cardIdStr,
+    'Número de contrato': cardIdStr,
+    'Numero de contrato': cardIdStr,
+    'CONTRATO N°:': cardIdStr,
+    'CONTRATO Nº:': cardIdStr,
+    'Contrato N°': cardIdStr,
+    'Contrato Nº': cardIdStr,
+    'Contrato nº': cardIdStr,
+    'Contrato n°': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
@@ -1259,6 +1282,15 @@ const base = {
     'numero contrato': cardIdStr,
     'numero do contrato': cardIdStr,
     'Número do contrato': cardIdStr,
+    // Variações para cabeçalho
+    'N° de contrato': cardIdStr,
+    'Nº de contrato': cardIdStr,
+    'Número de contrato': cardIdStr,
+    'Numero de contrato': cardIdStr,
+    'Contrato N°': cardIdStr,
+    'Contrato Nº': cardIdStr,
+    'Contrato nº': cardIdStr,
+    'Contrato n°': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
@@ -1952,6 +1984,11 @@ app.get('/lead/:token', async (req, res) => {
     const { cardId } = parseLeadToken(req.params.token);
     const card = await getCard(cardId);
     const d = await montarDados(card);
+    
+    // Ler campo filiais_ou_digital do card
+    const by = toById(card);
+    const filiaisOuDigital = by['filiais_ou_digital'] || '';
+    const tipoUnidade = filiaisOuDigital || 'Não informado';
 
     const html = `
 <!doctype html><html lang="pt-BR"><meta charset="utf-8">
@@ -1973,6 +2010,12 @@ app.get('/lead/:token', async (req, res) => {
 <div class="wrap">
   <div class="card">
     <h1>Revisar dados do contrato <span class="tag">Card #${card.id}</span></h1>
+
+    <h2>Informações Gerais</h2>
+    <div class="grid">
+      <div><div class="label">N° de contrato</div><div>${card.id}</div></div>
+      <div><div class="label">Tipo de Unidade</div><div>${tipoUnidade}</div></div>
+    </div>
 
     <h2>Contratante(s)</h2>
     <div class="grid">
