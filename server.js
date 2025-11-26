@@ -798,6 +798,28 @@ async function montarDados(card){
     }
   }
   
+  // Se for Filiais, garantir remoção final do texto das observações (mesmo que tenha passado despercebido)
+  if (isFiliais && clausulaAdicional) {
+    const antesRemocaoFinal = clausulaAdicional;
+    // Aplicar todas as regexes novamente para garantir remoção completa
+    clausulaAdicional = clausulaAdicional.replace(textoObservacoesFiliais, '');
+    // Regex flexível - aceita qualquer coisa entre as palavras-chave
+    const regexFlexivelFinal = /Observações[:\s]*Entrada[^\n]*440[^\n]*TAXA[^\n]*6[^\n]*X[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+    clausulaAdicional = clausulaAdicional.replace(regexFlexivelFinal, '');
+    // Regex simples - busca por padrão mais simples (apenas palavras-chave)
+    const regexSimplesFinal = /Observações[^\n]*440[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+    clausulaAdicional = clausulaAdicional.replace(regexSimplesFinal, '');
+    // Regex parcial - busca parcial por "Observações" seguido de "440" e "450"
+    const regexParcialFinal = /Observações[^\n]*?440[^\n]*?450[^\n]*?assessoria[^\n]*?Crédito[^\n]*?programado[^\n]*/gi;
+    clausulaAdicional = clausulaAdicional.replace(regexParcialFinal, '');
+    // Remover também variações com quebras de linha duplas
+    clausulaAdicional = clausulaAdicional.replace(/\n\n+/g, '\n').trim();
+    
+    if (antesRemocaoFinal !== clausulaAdicional) {
+      console.log(`[CLAUSULA] Remoção final aplicada - texto removido: ${antesRemocaoFinal.length - clausulaAdicional.length} chars`);
+    }
+  }
+  
   console.log(`[CLAUSULA] clausulaAdicional final (primeiros 300 chars): "${clausulaAdicional.substring(0, 300)}"`);
 
   // Contratante 1
