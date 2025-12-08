@@ -60,6 +60,7 @@ app.get('/', (req, res) => {
         <div class="input-group">
           <input type="text" id="cardId" placeholder="Ex: 123456789" />
           <button onclick="fetchData()">Visualizar Dados</button>
+          <button id="btnGerar" onclick="gerarContrato()" style="background-color: #28a745; display: none;">Gerar Contrato Agora</button>
         </div>
 
         <div id="result"></div>
@@ -83,6 +84,7 @@ app.get('/', (req, res) => {
             }
 
             renderResult(data);
+            document.getElementById('btnGerar').style.display = 'block';
           } catch (e) {
             resDiv.innerHTML = '<div class="error">Erro de conexão: ' + e.message + '</div>';
           }
@@ -135,6 +137,33 @@ app.get('/', (req, res) => {
 
         function toggle(header) {
           header.parentElement.classList.toggle('open');
+        }
+
+        async function gerarContrato() {
+          const id = document.getElementById('cardId').value.trim();
+          if (!id) return alert('Digite um ID primeiro');
+          
+          if (!confirm('Tem certeza que deseja gerar o contrato para o card ' + id + '? Isso criará um documento no D4Sign.')) return;
+
+          const btn = document.getElementById('btnGerar');
+          btn.disabled = true;
+          btn.innerText = 'Gerando...';
+
+          try {
+            const res = await fetch('/manual-trigger/' + id, { method: 'POST' });
+            const data = await res.json();
+            
+            if (data.success) {
+              alert('Contrato gerado com sucesso! UUID: ' + data.result.uuidDoc);
+            } else {
+              alert('Erro ao gerar: ' + data.error);
+            }
+          } catch (e) {
+            alert('Erro de conexão: ' + e.message);
+          } finally {
+            btn.disabled = false;
+            btn.innerText = 'Gerar Contrato Agora';
+          }
         }
       </script>
     </body>
@@ -3213,54 +3242,136 @@ app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
     console.error('[ERRO criar-link]', e.message || e);
     return res.status(500).json({ error: String(e.message || e) });
   }
-});
-
-/* =========================
- * Debug / Health
- * =======================*/
-app.get('/_echo/*', (req, res) => {
-  res.json({
-    method: req.method,
-    originalUrl: req.originalUrl,
-    path: req.path,
-    baseUrl: req.baseUrl,
-    host: req.get('host'),
-    href: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
-    headers: req.headers,
-    query: req.query,
-  });
-});
-app.get('/debug/card', async (req, res) => {
-  try {
-    const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
+  /* =========================
+   * Lógica Central de Geração
+   * =======================*/
+  async function processarContrato(cardId) {
     const card = await getCard(cardId);
-    res.json({
-      id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
-      fields: (card.fields || []).map(f => ({ name: f.name, id: f.field?.id, type: f.field?.type, value: f.value, array_value: f.array_value }))
-    });
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-});
-app.get('/health', (_req, res) => res.json({ ok: true }));
+    const d = await montarDados(card);
 
-/* =========================
- * Start
- * =======================*/
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  const list = [];
-  app._router.stack.forEach(m => {
-    if (m.route && m.route.path) {
-      const methods = Object.keys(m.route.methods).map(x => x.toUpperCase()).join(',');
-      list.push(`${methods} ${m.route.path}`);
-    } else if (m.name === 'router' && m.handle?.stack) {
-      m.handle.stack.forEach(h => {
-        const route = h.route;
-        if (route) {
-          const methods = Object.keys(route.methods).map(x => x.toUpperCase()).join(',');
-          list.push(`${methods} ${route.path}`);
-        }
-      });
+    const now = new Date();
+    const nowInfo = { dia: now.getDate(), mes: now.getMonth() + 1, ano: now.getFullYear() };
+
+    // Validar template
+    if (!d.templateToUse) {
+      throw new Error('Template não identificado. Verifique os dados do card.');
+    }
+
+    const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO;
+    const add = isMarcaTemplate ? montarVarsParaTemplateMarca(d, nowInfo)
+      : montarVarsParaTemplateOutros(d, nowInfo);
+
+    // Seleciona cofre
+    const equipeContrato = getEquipeContratoFromCard(card);
+    let uuidSafe = COFRES_UUIDS[equipeContrato] || DEFAULT_COFRE_UUID;
+
+    if (!uuidSafe) throw new Error('Nenhum cofre disponível.');
+
+    console.log(`[PROCESSAR] Criando contrato no cofre: ${uuidSafe}`);
+
+    const uuidDoc = await makeDocFromWordTemplate(
+      D4SIGN_TOKEN,
+      D4SIGN_CRYPT_KEY,
+      uuidSafe,
+      d.templateToUse,
+      d.titulo || card.title || 'Contrato',
+      add
+    );
+
+    if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
+
+    // Webhook
+    try {
+      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, `${PUBLIC_BASE_URL}/d4sign/postback`);
+    } catch (e) { console.error('Erro webhook:', e.message); }
+
+    // Procuração (Opcional)
+    let uuidProcuracao = null;
+    if (TEMPLATE_UUID_PROCURACAO) {
+      try {
+        const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+        uuidProcuracao = await makeDocFromWordTemplate(
+          D4SIGN_TOKEN,
+          D4SIGN_CRYPT_KEY,
+          uuidSafe,
+          TEMPLATE_UUID_PROCURACAO,
+          `Procuração - ${d.titulo || card.title}`,
+          varsProcuracao
+        );
+        // Webhook procuração...
+      } catch (e) { console.error('Erro procuração:', e.message); }
+    }
+
+    return { uuidDoc, uuidProcuracao };
+  }
+
+  /* =========================
+   * Webhook Pipefy
+   * =======================*/
+  app.post('/pipefy-webhook', async (req, res) => {
+    try {
+      const { data } = req.body || {};
+      if (!data || !data.card) return res.json({ ok: true });
+
+      const cardId = data.card.id;
+      console.log(`[WEBHOOK] Recebido para card ${cardId}`);
+
+      // Chama a função centralizada
+      await processarContrato(cardId);
+
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('[WEBHOOK ERROR]', e);
+      res.status(500).json({ error: e.message });
     }
   });
-  console.log('[rotas-registradas]'); list.sort().forEach(r => console.log('  -', r));
-});
+
+  /* =========================
+   * Debug / Health
+   * =======================*/
+  app.get('/_echo/*', (req, res) => {
+    res.json({
+      method: req.method,
+      originalUrl: req.originalUrl,
+      path: req.path,
+      baseUrl: req.baseUrl,
+      host: req.get('host'),
+      href: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+      headers: req.headers,
+      query: req.query,
+    });
+  });
+  app.get('/debug/card', async (req, res) => {
+    try {
+      const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
+      const card = await getCard(cardId);
+      res.json({
+        id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
+        fields: (card.fields || []).map(f => ({ name: f.name, id: f.field?.id, type: f.field?.type, value: f.value, array_value: f.array_value }))
+      });
+    } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+  });
+  app.get('/health', (_req, res) => res.json({ ok: true }));
+
+  /* =========================
+   * Start
+   * =======================*/
+  app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+    const list = [];
+    app._router.stack.forEach(m => {
+      if (m.route && m.route.path) {
+        const methods = Object.keys(m.route.methods).map(x => x.toUpperCase()).join(',');
+        list.push(`${methods} ${m.route.path}`);
+      } else if (m.name === 'router' && m.handle?.stack) {
+        m.handle.stack.forEach(h => {
+          const route = h.route;
+          if (route) {
+            const methods = Object.keys(route.methods).map(x => x.toUpperCase()).join(',');
+            list.push(`${methods} ${route.path}`);
+          }
+        });
+      }
+    });
+    console.log('[rotas-registradas]'); list.sort().forEach(r => console.log('  -', r));
+  });
