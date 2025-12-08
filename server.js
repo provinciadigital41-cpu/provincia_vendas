@@ -206,6 +206,21 @@ app.get('/debug-card/:id', async (req, res) => {
   }
 });
 
+// [NOVO] Rota para disparo manual
+app.post('/manual-trigger/:id', async (req, res) => {
+  try {
+    const cardId = req.params.id;
+    console.log(`[MANUAL TRIGGER] Iniciando geração para card ${cardId}`);
+
+    const result = await processarContrato(cardId);
+
+    res.json({ success: true, result });
+  } catch (e) {
+    console.error('[MANUAL TRIGGER ERROR]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 /* =========================
  * ENV
  * =======================*/
@@ -3242,136 +3257,138 @@ app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
     console.error('[ERRO criar-link]', e.message || e);
     return res.status(500).json({ error: String(e.message || e) });
   }
-  /* =========================
-   * Lógica Central de Geração
-   * =======================*/
-  async function processarContrato(cardId) {
-    const card = await getCard(cardId);
-    const d = await montarDados(card);
+});
 
-    const now = new Date();
-    const nowInfo = { dia: now.getDate(), mes: now.getMonth() + 1, ano: now.getFullYear() };
+/* =========================
+ * Lógica Central de Geração
+ * =======================*/
+async function processarContrato(cardId) {
+  const card = await getCard(cardId);
+  const d = await montarDados(card);
 
-    // Validar template
-    if (!d.templateToUse) {
-      throw new Error('Template não identificado. Verifique os dados do card.');
-    }
+  const now = new Date();
+  const nowInfo = { dia: now.getDate(), mes: now.getMonth() + 1, ano: now.getFullYear() };
 
-    const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO;
-    const add = isMarcaTemplate ? montarVarsParaTemplateMarca(d, nowInfo)
-      : montarVarsParaTemplateOutros(d, nowInfo);
-
-    // Seleciona cofre
-    const equipeContrato = getEquipeContratoFromCard(card);
-    let uuidSafe = COFRES_UUIDS[equipeContrato] || DEFAULT_COFRE_UUID;
-
-    if (!uuidSafe) throw new Error('Nenhum cofre disponível.');
-
-    console.log(`[PROCESSAR] Criando contrato no cofre: ${uuidSafe}`);
-
-    const uuidDoc = await makeDocFromWordTemplate(
-      D4SIGN_TOKEN,
-      D4SIGN_CRYPT_KEY,
-      uuidSafe,
-      d.templateToUse,
-      d.titulo || card.title || 'Contrato',
-      add
-    );
-
-    if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
-
-    // Webhook
-    try {
-      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, `${PUBLIC_BASE_URL}/d4sign/postback`);
-    } catch (e) { console.error('Erro webhook:', e.message); }
-
-    // Procuração (Opcional)
-    let uuidProcuracao = null;
-    if (TEMPLATE_UUID_PROCURACAO) {
-      try {
-        const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
-        uuidProcuracao = await makeDocFromWordTemplate(
-          D4SIGN_TOKEN,
-          D4SIGN_CRYPT_KEY,
-          uuidSafe,
-          TEMPLATE_UUID_PROCURACAO,
-          `Procuração - ${d.titulo || card.title}`,
-          varsProcuracao
-        );
-        // Webhook procuração...
-      } catch (e) { console.error('Erro procuração:', e.message); }
-    }
-
-    return { uuidDoc, uuidProcuracao };
+  // Validar template
+  if (!d.templateToUse) {
+    throw new Error('Template não identificado. Verifique os dados do card.');
   }
 
-  /* =========================
-   * Webhook Pipefy
-   * =======================*/
-  app.post('/pipefy-webhook', async (req, res) => {
+  const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO;
+  const add = isMarcaTemplate ? montarVarsParaTemplateMarca(d, nowInfo)
+    : montarVarsParaTemplateOutros(d, nowInfo);
+
+  // Seleciona cofre
+  const equipeContrato = getEquipeContratoFromCard(card);
+  let uuidSafe = COFRES_UUIDS[equipeContrato] || DEFAULT_COFRE_UUID;
+
+  if (!uuidSafe) throw new Error('Nenhum cofre disponível.');
+
+  console.log(`[PROCESSAR] Criando contrato no cofre: ${uuidSafe}`);
+
+  const uuidDoc = await makeDocFromWordTemplate(
+    D4SIGN_TOKEN,
+    D4SIGN_CRYPT_KEY,
+    uuidSafe,
+    d.templateToUse,
+    d.titulo || card.title || 'Contrato',
+    add
+  );
+
+  if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
+
+  // Webhook
+  try {
+    await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, `${PUBLIC_BASE_URL}/d4sign/postback`);
+  } catch (e) { console.error('Erro webhook:', e.message); }
+
+  // Procuração (Opcional)
+  let uuidProcuracao = null;
+  if (TEMPLATE_UUID_PROCURACAO) {
     try {
-      const { data } = req.body || {};
-      if (!data || !data.card) return res.json({ ok: true });
+      const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+      uuidProcuracao = await makeDocFromWordTemplate(
+        D4SIGN_TOKEN,
+        D4SIGN_CRYPT_KEY,
+        uuidSafe,
+        TEMPLATE_UUID_PROCURACAO,
+        `Procuração - ${d.titulo || card.title}`,
+        varsProcuracao
+      );
+      // Webhook procuração...
+    } catch (e) { console.error('Erro procuração:', e.message); }
+  }
 
-      const cardId = data.card.id;
-      console.log(`[WEBHOOK] Recebido para card ${cardId}`);
+  return { uuidDoc, uuidProcuracao };
+}
 
-      // Chama a função centralizada
-      await processarContrato(cardId);
+/* =========================
+ * Webhook Pipefy
+ * =======================*/
+app.post('/pipefy-webhook', async (req, res) => {
+  try {
+    const { data } = req.body || {};
+    if (!data || !data.card) return res.json({ ok: true });
 
-      res.json({ ok: true });
-    } catch (e) {
-      console.error('[WEBHOOK ERROR]', e);
-      res.status(500).json({ error: e.message });
+    const cardId = data.card.id;
+    console.log(`[WEBHOOK] Recebido para card ${cardId}`);
+
+    // Chama a função centralizada
+    await processarContrato(cardId);
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[WEBHOOK ERROR]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* =========================
+ * Debug / Health
+ * =======================*/
+app.get('/_echo/*', (req, res) => {
+  res.json({
+    method: req.method,
+    originalUrl: req.originalUrl,
+    path: req.path,
+    baseUrl: req.baseUrl,
+    host: req.get('host'),
+    href: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+    headers: req.headers,
+    query: req.query,
+  });
+});
+app.get('/debug/card', async (req, res) => {
+  try {
+    const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
+    const card = await getCard(cardId);
+    res.json({
+      id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
+      fields: (card.fields || []).map(f => ({ name: f.name, id: f.field?.id, type: f.field?.type, value: f.value, array_value: f.array_value }))
+    });
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+app.get('/health', (_req, res) => res.json({ ok: true }));
+
+/* =========================
+ * Start
+ * =======================*/
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+  const list = [];
+  app._router.stack.forEach(m => {
+    if (m.route && m.route.path) {
+      const methods = Object.keys(m.route.methods).map(x => x.toUpperCase()).join(',');
+      list.push(`${methods} ${m.route.path}`);
+    } else if (m.name === 'router' && m.handle?.stack) {
+      m.handle.stack.forEach(h => {
+        const route = h.route;
+        if (route) {
+          const methods = Object.keys(route.methods).map(x => x.toUpperCase()).join(',');
+          list.push(`${methods} ${route.path}`);
+        }
+      });
     }
   });
-
-  /* =========================
-   * Debug / Health
-   * =======================*/
-  app.get('/_echo/*', (req, res) => {
-    res.json({
-      method: req.method,
-      originalUrl: req.originalUrl,
-      path: req.path,
-      baseUrl: req.baseUrl,
-      host: req.get('host'),
-      href: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
-      headers: req.headers,
-      query: req.query,
-    });
-  });
-  app.get('/debug/card', async (req, res) => {
-    try {
-      const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
-      const card = await getCard(cardId);
-      res.json({
-        id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
-        fields: (card.fields || []).map(f => ({ name: f.name, id: f.field?.id, type: f.field?.type, value: f.value, array_value: f.array_value }))
-      });
-    } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-  });
-  app.get('/health', (_req, res) => res.json({ ok: true }));
-
-  /* =========================
-   * Start
-   * =======================*/
-  app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
-    const list = [];
-    app._router.stack.forEach(m => {
-      if (m.route && m.route.path) {
-        const methods = Object.keys(m.route.methods).map(x => x.toUpperCase()).join(',');
-        list.push(`${methods} ${m.route.path}`);
-      } else if (m.name === 'router' && m.handle?.stack) {
-        m.handle.stack.forEach(h => {
-          const route = h.route;
-          if (route) {
-            const methods = Object.keys(route.methods).map(x => x.toUpperCase()).join(',');
-            list.push(`${methods} ${route.path}`);
-          }
-        });
-      }
-    });
-    console.log('[rotas-registradas]'); list.sort().forEach(r => console.log('  -', r));
-  });
+  console.log('[rotas-registradas]'); list.sort().forEach(r => console.log('  -', r));
+});
