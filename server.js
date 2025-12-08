@@ -19,6 +19,164 @@ app.use((req, _res, next) => {
   next();
 });
 
+// [NOVO] Dashboard de Visualização
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Província Vendas - Debugger</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; color: #1a73e8; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+        button { padding: 10px 20px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        button:hover { background: #1557b0; }
+        #result { margin-top: 20px; }
+        .section { margin-bottom: 30px; border: 1px solid #eee; border-radius: 4px; overflow: hidden; }
+        .section-header { background: #f8f9fa; padding: 10px 15px; font-weight: bold; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .section-content { padding: 15px; display: none; }
+        .section.open .section-content { display: block; }
+        pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 4px; overflow-x: auto; margin: 0; }
+        .table-view { width: 100%; border-collapse: collapse; }
+        .table-view th, .table-view td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+        .table-view th { color: #666; font-size: 0.9em; width: 30%; }
+        .loading { text-align: center; padding: 20px; color: #666; }
+        .error { background: #fee; color: #c00; padding: 15px; border-radius: 4px; }
+        .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
+        .badge-cpf { background: #e6f4ea; color: #137333; }
+        .badge-cnpj { background: #e8f0fe; color: #1967d2; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>🔍 Província Vendas - Debugger</h1>
+        <p>Insira o ID do Card do Pipefy para visualizar os dados extraídos e as variáveis do contrato.</p>
+        
+        <div class="input-group">
+          <input type="text" id="cardId" placeholder="Ex: 123456789" />
+          <button onclick="fetchData()">Visualizar Dados</button>
+        </div>
+
+        <div id="result"></div>
+      </div>
+
+      <script>
+        async function fetchData() {
+          const id = document.getElementById('cardId').value.trim();
+          if (!id) return alert('Digite um ID');
+          
+          const resDiv = document.getElementById('result');
+          resDiv.innerHTML = '<div class="loading">Carregando dados do Pipefy...</div>';
+          
+          try {
+            const res = await fetch('/debug-card/' + id);
+            const data = await res.json();
+            
+            if (data.error) {
+              resDiv.innerHTML = '<div class="error">Erro: ' + data.error + '</div>';
+              return;
+            }
+
+            renderResult(data);
+          } catch (e) {
+            resDiv.innerHTML = '<div class="error">Erro de conexão: ' + e.message + '</div>';
+          }
+        }
+
+        function renderResult(data) {
+          const { raw, extracted, varsMarca, varsOutros, templateInfo } = data;
+          
+          let html = '';
+
+          // Info Básica
+          html += '<div class="section open"><div class="section-header" onclick="toggle(this)">📋 Resumo e Decisão</div><div class="section-content">';
+          html += '<table class="table-view">';
+          html += '<tr><th>Template Escolhido</th><td>' + (templateInfo.uuid || 'N/A') + ' (' + templateInfo.type + ')</td></tr>';
+          html += '<tr><th>Tipo de Pessoa</th><td><span class="badge ' + (extracted.selecao_cnpj_ou_cpf === 'CPF' ? 'badge-cpf' : 'badge-cnpj') + '">' + (extracted.selecao_cnpj_ou_cpf || 'Indefinido') + '</span></td></tr>';
+          html += '<tr><th>Contratante 1</th><td>' + (extracted.nome || '') + '</td></tr>';
+          html += '<tr><th>Documento</th><td>' + (extracted.cpf || extracted.cnpj || 'N/A') + '</td></tr>';
+          html += '</table></div></div>';
+
+          // Variáveis Marca
+          html += '<div class="section"><div class="section-header" onclick="toggle(this)">🏷️ Variáveis para Template MARCA</div><div class="section-content">';
+          html += renderTable(varsMarca);
+          html += '</div></div>';
+
+          // Variáveis Outros
+          html += '<div class="section"><div class="section-header" onclick="toggle(this)">📑 Variáveis para Template OUTROS</div><div class="section-content">';
+          html += renderTable(varsOutros);
+          html += '</div></div>';
+
+          // Dados Extraídos (Interno)
+          html += '<div class="section"><div class="section-header" onclick="toggle(this)">⚙️ Dados Internos (Extraídos)</div><div class="section-content"><pre>' + JSON.stringify(extracted, null, 2) + '</pre></div></div>';
+
+          // Raw Card
+          html += '<div class="section"><div class="section-header" onclick="toggle(this)">📦 Card Bruto (Pipefy)</div><div class="section-content"><pre>' + JSON.stringify(raw, null, 2) + '</pre></div></div>';
+
+          document.getElementById('result').innerHTML = html;
+        }
+
+        function renderTable(obj) {
+          if (!obj) return 'Sem dados';
+          let h = '<table class="table-view">';
+          for (let k in obj) {
+            let val = obj[k];
+            if (typeof val === 'object') val = JSON.stringify(val);
+            h += '<tr><th>' + k + '</th><td>' + (val || '') + '</td></tr>';
+          }
+          h += '</table>';
+          return h;
+        }
+
+        function toggle(header) {
+          header.parentElement.classList.toggle('open');
+        }
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+// [NOVO] API de Debug
+app.get('/debug-card/:id', async (req, res) => {
+  try {
+    const cardId = req.params.id;
+    const card = await getCard(cardId);
+    const dados = await montarDados(card);
+
+    // Simula data atual para variáveis de tempo
+    const now = new Date();
+    const nowInfo = { dia: now.getDate(), mes: now.getMonth() + 1, ano: now.getFullYear() };
+
+    const varsMarca = montarVarsParaTemplateMarca(dados, nowInfo);
+    const varsOutros = montarVarsParaTemplateOutros(dados, nowInfo);
+
+    // Recalcula lógica de template para exibir
+    const k1 = serviceKindFromText(dados.stmt1); // (Nota: montarDados não retorna stmt1 direto na raiz, mas está em 'entries'. Simplificando aqui recuperando do objeto dados se possível ou re-executando lógica leve)
+    // Para simplificar, usamos a variável templateToUse que foi calculada dentro de montarDados? 
+    // montarDados retorna 'templateToUse' no objeto!
+
+    res.json({
+      raw: card,
+      extracted: dados,
+      varsMarca,
+      varsOutros,
+      templateInfo: {
+        uuid: dados.templateToUse,
+        type: dados.templateToUse === TEMPLATE_UUID_CONTRATO ? 'MARCA' : 'OUTROS'
+      }
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /* =========================
  * ENV
  * =======================*/
@@ -44,10 +202,8 @@ let {
   D4SIGN_TOKEN,
   D4SIGN_CRYPT_KEY,
   D4SIGN_BASE_URL,                  // Base URL da API D4Sign
-  TEMPLATE_UUID_CONTRATO,           // Modelo de Marca (Legado/Fallback)
-  TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços (Legado/Fallback)
-  TEMPLATE_UUID_CONTRATO_CPF,       // [NOVO] Modelo para Pessoa Física
-  TEMPLATE_UUID_CONTRATO_CNPJ,      // [NOVO] Modelo para Pessoa Jurídica
+  TEMPLATE_UUID_CONTRATO,           // Modelo de Marca
+  TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
   TEMPLATE_UUID_PROCURACAO,         // Modelo de Procuração
 
   // Assinatura interna
@@ -108,8 +264,6 @@ if (!PIPEFY_FIELD_D4_UUID_CONTRATO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID_C
 if (!PIPEFY_FIELD_D4_UUID_PROCURACAO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID_PROCURACAO ausente - usando padrão: d4_uuid_procuracao');
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
-if (!TEMPLATE_UUID_CONTRATO_CPF) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_CPF ausente');
-if (!TEMPLATE_UUID_CONTRATO_CNPJ) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_CNPJ ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
 
 // Cofres mapeados por EQUIPE (campo "Equipe contrato" no Pipefy)
@@ -632,24 +786,13 @@ async function montarDados(card) {
   const k5 = serviceKindFromText(serv5Stmt);
 
   // Decide template
-  // Decide template
   const anyMarca = [k1, k2, k3, k4, k5].includes('MARCA');
-  let templateToUse = anyMarca ? TEMPLATE_UUID_CONTRATO : TEMPLATE_UUID_CONTRATO_OUTROS;
+  const templateToUse = anyMarca ? TEMPLATE_UUID_CONTRATO : TEMPLATE_UUID_CONTRATO_OUTROS;
 
-  // [NOVO] Lógica CPF vs CNPJ (Sobrescreve a anterior se o campo estiver preenchido)
+  // [Lógica CPF vs CNPJ] Apenas para controle de dados, não muda o template UUID
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
   const isSelecaoCpf = String(selecaoCnpjOuCpf).toUpperCase().trim() === 'CPF';
   const isSelecaoCnpj = String(selecaoCnpjOuCpf).toUpperCase().trim() === 'CNPJ';
-
-  if (isSelecaoCpf && TEMPLATE_UUID_CONTRATO_CPF) {
-    templateToUse = TEMPLATE_UUID_CONTRATO_CPF;
-    console.log('[TEMPLATE] Usando template de CPF');
-  } else if (isSelecaoCnpj && TEMPLATE_UUID_CONTRATO_CNPJ) {
-    templateToUse = TEMPLATE_UUID_CONTRATO_CNPJ;
-    console.log('[TEMPLATE] Usando template de CNPJ');
-  } else {
-    console.log('[TEMPLATE] Usando lógica antiga (Marca/Outros) ou fallback');
-  }
 
   // Contato contratante 1
   const contatoNome = by['nome_1'] || getFirstByNames(card, ['nome do contato', 'contratante', 'responsável legal', 'responsavel legal']) || '';
