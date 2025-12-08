@@ -44,8 +44,10 @@ let {
   D4SIGN_TOKEN,
   D4SIGN_CRYPT_KEY,
   D4SIGN_BASE_URL,                  // Base URL da API D4Sign
-  TEMPLATE_UUID_CONTRATO,           // Modelo de Marca
-  TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
+  TEMPLATE_UUID_CONTRATO,           // Modelo de Marca (Legado/Fallback)
+  TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços (Legado/Fallback)
+  TEMPLATE_UUID_CONTRATO_CPF,       // [NOVO] Modelo para Pessoa Física
+  TEMPLATE_UUID_CONTRATO_CNPJ,      // [NOVO] Modelo para Pessoa Jurídica
   TEMPLATE_UUID_PROCURACAO,         // Modelo de Procuração
 
   // Assinatura interna
@@ -82,6 +84,7 @@ let {
   COFRE_UUID_FILIALMARINGA,
   COFRE_UUID_FILIALRIBEIRAOPRETO,
   COFRE_UUID_FILIALPALMAS_TO,
+  COFRE_UUID_CURITIBA_MATRIZ,
 
   DEFAULT_COFRE_UUID
 } = process.env;
@@ -105,6 +108,8 @@ if (!PIPEFY_FIELD_D4_UUID_CONTRATO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID_C
 if (!PIPEFY_FIELD_D4_UUID_PROCURACAO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID_PROCURACAO ausente - usando padrão: d4_uuid_procuracao');
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
+if (!TEMPLATE_UUID_CONTRATO_CPF) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_CPF ausente');
+if (!TEMPLATE_UUID_CONTRATO_CNPJ) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_CNPJ ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
 
 // Cofres mapeados por EQUIPE (campo "Equipe contrato" no Pipefy)
@@ -160,13 +165,16 @@ const COFRES_UUIDS = {
   'FILIAL GUARULHOS': COFRE_UUID_FILIALGUARULHOS,
   'FILIAL MARINGA': COFRE_UUID_FILIALMARINGA,
   'FILIAL RIBEIRAO PRETO': COFRE_UUID_FILIALRIBEIRAOPRETO,
-  'FILIAL PALMAS - TO': COFRE_UUID_FILIALPALMAS_TO
+  'FILIAL RIBEIRAO PRETO': COFRE_UUID_FILIALRIBEIRAOPRETO,
+  'FILIAL PALMAS - TO': COFRE_UUID_FILIALPALMAS_TO,
+  'Curitiba Matriz': COFRE_UUID_CURITIBA_MATRIZ,
+  'CURITIBA MATRIZ': COFRE_UUID_CURITIBA_MATRIZ
 };
 
 // Função para obter o nome da variável do cofre a partir do UUID
 function getNomeCofreByUuid(uuidCofre) {
   if (!uuidCofre) return 'Cofre não identificado';
-  
+
   // Mapeamento reverso: UUID -> Nome da variável
   const mapeamento = {
     [COFRE_UUID_EDNA]: 'COFRE_UUID_EDNA',
@@ -198,80 +206,81 @@ function getNomeCofreByUuid(uuidCofre) {
     [COFRE_UUID_FILIALGUARULHOS]: 'COFRE_UUID_FILIALGUARULHOS',
     [COFRE_UUID_FILIALMARINGA]: 'COFRE_UUID_FILIALMARINGA',
     [COFRE_UUID_FILIALRIBEIRAOPRETO]: 'COFRE_UUID_FILIALRIBEIRAOPRETO',
-    [COFRE_UUID_FILIALPALMAS_TO]: 'COFRE_UUID_FILIALPALMAS_TO'
+    [COFRE_UUID_FILIALRIBEIRAOPRETO]: 'COFRE_UUID_FILIALRIBEIRAOPRETO',
+    [COFRE_UUID_FILIALPALMAS_TO]: 'COFRE_UUID_FILIALPALMAS_TO',
+    [COFRE_UUID_CURITIBA_MATRIZ]: 'COFRE_UUID_CURITIBA_MATRIZ'
   };
-  
+
   if (uuidCofre === DEFAULT_COFRE_UUID) {
     return 'DEFAULT_COFRE_UUID';
   }
-  
+
   return mapeamento[uuidCofre] || 'Cofre não identificado';
 }
 
 /* =========================
  * Helpers gerais
  * =======================*/
-function onlyDigits(s){ return String(s||'').replace(/\D/g,''); }
-function normalizePhone(s){ return onlyDigits(s); }
-function toBRL(n){ return isNaN(n)?'':Number(n).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
-function parseNumberBR(v){
-  if (v==null) return NaN;
+function onlyDigits(s) { return String(s || '').replace(/\D/g, ''); }
+function normalizePhone(s) { return onlyDigits(s); }
+function toBRL(n) { return isNaN(n) ? '' : Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+function parseNumberBR(v) {
+  if (v == null) return NaN;
   const s = String(v).trim();
   if (!s) return NaN;
-  if (/^\d{1,3}(\.\d{3})*,\d{2}$/.test(s)) return Number(s.replace(/\./g,'').replace(',','.'));
+  if (/^\d{1,3}(\.\d{3})*,\d{2}$/.test(s)) return Number(s.replace(/\./g, '').replace(',', '.'));
   if (/^\d+(\.\d+)?$/.test(s)) return Number(s);
-  return Number(s.replace(/[^\d.,-]/g,'').replace(/\./g,'').replace(',','.'));
+  return Number(s.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(',', '.'));
 }
-function onlyNumberBR(s){
+function onlyNumberBR(s) {
   const n = parseNumberBR(s);
-  return isNaN(n)? 0 : n;
+  return isNaN(n) ? 0 : n;
 }
 
 // Datas
-const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const MESES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 function monthNamePt(mIndex1to12) { return MESES_PT[(Math.max(1, Math.min(12, Number(mIndex1to12))) - 1)]; }
-function parsePipeDateToDate(value){
+function parsePipeDateToDate(value) {
   if (!value) return null;
   const s = String(value).trim();
   const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m){
+  if (m) {
     const dd = Number(m[1]), mm = Number(m[2]), yyyy = Number(m[3]);
-    const d = new Date(yyyy, mm-1, dd);
+    const d = new Date(yyyy, mm - 1, dd);
     return isNaN(d) ? null : d;
   }
   const d = new Date(s);
   return isNaN(d) ? null : d;
 }
-function fmtDMY2(value){
+function fmtDMY2(value) {
   const d = value instanceof Date ? value : parsePipeDateToDate(value);
   if (!d) return '';
-  const dd = String(d.getDate()).padStart(2,'0');
-  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yy = String(d.getFullYear()).slice(-2);
   return `${dd}/${mm}/${yy}`;
 }
 
 // Retry com timeout exponencial
-async function fetchWithRetry(url, init={}, opts={})
-{
+async function fetchWithRetry(url, init = {}, opts = {}) {
   const attempts = opts.attempts || 3;
   const baseDelayMs = opts.baseDelayMs || 500;
   const timeoutMs = opts.timeoutMs || 15000;
 
-  for (let i=0;i<attempts;i++){
-    try{
+  for (let i = 0; i < attempts; i++) {
+    try {
       const ctrl = new AbortController();
-      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
       const res = await fetch(url, { ...init, signal: ctrl.signal });
       clearTimeout(t);
-      if (!res.ok && i < attempts-1) {
-        await new Promise(r => setTimeout(r, baseDelayMs * (i+1)));
+      if (!res.ok && i < attempts - 1) {
+        await new Promise(r => setTimeout(r, baseDelayMs * (i + 1)));
         continue;
       }
       return res;
-    } catch(e){
-      if (i === attempts-1) throw e;
-      await new Promise(r => setTimeout(r, baseDelayMs * (i+1)));
+    } catch (e) {
+      if (i === attempts - 1) throw e;
+      await new Promise(r => setTimeout(r, baseDelayMs * (i + 1)));
     }
   }
   throw new Error('fetchWithRetry: esgotou tentativas');
@@ -280,17 +289,17 @@ async function fetchWithRetry(url, init={}, opts={})
 /* =========================
  * Token público (/lead/:token)
  * =======================*/
-function makeLeadToken(payload){ // {cardId, ts}
+function makeLeadToken(payload) { // {cardId, ts}
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const sig = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(body).digest('base64url');
   return `${body}.${sig}`;
 }
-function parseLeadToken(token){
-  const [body, sig] = String(token||'').split('.');
+function parseLeadToken(token) {
+  const [body, sig] = String(token || '').split('.');
   if (!body || !sig) throw new Error('token inválido');
   const expected = crypto.createHmac('sha256', PUBLIC_LINK_SECRET).update(body).digest('base64url');
   if (sig !== expected) throw new Error('assinatura inválida');
-  const json = JSON.parse(Buffer.from(body,'base64url').toString('utf8'));
+  const json = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
   if (!json.cardId) throw new Error('payload inválido');
   return json;
 }
@@ -298,7 +307,7 @@ function parseLeadToken(token){
 /* =========================
  * Pipefy GraphQL
  * =======================*/
-async function gql(query, variables){
+async function gql(query, variables) {
   const r = await fetch(PIPE_GRAPHQL_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -313,7 +322,7 @@ async function gql(query, variables){
   }
   return j.data;
 }
-async function getCard(cardId){
+async function getCard(cardId) {
   const data = await gql(`query($id: ID!){
     card(id:$id){
       id title
@@ -326,13 +335,13 @@ async function getCard(cardId){
   if (!data?.card) throw new Error(`Card ${cardId} não encontrado`);
   return data.card;
 }
-async function updateCardField(cardId, fieldId, newValue){
+async function updateCardField(cardId, fieldId, newValue) {
   await gql(`mutation($input: UpdateCardFieldInput!){
     updateCardField(input:$input){ card{ id } }
   }`, { input: { card_id: Number(cardId), field_id: fieldId, new_value: newValue } });
 }
 
-async function createCardComment(cardId, comment){
+async function createCardComment(cardId, comment) {
   try {
     const data = await gql(`mutation($input: CreateCardCommentInput!){
       createCardComment(input:$input){
@@ -341,11 +350,11 @@ async function createCardComment(cardId, comment){
           text
         }
       }
-    }`, { 
-      input: { 
-        card_id: Number(cardId), 
-        text: comment 
-      } 
+    }`, {
+      input: {
+        card_id: Number(cardId),
+        text: comment
+      }
     });
     return data?.createCardComment?.comment;
   } catch (e) {
@@ -357,25 +366,25 @@ async function createCardComment(cardId, comment){
 /* =========================
  * Parsing de campos do card
  * =======================*/
-function toById(card){
-  const by={}; for (const f of card?.fields||[]) if (f?.field?.id) by[f.field.id]=f.value;
+function toById(card) {
+  const by = {}; for (const f of card?.fields || []) if (f?.field?.id) by[f.field.id] = f.value;
   return by;
 }
-function getByName(card, nameSub){
+function getByName(card, nameSub) {
   const t = String(nameSub).toLowerCase();
-  const f = (card.fields||[]).find(ff=> String(ff?.name||'').toLowerCase().includes(t));
+  const f = (card.fields || []).find(ff => String(ff?.name || '').toLowerCase().includes(t));
   return f?.value || '';
 }
-function getFieldObjById(card, id){
-  return (card.fields||[]).find(f=> String(f?.field?.id||'')===String(id));
+function getFieldObjById(card, id) {
+  return (card.fields || []).find(f => String(f?.field?.id || '') === String(id));
 }
-function getFirstByNames(card, arr){
-  for (const k of arr){ const v = getByName(card, k); if (v) return v; }
+function getFirstByNames(card, arr) {
+  for (const k of arr) { const v = getByName(card, k); if (v) return v; }
   return '';
 }
 
 // NOVO: ler campo "Equipe contrato"
-function getEquipeContratoFromCard(card){
+function getEquipeContratoFromCard(card) {
   if (!card || !Array.isArray(card.fields)) return '';
   const f = (card.fields || []).find(ff =>
     String(ff.name || '').toLowerCase() === 'equipe contrato'
@@ -384,34 +393,34 @@ function getEquipeContratoFromCard(card){
   return String(f.value).trim();
 }
 
-function checklistToText(v){
-  try{
-    const arr = Array.isArray(v)? v : JSON.parse(v);
+function checklistToText(v) {
+  try {
+    const arr = Array.isArray(v) ? v : JSON.parse(v);
     return Array.isArray(arr) ? arr.join(', ') : String(v || '');
-  }catch{ return String(v || ''); }
+  } catch { return String(v || ''); }
 }
 
-function extractAssigneeNames(raw){
-  const out=[];
-  const push=v=>{ if(v) out.push(String(v)); };
-  const tryParse=v=>{
-    if (typeof v==='string'){
+function extractAssigneeNames(raw) {
+  const out = [];
+  const push = v => { if (v) out.push(String(v)); };
+  const tryParse = v => {
+    if (typeof v === 'string') {
       try { return JSON.parse(v); } catch { return v; }
     }
     return v;
   };
 
   const val = tryParse(raw);
-  if (Array.isArray(val)){
-    for (const it of val){
-      push(typeof it==='string' ? it : (it?.name||it?.username||it?.email||it?.value));
+  if (Array.isArray(val)) {
+    for (const it of val) {
+      push(typeof it === 'string' ? it : (it?.name || it?.username || it?.email || it?.value));
     }
-  } else if (typeof val==='object' && val){
-    push(val.name||val.username||val.email||val.value);
-  } else if (typeof val==='string'){
+  } else if (typeof val === 'object' && val) {
+    push(val.name || val.username || val.email || val.value);
+  } else if (typeof val === 'string') {
     const m = val.match(/^\s*\[.*\]\s*$/) ? tryParse(val) : null;
-    if (m && Array.isArray(m)){
-      m.forEach(x=>push(typeof x==='string' ? x : (x?.name||x?.email)));
+    if (m && Array.isArray(m)) {
+      m.forEach(x => push(typeof x === 'string' ? x : (x?.name || x?.email)));
     } else {
       push(val);
     }
@@ -420,24 +429,24 @@ function extractAssigneeNames(raw){
 }
 
 // Documento (CPF/CNPJ)
-function pickDocumento(card){
-  const prefer = ['cpf','cnpj','documento','doc','cpf/cnpj','cnpj/cpf'];
-  for (const k of prefer){
+function pickDocumento(card) {
+  const prefer = ['cpf', 'cnpj', 'documento', 'doc', 'cpf/cnpj', 'cnpj/cpf'];
+  for (const k of prefer) {
     const v = getFirstByNames(card, [k]);
     const d = onlyDigits(v);
-    if (d.length===11) return { tipo:'CPF', valor:v };
-    if (d.length===14) return { tipo:'CNPJ', valor:v };
+    if (d.length === 11) return { tipo: 'CPF', valor: v };
+    if (d.length === 14) return { tipo: 'CNPJ', valor: v };
   }
   const by = toById(card);
   const cnpjStart = by['cnpj'] || getFirstByNames(card, ['cnpj']);
-  if (cnpjStart) return { tipo:'CNPJ', valor:cnpjStart };
-  return { tipo:'', valor:'' };
+  if (cnpjStart) return { tipo: 'CNPJ', valor: cnpjStart };
+  return { tipo: '', valor: '' };
 }
 
 // Assignee parsing (para cofre) — hoje não usado diretamente
-function stripDiacritics(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
-function normalizeName(s){ return stripDiacritics(String(s||'').trim()).toLowerCase(); }
-function resolveCofreUuidByCard(card){
+function stripDiacritics(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+function normalizeName(s) { return stripDiacritics(String(s || '').trim()).toLowerCase(); }
+function resolveCofreUuidByCard(card) {
   if (!card) return DEFAULT_COFRE_UUID || null;
   const by = toById(card);
   const candidatosBrutos = [];
@@ -446,8 +455,8 @@ function resolveCofreUuidByCard(card){
   if (by['respons_vel_5']) candidatosBrutos.push(by['respons_vel_5']);
   if (by['representante']) candidatosBrutos.push(by['representante']);
   const nomesOuEmails = candidatosBrutos.flatMap(extractAssigneeNames);
-  const normKeys = Object.keys(COFRES_UUIDS||{}).reduce((acc,k)=>{ acc[normalizeName(k)] = COFRES_UUIDS[k]; return acc; },{});
-  for (const s of nomesOuEmails){ const n=normalizeName(s); if (normKeys[n]) return normKeys[n]; }
+  const normKeys = Object.keys(COFRES_UUIDS || {}).reduce((acc, k) => { acc[normalizeName(k)] = COFRES_UUIDS[k]; return acc; }, {});
+  for (const s of nomesOuEmails) { const n = normalizeName(s); if (normKeys[n]) return normKeys[n]; }
   if (DEFAULT_COFRE_UUID) return DEFAULT_COFRE_UUID;
   return null;
 }
@@ -455,27 +464,27 @@ function resolveCofreUuidByCard(card){
 /* =========================
  * Regras específicas
  * =======================*/
-function computeValorTaxaBRLFromFaixa(d){
+function computeValorTaxaBRLFromFaixa(d) {
   let valorTaxaSemRS = '';
-  const taxa = String(d.taxa_faixa||'');
+  const taxa = String(d.taxa_faixa || '');
   if (taxa.includes('440')) valorTaxaSemRS = '440,00';
   else if (taxa.includes('880')) valorTaxaSemRS = '880,00';
   return valorTaxaSemRS ? `R$ ${valorTaxaSemRS}` : '';
 }
 
 // Extrai todos os números em ordem de aparição e devolve separados por vírgula
-function extractClasseNumbersFromText(s){
-  const nums=[]; const seen=new Set();
-  for (const m of String(s||'').matchAll(/\b\d+\b/g)){
+function extractClasseNumbersFromText(s) {
+  const nums = []; const seen = new Set();
+  for (const m of String(s || '').matchAll(/\b\d+\b/g)) {
     const n = String(Number(m[0]));
-    if (!seen.has(n)){ seen.add(n); nums.push(n); }
+    if (!seen.has(n)) { seen.add(n); nums.push(n); }
   }
   return nums.join(', ');
 }
 
 // Identifica o tipo base do serviço a partir do texto do statement ou connector
-function serviceKindFromText(s){
-  const t = String(s||'').toUpperCase();
+function serviceKindFromText(s) {
+  const t = String(s || '').toUpperCase();
   if (t.includes('MARCA')) return 'MARCA';
   if (t.includes('PATENTE')) return 'PATENTE';
   if (t.includes('DESENHO')) return 'DESENHO INDUSTRIAL';
@@ -484,7 +493,7 @@ function serviceKindFromText(s){
 }
 
 // Busca campo statement por N com fallback para connector
-function buscarServicoN(card, n){
+function buscarServicoN(card, n) {
   const mapStmt = {
     1: 'statement_9a115410_226d_43bc_9c1b_a28887e1f8a6',
     2: 'statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e',
@@ -502,22 +511,22 @@ function buscarServicoN(card, n){
 
   let v = '';
   const stmtId = mapStmt[n];
-  if (stmtId){
+  if (stmtId) {
     const f = getFieldObjById(card, stmtId);
-    v = String(f?.value||'').replace(/<[^>]*>/g,' ').trim();
+    v = String(f?.value || '').replace(/<[^>]*>/g, ' ').trim();
   }
-  if (!v){
+  if (!v) {
     const connId = mapConn[n];
-    if (connId){
+    if (connId) {
       const f = getFieldObjById(card, connId);
-      if (f?.value){
-        try{
+      if (f?.value) {
+        try {
           const arr = JSON.parse(f.value);
           if (Array.isArray(arr) && arr[0]) v = String(arr[0]);
-        }catch{
+        } catch {
           v = String(f.value);
         }
-      } else if (Array.isArray(f?.array_value) && f.array_value.length){
+      } else if (Array.isArray(f?.array_value) && f.array_value.length) {
         v = String(f.array_value[0]);
       }
     }
@@ -526,69 +535,69 @@ function buscarServicoN(card, n){
 }
 
 // Normalização apenas para “Detalhes do serviço …”
-function normalizarCabecalhoDetalhe(kind, nome, tipoMarca='', classeNums=''){
-  const k = String(kind||'').toUpperCase();
-  if (k==='MARCA'){
+function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '') {
+  const k = String(kind || '').toUpperCase();
+  if (k === 'MARCA') {
     const tipo = tipoMarca ? `, Apresentação: ${tipoMarca}` : '';
     const classe = classeNums ? `, CLASSE: nº ${classeNums}` : '';
     return `MARCA: ${nome || ''}${tipo}${classe}`.trim();
   }
-  if (k==='PATENTE') return `PATENTE: ${nome||''}`.trim();
-  if (k==='DESENHO INDUSTRIAL') return `DESENHO INDUSTRIAL: ${nome||''}`.trim();
-  if (k==='COPYRIGHT/DIREITO AUTORAL') return `COPYRIGHT/DIREITO AUTORAL: ${nome||''}`.trim();
-  return `OUTROS SERVIÇOS: ${nome||''}`.trim();
+  if (k === 'PATENTE') return `PATENTE: ${nome || ''}`.trim();
+  if (k === 'DESENHO INDUSTRIAL') return `DESENHO INDUSTRIAL: ${nome || ''}`.trim();
+  if (k === 'COPYRIGHT/DIREITO AUTORAL') return `COPYRIGHT/DIREITO AUTORAL: ${nome || ''}`.trim();
+  return `OUTROS SERVIÇOS: ${nome || ''}`.trim();
 }
 
 /* =========================
  * Montagem de dados do contrato
  * =======================*/
-function pickParcelas(card){
+function pickParcelas(card) {
   const by = toById(card);
   let raw = by['sele_o_de_lista'] || by['quantidade_de_parcelas'] || by['numero_de_parcelas'] || '';
-  if (!raw) raw = getFirstByNames(card, ['parcelas','quantidade de parcelas','nº parcelas']);
-  const m = String(raw||'').match(/(\d+)/);
+  if (!raw) raw = getFirstByNames(card, ['parcelas', 'quantidade de parcelas', 'nº parcelas']);
+  const m = String(raw || '').match(/(\d+)/);
   return m ? m[1] : '1';
 }
-function pickValorAssessoria(card){
+function pickValorAssessoria(card) {
   const by = toById(card);
   let raw = by['valor_da_assessoria'] || by['valor_assessoria'] || '';
-  if (!raw){
-    const hit = (card.fields||[]).find(f => String(f?.field?.type||'').toLowerCase()==='currency');
-    raw = hit?.value||'';
+  if (!raw) {
+    const hit = (card.fields || []).find(f => String(f?.field?.type || '').toLowerCase() === 'currency');
+    raw = hit?.value || '';
   }
   const n = parseNumberBR(raw);
-  return isNaN(n)? null : n;
+  return isNaN(n) ? null : n;
 }
-function firstNonEmpty(...vals){
-  for (const v of vals){ if (String(v||'').trim()) return v; }
+function firstNonEmpty(...vals) {
+  for (const v of vals) { if (String(v || '').trim()) return v; }
   return '';
 }
-function parseListFromLongText(value, max=30){
-  const lines = String(value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+function parseListFromLongText(value, max = 30) {
+  const lines = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   const arr = [];
-  for (let i=0;i<max;i++) arr.push(lines[i]||'');
+  for (let i = 0; i < max; i++) arr.push(lines[i] || '');
   return arr;
 }
 
-async function montarDados(card){
+async function montarDados(card) {
   const by = toById(card);
 
   // Marca 1 dados base
   const tituloMarca1 = by['marca'] || card.title || '';
-  const marcasEspecRaw1 = by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1','classes e especificações']) || '';
+  const marcasEspecRaw1 = by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '';
   const linhasMarcasEspec1 = parseListFromLongText(marcasEspecRaw1, 30);
   const classeSomenteNumeros1 = extractClasseNumbersFromText(marcasEspecRaw1);
   const tipoMarca1 = checklistToText(by['checklist_vertical'] || getFirstByNames(card, ['tipo de marca']));
 
   // Marca 2
-  const tituloMarca2 = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2','marca - 2']) || '';
+  const tituloMarca2 = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2', 'marca - 2']) || '';
   const marcasEspecRaw2 = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
   const linhasMarcasEspec2 = parseListFromLongText(marcasEspecRaw2, 30);
   const classeSomenteNumeros2 = extractClasseNumbersFromText(marcasEspecRaw2);
   const tipoMarca2 = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
 
   // Marca 3
-  const tituloMarca3 = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3','marca - 3']) || '';
+  const tituloMarca3 = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
   const marcasEspecRaw3 = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
   const linhasMarcasEspec3 = parseListFromLongText(marcasEspecRaw3, 30);
   const classeSomenteNumeros3 = extractClasseNumbersFromText(marcasEspecRaw3);
@@ -609,11 +618,11 @@ async function montarDados(card){
   const tipoMarca5 = checklistToText(by['copy_of_tipo_de_marca_3_1'] || '');
 
   // Serviços por N
-  const serv1Stmt = firstNonEmpty(buscarServicoN(card,1));
-  const serv2Stmt = firstNonEmpty(buscarServicoN(card,2));
-  const serv3Stmt = firstNonEmpty(buscarServicoN(card,3));
-  const serv4Stmt = firstNonEmpty(buscarServicoN(card,4));
-  const serv5Stmt = firstNonEmpty(buscarServicoN(card,5));
+  const serv1Stmt = firstNonEmpty(buscarServicoN(card, 1));
+  const serv2Stmt = firstNonEmpty(buscarServicoN(card, 2));
+  const serv3Stmt = firstNonEmpty(buscarServicoN(card, 3));
+  const serv4Stmt = firstNonEmpty(buscarServicoN(card, 4));
+  const serv5Stmt = firstNonEmpty(buscarServicoN(card, 5));
 
   // Kinds
   const k1 = serviceKindFromText(serv1Stmt);
@@ -623,13 +632,29 @@ async function montarDados(card){
   const k5 = serviceKindFromText(serv5Stmt);
 
   // Decide template
-  const anyMarca = [k1,k2,k3,k4,k5].includes('MARCA');
-  const templateToUse = anyMarca ? TEMPLATE_UUID_CONTRATO : TEMPLATE_UUID_CONTRATO_OUTROS;
+  // Decide template
+  const anyMarca = [k1, k2, k3, k4, k5].includes('MARCA');
+  let templateToUse = anyMarca ? TEMPLATE_UUID_CONTRATO : TEMPLATE_UUID_CONTRATO_OUTROS;
+
+  // [NOVO] Lógica CPF vs CNPJ (Sobrescreve a anterior se o campo estiver preenchido)
+  const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
+  const isSelecaoCpf = String(selecaoCnpjOuCpf).toUpperCase().trim() === 'CPF';
+  const isSelecaoCnpj = String(selecaoCnpjOuCpf).toUpperCase().trim() === 'CNPJ';
+
+  if (isSelecaoCpf && TEMPLATE_UUID_CONTRATO_CPF) {
+    templateToUse = TEMPLATE_UUID_CONTRATO_CPF;
+    console.log('[TEMPLATE] Usando template de CPF');
+  } else if (isSelecaoCnpj && TEMPLATE_UUID_CONTRATO_CNPJ) {
+    templateToUse = TEMPLATE_UUID_CONTRATO_CNPJ;
+    console.log('[TEMPLATE] Usando template de CNPJ');
+  } else {
+    console.log('[TEMPLATE] Usando lógica antiga (Marca/Outros) ou fallback');
+  }
 
   // Contato contratante 1
-  const contatoNome     = by['nome_1'] || getFirstByNames(card, ['nome do contato','contratante','responsável legal','responsavel legal']) || '';
-  const contatoEmail    = by['email_de_contato'] || getFirstByNames(card, ['email','e-mail']) || '';
-  const contatoTelefone = by['telefone_de_contato'] || getFirstByNames(card, ['telefone','celular','whatsapp','whats']) || '';
+  const contatoNome = by['nome_1'] || getFirstByNames(card, ['nome do contato', 'contratante', 'responsável legal', 'responsavel legal']) || '';
+  const contatoEmail = by['email_de_contato'] || getFirstByNames(card, ['email', 'e-mail']) || '';
+  const contatoTelefone = by['telefone_de_contato'] || getFirstByNames(card, ['telefone', 'celular', 'whatsapp', 'whats']) || '';
 
   // Campos de “contratante 2” antigos, se existirem
   const contato2Nome_old = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
@@ -660,10 +685,29 @@ async function montarDados(card){
 
   // Documento (CPF/CNPJ) principal
   const doc = pickDocumento(card);
-  const cpfDoc  = doc.tipo==='CPF'?  doc.valor : '';
-  const cnpjDoc = doc.tipo==='CNPJ'? doc.valor : '';
-  const cpfCampo  = by['cpf']    || '';
-  const cnpjCampo = by['cnpj_1'] || '';
+  let cpfDoc = doc.tipo === 'CPF' ? doc.valor : '';
+  let cnpjDoc = doc.tipo === 'CNPJ' ? doc.valor : '';
+
+  // [NOVO] Mapeamento específico solicitado
+  // SE O CAMPO cnpj_ou_cpf for igual a CPF -> cpf_do_s_cio_administrador
+  // Caso seja CNPJ -> cnpj_1
+  let cpfCampo = '';
+  let cnpjCampo = '';
+
+  if (isSelecaoCpf) {
+    const rawCpfSocio = by['cpf_do_s_cio_administrador'] || getFirstByNames(card, ['cpf do sócio administrador', 'cpf socio']);
+    cpfCampo = rawCpfSocio;
+    // Se o documento principal detectado não for consistente, forçamos o que veio do campo específico
+    if (!cpfDoc && rawCpfSocio) cpfDoc = rawCpfSocio;
+  } else if (isSelecaoCnpj) {
+    const rawCnpj1 = by['cnpj_1'] || getFirstByNames(card, ['cnpj 1']);
+    cnpjCampo = rawCnpj1;
+    if (!cnpjDoc && rawCnpj1) cnpjDoc = rawCnpj1;
+  } else {
+    // Fallback original
+    cpfCampo = by['cpf'] || '';
+    cnpjCampo = by['cnpj_1'] || '';
+  }
 
   // Parcelas / Assessoria
   const nParcelas = pickParcelas(card);
@@ -678,26 +722,26 @@ async function montarDados(card){
   // PESQUISA - Tipo de pagamento e data
   const tipoPagtoPesquisa = by['copy_of_tipo_de_pagamento_taxa'] || '';
   const dataBoletoPesquisa = fmtDMY2(by['data_boleto'] || '');
-  
+
   // Se tipo de pagamento não estiver preenchido, pesquisa é isenta
   const pesquisaIsenta = !tipoPagtoPesquisa || tipoPagtoPesquisa.trim() === '';
   const formaPesquisa = pesquisaIsenta ? 'ISENTA' : tipoPagtoPesquisa;
-  
+
   // Data de pagamento só aparece se o tipo de pagamento for "boleto"
   const isBoleto = !pesquisaIsenta && String(tipoPagtoPesquisa).toLowerCase().includes('boleto');
   const dataPesquisa = isBoleto ? dataBoletoPesquisa : (pesquisaIsenta ? 'N/A' : '');
 
   // Datas novas
   const dataPagtoAssessoria = fmtDMY2(by['copy_of_copy_of_data_do_boleto_pagamento_pesquisa'] || '');
-  const dataPagtoTaxa       = fmtDMY2(by['copy_of_data_do_boleto_pagamento_pesquisa'] || '');
+  const dataPagtoTaxa = fmtDMY2(by['copy_of_data_do_boleto_pagamento_pesquisa'] || '');
 
   // Endereço (CNPJ) principal
-  const cepCnpj    = by['cep_do_cnpj']     || '';
-  const ruaCnpj    = by['rua_av_do_cnpj']  || '';
-  const bairroCnpj = by['bairro_do_cnpj']  || '';
-  const cidadeCnpj = by['cidade_do_cnpj']  || '';
-  const ufCnpj     = by['estado_do_cnpj']  || '';
-  const numeroCnpj = by['n_mero_1']        || getFirstByNames(card, ['numero','número','nº']) || '';
+  const cepCnpj = by['cep_do_cnpj'] || '';
+  const ruaCnpj = by['rua_av_do_cnpj'] || '';
+  const bairroCnpj = by['bairro_do_cnpj'] || '';
+  const cidadeCnpj = by['cidade_do_cnpj'] || '';
+  const ufCnpj = by['estado_do_cnpj'] || '';
+  const numeroCnpj = by['n_mero_1'] || getFirstByNames(card, ['numero', 'número', 'nº']) || '';
 
   // Vendedor (ainda usado apenas para exibição)
   const vendedor = (() => {
@@ -715,34 +759,34 @@ async function montarDados(card){
 
   // Nacionalidade e etc principal
   const nacionalidade = by['nacionalidade'] || '';
-  const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
+  // const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || ''; // Já lido acima
   const estadoCivil = by['estado_civ_l'] || '';
 
   // Cláusula adicional
   const filiaisOuDigital = by['filiais_ou_digital'] || '';
   const isFiliais = String(filiaisOuDigital).toLowerCase().trim() === 'filiais';
-  
+
   // Verificar se o tipo de pagamento é "Crédito programado"
   const tipoPagamento = by['copy_of_tipo_de_pagamento'] || '';
   const isCreditoProgramado = String(tipoPagamento).trim() === 'Crédito programado';
-  
+
   // Texto da cláusula adicional para Crédito programado
   const clausulaCreditoProgramado = 'Caso o pagamento não seja realizado até a data do vencimento, o benefício concedido será automaticamente cancelado, sendo emitido boleto bancário com os valores previstos em contrato.';
-  
+
   // Montar cláusula adicional
   let clausulaAdicional = '';
-  
+
   // Texto a ser removido SEMPRE (independente de Filiais ou Digital)
   // Regex atualizada para capturar o texto completo, incluindo quebras de linha e variações
   // Aceita múltiplos espaços, quebras de linha e variações no texto
   const textoObservacoesRemover = /Observações:\s*Entrada\s*R\$\s*R\$\s*440[,.]00\s*referente\s*a\s*TAXA\s*\+\s*6\s*X\s*R\$\s*R\$\s*450[,.]00\s*da\s*assessoria\s*no\s*Crédito\s*programado\.?[\s\n\r]*/gi;
-  
+
   const clausulaExistente = (by['cl_usula_adicional'] && String(by['cl_usula_adicional']).trim()) ? by['cl_usula_adicional'] : '';
-  
+
   console.log(`[CLAUSULA] filiais_ou_digital: "${filiaisOuDigital}", isFiliais: ${isFiliais}`);
   console.log(`[CLAUSULA] tipoPagamento: "${tipoPagamento}", isCreditoProgramado: ${isCreditoProgramado}`);
   console.log(`[CLAUSULA] clausulaExistente (antes da limpeza): "${clausulaExistente.substring(0, 200)}"`);
-  
+
   // SEMPRE remove o texto de observações (independente de Filiais ou Digital)
   const antesLimpeza = clausulaExistente;
   // Tenta múltiplas variações da regex para garantir remoção
@@ -758,7 +802,7 @@ async function montarDados(card){
   // Quarta tentativa - busca parcial por "Observações" seguido de "440" e "450"
   const regexParcial = /Observações[^\n]*?440[^\n]*?450[^\n]*?assessoria[^\n]*?Crédito[^\n]*?programado[^\n]*/gi;
   clausulaTmp = clausulaTmp.replace(regexParcial, '');
-  
+
   let clausulaLimpa = clausulaTmp.trim();
   console.log(`[CLAUSULA] Removendo observações (sempre)`);
   console.log(`[CLAUSULA] Antes da remoção (${antesLimpeza.length} chars): "${antesLimpeza.substring(0, 300)}"`);
@@ -766,11 +810,11 @@ async function montarDados(card){
   console.log(`[CLAUSULA] Texto foi removido? ${antesLimpeza.length !== clausulaLimpa.length} (diferença: ${antesLimpeza.length - clausulaLimpa.length} chars)`);
   // Remove também variações com quebras de linha
   clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
-  
+
   if (isCreditoProgramado) {
     // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
     // Se já houver cláusula existente (após limpeza), concatena com quebra de linha; senão, usa apenas a do crédito programado
-    clausulaAdicional = clausulaLimpa 
+    clausulaAdicional = clausulaLimpa
       ? `${clausulaLimpa}\n\n${clausulaCreditoProgramado}`
       : clausulaCreditoProgramado;
     console.log(`[CLAUSULA] Crédito programado detectado - adicionando cláusula específica`);
@@ -790,7 +834,7 @@ async function montarDados(card){
       clausulaAdicional = 'Sem aditivos contratuais.';
     }
   }
-  
+
   // Garantir remoção final do texto das observações (sempre, independente de Filiais ou Digital)
   if (clausulaAdicional) {
     const antesRemocaoFinal = clausulaAdicional;
@@ -807,12 +851,12 @@ async function montarDados(card){
     clausulaAdicional = clausulaAdicional.replace(regexParcialFinal, '');
     // Remover também variações com quebras de linha duplas
     clausulaAdicional = clausulaAdicional.replace(/\n\n+/g, '\n').trim();
-    
+
     if (antesRemocaoFinal !== clausulaAdicional) {
       console.log(`[CLAUSULA] Remoção final aplicada - texto removido: ${antesRemocaoFinal.length - clausulaAdicional.length} chars`);
     }
   }
-  
+
   console.log(`[CLAUSULA] clausulaAdicional final (primeiros 300 chars): "${clausulaAdicional.substring(0, 300)}"`);
 
   // Contratante 1
@@ -844,51 +888,51 @@ async function montarDados(card){
   // Contratante 2 com os CAMPOS DO COTITULAR como fonte principal
   const contratante2Texto = hasCotitular
     ? montarTextoContratante({
-        nome: cot_nome || contato2Nome_old || 'Cotitular',
-        nacionalidade: cot_nacionalidade || '',
-        estadoCivil: cot_estado_civil || '',
-        rua: cot_rua || ruaCnpj,
-        bairro: cot_bairro || bairroCnpj,
-        numero: cot_numero || '',
-        cidade: cot_cidade || cidadeCnpj,
-        uf: cot_uf || ufCnpj,
-        cep: cot_cep || '',
-        rg: cot_rg || '',
-        docSelecao: cot_docSelecao,
-        cpf: cot_cpf || '',
-        cnpj: cot_cnpj || '',
-        telefone: telefoneCotitularEnvio || contato2Telefone_old,
-        email: emailCotitularEnvio || contato2Email_old
-      })
+      nome: cot_nome || contato2Nome_old || 'Cotitular',
+      nacionalidade: cot_nacionalidade || '',
+      estadoCivil: cot_estado_civil || '',
+      rua: cot_rua || ruaCnpj,
+      bairro: cot_bairro || bairroCnpj,
+      numero: cot_numero || '',
+      cidade: cot_cidade || cidadeCnpj,
+      uf: cot_uf || ufCnpj,
+      cep: cot_cep || '',
+      rg: cot_rg || '',
+      docSelecao: cot_docSelecao,
+      cpf: cot_cpf || '',
+      cnpj: cot_cnpj || '',
+      telefone: telefoneCotitularEnvio || contato2Telefone_old,
+      email: emailCotitularEnvio || contato2Email_old
+    })
     : '';
 
   // Dados para contato 1 e 2
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
   const dadosContato2 = hasCotitular
     ? [
-        (cot_nome || contato2Nome_old || 'Cotitular'),
-        (telefoneCotitularEnvio || contato2Telefone_old || ''),
-        (emailCotitularEnvio || contato2Email_old || '')
-      ].filter(Boolean).join(' | ')
+      (cot_nome || contato2Nome_old || 'Cotitular'),
+      (telefoneCotitularEnvio || contato2Telefone_old || ''),
+      (emailCotitularEnvio || contato2Email_old || '')
+    ].filter(Boolean).join(' | ')
     : '';
 
   // Entradas consolidadas
   const entries = [
-    {kind:serviceKindFromText(serv1Stmt), title:tituloMarca1, tipo:tipoMarca1, classes:classeSomenteNumeros1, stmt:serv1Stmt, risco:risco1, lines:linhasMarcasEspec1},
-    {kind:serviceKindFromText(serv2Stmt), title:tituloMarca2, tipo:tipoMarca2, classes:classeSomenteNumeros2, stmt:serv2Stmt, risco:risco2, lines:linhasMarcasEspec2},
-    {kind:serviceKindFromText(serv3Stmt), title:tituloMarca3, tipo:tipoMarca3, classes:classeSomenteNumeros3, stmt:serv3Stmt, risco:risco3, lines:linhasMarcasEspec3},
-    {kind:serviceKindFromText(serv4Stmt), title:tituloMarca4, tipo:tipoMarca4, classes:classeSomenteNumeros4, stmt:serv4Stmt, risco:risco4, lines:linhasMarcasEspec4},
-    {kind:serviceKindFromText(serv5Stmt), title:tituloMarca5, tipo:tipoMarca5, classes:classeSomenteNumeros5, stmt:serv5Stmt, risco:risco5, lines:linhasMarcasEspec5},
-  ].filter(e => String(e.title||e.stmt||'').trim());
+    { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1 },
+    { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2 },
+    { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3 },
+    { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4 },
+    { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5 },
+  ].filter(e => String(e.title || e.stmt || '').trim());
 
   // Agrupamento por kind
-  const byKind = { 'MARCA':[], 'PATENTE':[], 'DESENHO INDUSTRIAL':[], 'COPYRIGHT/DIREITO AUTORAL':[], 'OUTROS':[] };
+  const byKind = { 'MARCA': [], 'PATENTE': [], 'DESENHO INDUSTRIAL': [], 'COPYRIGHT/DIREITO AUTORAL': [], 'OUTROS': [] };
   entries.forEach(e => byKind[e.kind].push(e));
 
   // Linhas “quantidade + descrição” (sem normalizar o texto do serviço)
   const makeQtdDescLine = (kind, arr) => {
     if (!arr.length) return '';
-    const baseServico = String(arr[0].stmt||'').trim() || (kind==='MARCA' ? 'Registro de Marca' : kind);
+    const baseServico = String(arr[0].stmt || '').trim() || (kind === 'MARCA' ? 'Registro de Marca' : kind);
     const qtd = arr.length;
     return `${qtd} ${baseServico} JUNTO AO INPI`;
   };
@@ -908,11 +952,11 @@ async function montarDados(card){
     'COPYRIGHT/DIREITO AUTORAL': ['', '', '', '', ''],
     OUTROS: ['', '', '', '', '']
   };
-  ['MARCA','PATENTE','DESENHO INDUSTRIAL','COPYRIGHT/DIREITO AUTORAL','OUTROS'].forEach(k=>{
+  ['MARCA', 'PATENTE', 'DESENHO INDUSTRIAL', 'COPYRIGHT/DIREITO AUTORAL', 'OUTROS'].forEach(k => {
     const arr = byKind[k];
-    for (let i=0;i<5;i++){
+    for (let i = 0; i < 5; i++) {
       const e = arr[i];
-      if (!e){ detalhes[k][i] = ''; continue; }
+      if (!e) { detalhes[k][i] = ''; continue; }
       const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes);
       detalhes[k][i] = cab;
     }
@@ -920,8 +964,8 @@ async function montarDados(card){
 
   // Cabeçalhos “SERVIÇOS” para classes
   const headersServicos = {
-    h1: byKind['MARCA'][0] ? `MARCA: ${byKind['MARCA'][0].title||''}` : '',
-    h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title||''}` : ''
+    h1: byKind['MARCA'][0] ? `MARCA: ${byKind['MARCA'][0].title || ''}` : '',
+    h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title || ''}` : ''
   };
 
   // Risco agregado formatado com nome do tipo e do item
@@ -929,7 +973,7 @@ async function montarDados(card){
     .map(e => {
       const tipo = e.kind || '';
       const nm = e.title || '';
-      const r = String(e.risco||'').trim();
+      const r = String(e.risco || '').trim();
       if (!tipo && !nm && !r) return '';
       return `${tipo}: ${nm} - RISCO: ${r || 'Não informado'}`;
     })
@@ -939,15 +983,15 @@ async function montarDados(card){
   console.log(`[MONTAR_DADOS] card.id: ${card.id}, tipo: ${typeof card.id}`);
   const cardIdValue = card.id ? String(card.id) : '';
   console.log(`[MONTAR_DADOS] cardIdValue: "${cardIdValue}"`);
-  
+
   return {
     cardId: cardIdValue,
     templateToUse,
 
     // Identificação
     titulo: tituloMarca1 || card.title || '',
-    nome: contatoNome || (by['r_social_ou_n_completo']||''),
-    cpf: cpfDoc, 
+    nome: contatoNome || (by['r_social_ou_n_completo'] || ''),
+    cpf: cpfDoc,
     cnpj: cnpjDoc,
     rg: by['rg'] || '',
     estado_civil: estadoCivil,
@@ -970,7 +1014,7 @@ async function montarDados(card){
     // Email para assinatura
     email_envio_contrato: emailEnvioContrato,
     email_cotitular_envio: emailCotitularEnvio,
-    
+
     // Telefone para envio
     telefone_envio_contrato: telefoneEnvioContrato,
     telefone_cotitular_envio: telefoneCotitularEnvio,
@@ -1041,7 +1085,7 @@ async function montarDados(card){
 }
 
 // NOVA VERSÃO — Qualificação separada para CPF x CNPJ
-function montarTextoContratante(info = {}){
+function montarTextoContratante(info = {}) {
   const {
     nome,
     nacionalidade,
@@ -1063,7 +1107,7 @@ function montarTextoContratante(info = {}){
   const cpfDigits = onlyDigits(cpf);
   const cnpjDigits = onlyDigits(cnpj);
   const isCnpj = cnpjDigits.length === 14;
-  const isCpf  = !isCnpj && cpfDigits.length === 11;
+  const isCpf = !isCnpj && cpfDigits.length === 11;
 
   // Monta endereço em texto único
   const enderecoPartes = [];
@@ -1139,10 +1183,10 @@ function montarTextoContratante(info = {}){
     if (cpf) docNums.push({ tipo: 'CPF', valor: cpf });
     if (cnpj && !isCnpj) docNums.push({ tipo: 'CNPJ', valor: cnpj });
 
-    if (docUpper && docNums.length){
+    if (docUpper && docNums.length) {
       documentos.push(`devidamente inscrito no ${docUpper} sob o nº ${docNums[0].valor}`);
     } else {
-      for (const doc of docNums){
+      for (const doc of docNums) {
         documentos.push(`devidamente inscrito no ${doc.tipo} sob o nº ${doc.valor}`);
       }
     }
@@ -1152,7 +1196,7 @@ function montarTextoContratante(info = {}){
 
   const contatoPartes = [];
   if (telefone) contatoPartes.push(`com telefone de nº ${telefone}`);
-  if (email)   contatoPartes.push(`com o seguinte endereço eletrônico: ${email}`);
+  if (email) contatoPartes.push(`com o seguinte endereço eletrônico: ${email}`);
   if (contatoPartes.length) partes.push(contatoPartes.join(' e '));
 
   if (!partes.length) return '';
@@ -1165,12 +1209,12 @@ function montarTextoContratante(info = {}){
  * =======================*/
 
 // Marca
-function montarVarsParaTemplateMarca(d, nowInfo){
+function montarVarsParaTemplateMarca(d, nowInfo) {
   const valorTotalNum = onlyNumberBR(d.valor_total);
-  const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
-  const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
+  const parcelaNum = parseInt(String(d.parcelas || '1'), 10) || 1;
+  const valorParcela = parcelaNum > 0 ? valorTotalNum / parcelaNum : 0;
 
-  const dia = String(nowInfo.dia).padStart(2,'0');
+  const dia = String(nowInfo.dia).padStart(2, '0');
   const mesExtenso = monthNamePt(nowInfo.mes);
   const ano = String(nowInfo.ano);
 
@@ -1178,7 +1222,7 @@ function montarVarsParaTemplateMarca(d, nowInfo){
   console.log(`[TEMPLATE MARCA] cardId para número do contrato: ${cardIdStr}`);
   console.log(`[TEMPLATE MARCA] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
   console.log(`[TEMPLATE MARCA] cardIdStr final: "${cardIdStr}"`);
-  
+
   const base = {
     // Identificação - Número do contrato (múltiplas variações para compatibilidade)
     'N° contrato': cardIdStr,
@@ -1267,7 +1311,7 @@ function montarVarsParaTemplateMarca(d, nowInfo){
     'marcas2-espec_5': d.linhas_marcas_espec_2[4] || '',
 
     // Assessoria
-    'Número de parcelas da Assessoria': String(d.parcelas||'1'),
+    'Número de parcelas da Assessoria': String(d.parcelas || '1'),
     'Valor da parcela da Assessoria': toBRL(valorParcela),
     'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
     'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
@@ -1295,21 +1339,21 @@ function montarVarsParaTemplateMarca(d, nowInfo){
   };
 
   // Preencher até 30 linhas por segurança
-  for (let i=5;i<30;i++){
-    base[`marcas-espec_${i+1}`] = d.linhas_marcas_espec_1[i] || '';
-    base[`marcas2-espec_${i-4}`] = d.linhas_marcas_espec_2[i-5] || '';
+  for (let i = 5; i < 30; i++) {
+    base[`marcas-espec_${i + 1}`] = d.linhas_marcas_espec_1[i] || '';
+    base[`marcas2-espec_${i - 4}`] = d.linhas_marcas_espec_2[i - 5] || '';
   }
 
   return base;
 }
 
 // Outros
-function montarVarsParaTemplateOutros(d, nowInfo){
+function montarVarsParaTemplateOutros(d, nowInfo) {
   const valorTotalNum = onlyNumberBR(d.valor_total);
-  const parcelaNum = parseInt(String(d.parcelas||'1'),10)||1;
-  const valorParcela = parcelaNum>0 ? valorTotalNum/parcelaNum : 0;
+  const parcelaNum = parseInt(String(d.parcelas || '1'), 10) || 1;
+  const valorParcela = parcelaNum > 0 ? valorTotalNum / parcelaNum : 0;
 
-  const dia = String(nowInfo.dia).padStart(2,'0');
+  const dia = String(nowInfo.dia).padStart(2, '0');
   const mesExtenso = monthNamePt(nowInfo.mes);
   const ano = String(nowInfo.ano);
 
@@ -1318,7 +1362,7 @@ function montarVarsParaTemplateOutros(d, nowInfo){
   console.log(`[TEMPLATE OUTROS] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
   console.log(`[TEMPLATE OUTROS] cardIdStr final: "${cardIdStr}"`);
 
-const base = {
+  const base = {
     // Identificação - Número do contrato (múltiplas variações para compatibilidade)
     'N° contrato': cardIdStr,
     'Nº contrato': cardIdStr,
@@ -1414,7 +1458,7 @@ const base = {
     'Detalhes do serviço - outros serviços 5': d.det['OUTROS'][4] || '',
 
     // Assessoria
-    'Número de parcelas da Assessoria': String(d.parcelas||'1'),
+    'Número de parcelas da Assessoria': String(d.parcelas || '1'),
     'Valor da parcela da Assessoria': toBRL(valorParcela),
     'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
     'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
@@ -1445,15 +1489,15 @@ const base = {
 }
 
 // Procuração
-function montarVarsParaTemplateProcuracao(d, nowInfo){
-  const dia = String(nowInfo.dia).padStart(2,'0');
+function montarVarsParaTemplateProcuracao(d, nowInfo) {
+  const dia = String(nowInfo.dia).padStart(2, '0');
   const mesExtenso = monthNamePt(nowInfo.mes);
   const ano = String(nowInfo.ano);
 
   // Formata CPF/CNPJ
   const cpfDigits = onlyDigits(d.cpf || d.cpf_campo || '');
   const cnpjDigits = onlyDigits(d.cnpj || d.cnpj_campo || '');
-  const cpfFmt = cpfDigits.length === 11 
+  const cpfFmt = cpfDigits.length === 11
     ? cpfDigits.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
     : '';
   const cnpjFmt = cnpjDigits.length === 14
@@ -1510,18 +1554,18 @@ function montarVarsParaTemplateProcuracao(d, nowInfo){
 }
 
 // Assinantes: principal + empresa + cotitular quando houver
-function montarSigners(d, incluirTelefone = false){
+function montarSigners(d, incluirTelefone = false) {
   const list = [];
   const emailPrincipal = d.email_envio_contrato || d.email || '';
   const telefonePrincipal = d.telefone_envio_contrato || d.telefone || '';
-  
+
   if (emailPrincipal) {
-    const signer = { 
-      email: emailPrincipal, 
-      name: d.nome || d.titulo || emailPrincipal, 
-      act:'1', 
-      foreign:'0', 
-      send_email:'1' 
+    const signer = {
+      email: emailPrincipal,
+      name: d.nome || d.titulo || emailPrincipal,
+      act: '1',
+      foreign: '0',
+      send_email: '1'
     };
     if (incluirTelefone && telefonePrincipal) {
       // Formatar telefone para formato internacional (+55...)
@@ -1540,14 +1584,14 @@ function montarSigners(d, incluirTelefone = false){
     }
     list.push(signer);
   }
-  
+
   if (d.email_cotitular_envio) {
-    const signer = { 
-      email: d.email_cotitular_envio, 
-      name: 'Cotitular', 
-      act:'1', 
-      foreign:'0', 
-      send_email:'1' 
+    const signer = {
+      email: d.email_cotitular_envio,
+      name: 'Cotitular',
+      act: '1',
+      foreign: '0',
+      send_email: '1'
     };
     if (incluirTelefone && d.telefone_cotitular_envio) {
       // Formatar telefone para formato internacional (+55...)
@@ -1566,28 +1610,28 @@ function montarSigners(d, incluirTelefone = false){
     }
     list.push(signer);
   }
-  
+
   if (EMAIL_ASSINATURA_EMPRESA) {
-    list.push({ 
-      email: EMAIL_ASSINATURA_EMPRESA, 
-      name: 'Empresa', 
-      act:'1', 
-      foreign:'0', 
-      send_email:'1' 
+    list.push({
+      email: EMAIL_ASSINATURA_EMPRESA,
+      name: 'Empresa',
+      act: '1',
+      foreign: '0',
+      send_email: '1'
     });
   }
-  
-  const seen={}; 
-  return list.filter(s => (seen[s.email.toLowerCase()]? false : (seen[s.email.toLowerCase()]=true)));
+
+  const seen = {};
+  return list.filter(s => (seen[s.email.toLowerCase()] ? false : (seen[s.email.toLowerCase()] = true)));
 }
 
 /* =========================
  * Locks e preflight
  * =======================*/
 const locks = new Set();
-function acquireLock(key){ if (locks.has(key)) return false; locks.add(key); return true; }
-function releaseLock(key){ locks.delete(key); }
-async function preflightDNS(){}
+function acquireLock(key) { if (locks.has(key)) return false; locks.add(key); return true; }
+function releaseLock(key) { locks.delete(key); }
+async function preflightDNS() { }
 
 /* =========================
  * D4Sign
@@ -1598,12 +1642,12 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
 
-  const titleSanitized = String(title||'Contrato').replace(/[\x00-\x1F\x7F-\x9F]/g,'');
+  const titleSanitized = String(title || 'Contrato').replace(/[\x00-\x1F\x7F-\x9F]/g, '');
 
   const varsObjValidated = {};
   for (const [key, value] of Object.entries(varsObj || {})) {
-    let v = value==null ? '' : String(value);
-    v = v.replace(/[\x00-\x1F\x7F-\x9F]/g,'').trim();
+    let v = value == null ? '' : String(value);
+    v = v.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
     varsObjValidated[key] = v;
   }
 
@@ -1615,7 +1659,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
 
   const text = await res.text();
-  let json; 
+  let json;
   try { json = JSON.parse(text); } catch { json = null; }
 
   if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
@@ -1628,7 +1672,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
 // ===============================
 // NOVO — REGISTRAR WEBHOOK POR DOCUMENTO D4SIGN
 // ===============================
-async function registerWebhookForDocument(tokenAPI, cryptKey, uuidDocument, urlWebhook){
+async function registerWebhookForDocument(tokenAPI, cryptKey, uuidDocument, urlWebhook) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/webhooks`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
@@ -1659,15 +1703,15 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
   const url = new URL(`/api/v1/documents/${uuidDocument}/createlist`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
-  const body = { 
+  const body = {
     signers: signers.map(s => {
-      const signer = { 
-        email: s.email, 
-        name: s.name, 
-        act: s.act || '1', 
+      const signer = {
+        email: s.email,
+        name: s.name,
+        act: s.act || '1',
         foreign: s.foreign || '0'
       };
-      
+
       // Configurar envio por email ou WhatsApp
       if (usarWhatsApp) {
         // Se for WhatsApp, verificar se tem telefone
@@ -1677,7 +1721,7 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
           let phoneFormatted = String(s.phone).trim();
           // Remover todos os caracteres não numéricos exceto +
           phoneFormatted = phoneFormatted.replace(/[^\d+]/g, '');
-          
+
           // Se não começar com +, adicionar +55 (Brasil)
           if (!phoneFormatted.startsWith('+')) {
             // Se começar com 0, remover
@@ -1687,7 +1731,7 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
             // Adicionar código do país Brasil (+55)
             phoneFormatted = '+55' + phoneFormatted;
           }
-          
+
           signer.phone = phoneFormatted;
           signer.send_whatsapp = '1';
           signer.send_email = '0';
@@ -1703,33 +1747,33 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
         signer.send_email = s.send_email || '1';
         signer.send_whatsapp = '0';
       }
-      
+
       return signer;
-    }) 
+    })
   };
-  
+
   console.log(`[CADASTRO] Cadastrando signatários para ${usarWhatsApp ? 'WhatsApp' : 'email'}:`, JSON.stringify(body, null, 2));
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
   const text = await res.text();
-  
+
   if (!res.ok) {
     console.error('[ERRO D4SIGN createlist]', res.status, text);
-    
+
     let jsonResponse = null;
     try {
       jsonResponse = JSON.parse(text);
     } catch (e) {
       // Não é JSON
     }
-    
+
     const mensagem = jsonResponse?.message || text || '';
     const mensagemLower = String(mensagem).toLowerCase();
-    
+
     let mensagemAmigavel = 'Não foi possível cadastrar os signatários no documento.';
-    
+
     if (mensagemLower.includes('email') || mensagemLower.includes('inválido')) {
       mensagemAmigavel = 'Um ou mais emails dos signatários são inválidos. Verifique se os emails estão corretos.';
     } else if (mensagemLower.includes('documento') || mensagemLower.includes('document')) {
@@ -1739,13 +1783,13 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
     } else if (res.status === 422) {
       mensagemAmigavel = 'Os dados dos signatários não são válidos. Verifique se todos os campos estão preenchidos corretamente.';
     }
-    
+
     const erro = new Error(mensagemAmigavel);
     erro.statusCode = res.status;
     erro.responseText = text;
     throw erro;
   }
-  
+
   return text;
 }
 async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', language = 'pt' } = {}) {
@@ -1789,7 +1833,7 @@ function traduzirErroD4Sign(status, responseText, jsonResponse) {
   const statusCode = status;
   const mensagem = jsonResponse?.message || responseText || '';
   const mensagemLower = String(mensagem).toLowerCase();
-  
+
   // Erros comuns e suas traduções
   if (statusCode === 400) {
     if (mensagemLower.includes('signatário') || mensagemLower.includes('signer')) {
@@ -1803,35 +1847,35 @@ function traduzirErroD4Sign(status, responseText, jsonResponse) {
     }
     return 'Dados inválidos. Verifique se o documento existe e está configurado corretamente.';
   }
-  
+
   if (statusCode === 401 || statusCode === 403) {
     return 'Não foi possível autenticar na plataforma de assinatura. Verifique as credenciais de acesso.';
   }
-  
+
   if (statusCode === 404) {
     return 'Documento não encontrado. O documento pode ter sido excluído ou o identificador está incorreto.';
   }
-  
+
   if (statusCode === 422) {
     if (mensagemLower.includes('email') || mensagemLower.includes('inválido')) {
       return 'Um ou mais emails dos signatários são inválidos. Verifique os emails cadastrados.';
     }
     return 'O documento não pode ser enviado no estado atual. Verifique se todos os dados estão preenchidos corretamente.';
   }
-  
+
   if (statusCode === 429) {
     return 'Muitas tentativas de envio. Aguarde alguns minutos antes de tentar novamente.';
   }
-  
+
   if (statusCode >= 500) {
     return 'O serviço de assinatura está temporariamente indisponível. Tente novamente em alguns instantes.';
   }
-  
+
   // Mensagem genérica com detalhes se disponível
   if (mensagem) {
     return `Erro ao enviar documento: ${mensagem}`;
   }
-  
+
   return `Não foi possível enviar o documento. Código de erro: ${statusCode}`;
 }
 
@@ -1844,16 +1888,16 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
   const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
   url.searchParams.set('cryptKey', cryptKey);
   const body = { message, skip_email, workflow, tokenAPI };
-  
+
   console.log(`[SEND] Tentando enviar documento ${uuidDocument} para assinatura...`);
   console.log(`[SEND] Parâmetros: skip_email=${skip_email}, workflow=${workflow}`);
-  
+
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
-  
+
   const text = await res.text();
   let jsonResponse = null;
   try {
@@ -1861,7 +1905,7 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
   } catch (e) {
     // Não é JSON, continua com o texto
   }
-  
+
   if (!res.ok) {
     console.error('[ERRO D4SIGN sendtosigner]', {
       status: res.status,
@@ -1869,14 +1913,14 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
       response: text.substring(0, 500),
       uuid: uuidDocument
     });
-    
+
     const mensagemAmigavel = traduzirErroD4Sign(res.status, text, jsonResponse);
     const erro = new Error(mensagemAmigavel);
     erro.statusCode = res.status;
     erro.responseText = text;
     throw erro;
   }
-  
+
   console.log(`[SEND] Documento ${uuidDocument} enviado com sucesso.`);
   return text;
 }
@@ -1973,14 +2017,14 @@ app.post('/d4sign/postback', async (req, res) => {
     // Verifica em qual campo o UUID do documento foi encontrado
     const card = await getCard(cardId);
     const byId = toById(card);
-    
+
     // Verifica qual campo contém o UUID do documento
     const uuidContrato = byId[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
     const uuidProcuracao = byId[PIPEFY_FIELD_D4_UUID_PROCURACAO] || '';
-    
+
     // Verifica se o UUID está no campo de procuração ou contrato
     const isProcuracaoFinal = (String(uuidProcuracao) === uuid || String(uuidProcuracao).includes(uuid));
-    
+
     if (!isProcuracaoFinal && String(uuidContrato) !== uuid && !String(uuidContrato).includes(uuid)) {
       // Se não encontrou em nenhum campo, assume contrato por padrão
       console.log('[POSTBACK D4SIGN] Tipo não identificado claramente, assumindo CONTRATO');
@@ -2010,8 +2054,8 @@ app.post('/d4sign/postback', async (req, res) => {
 
     // 3. anexar PDF no campo correto (Contrato Assinado D4 ou Procuração Assinada D4)
     try {
-      const fieldId = isProcuracaoFinal 
-        ? PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 
+      const fieldId = isProcuracaoFinal
+        ? PIPEFY_FIELD_PROCURACAO_ASSINADA_D4
         : PIPEFY_FIELD_CONTRATO_ASSINADO_D4;
 
       console.log(`[POSTBACK D4SIGN] Tentando salvar PDF - isProcuracaoFinal: ${isProcuracaoFinal}, fieldId: ${fieldId}`);
@@ -2043,7 +2087,7 @@ app.get('/lead/:token', async (req, res) => {
     const { cardId } = parseLeadToken(req.params.token);
     const card = await getCard(cardId);
     const d = await montarDados(card);
-    
+
     // Ler campo filiais_ou_digital do card
     const by = toById(card);
     const filiaisOuDigital = by['filiais_ou_digital'] || '';
@@ -2078,23 +2122,23 @@ app.get('/lead/:token', async (req, res) => {
 
     <h2>Contratante(s)</h2>
     <div class="grid">
-      <div><div class="label">Contratante 1</div><div>${d.contratante_1_texto||'-'}</div></div>
-      <div><div class="label">Contratante 2</div><div>${d.contratante_2_texto||'-'}</div></div>
+      <div><div class="label">Contratante 1</div><div>${d.contratante_1_texto || '-'}</div></div>
+      <div><div class="label">Contratante 2</div><div>${d.contratante_2_texto || '-'}</div></div>
     </div>
 
     <h2>Contato</h2>
     <div class="grid">
-      <div><div class="label">Dados para contato 1</div><div>${d.dados_contato_1||'-'}</div></div>
-      <div><div class="label">Dados para contato 2</div><div>${d.dados_contato_2||'-'}</div></div>
-      <div><div class="label">Email para envio do contrato</div><div>${d.email_envio_contrato||'-'}</div></div>
-      <div><div class="label">Email Cotitular</div><div>${d.email_cotitular_envio||'-'}</div></div>
+      <div><div class="label">Dados para contato 1</div><div>${d.dados_contato_1 || '-'}</div></div>
+      <div><div class="label">Dados para contato 2</div><div>${d.dados_contato_2 || '-'}</div></div>
+      <div><div class="label">Email para envio do contrato</div><div>${d.email_envio_contrato || '-'}</div></div>
+      <div><div class="label">Email Cotitular</div><div>${d.email_cotitular_envio || '-'}</div></div>
     </div>
 
     <h2>Serviços</h2>
     <div class="grid3">
-      <div><div class="label">Template escolhido</div><div>${d.templateToUse===process.env.TEMPLATE_UUID_CONTRATO? 'Contrato de Marca' : 'Contrato de Outros Serviços'}</div></div>
-      <div><div class="label">Qtd Descrição MARCA</div><div>${d.qtd_desc.MARCA||'-'}</div></div>
-      <div><div class="label">Risco agregado</div><div>${d.risco_agregado||'-'}</div></div>
+      <div><div class="label">Template escolhido</div><div>${d.templateToUse === process.env.TEMPLATE_UUID_CONTRATO ? 'Contrato de Marca' : 'Contrato de Outros Serviços'}</div></div>
+      <div><div class="label">Qtd Descrição MARCA</div><div>${d.qtd_desc.MARCA || '-'}</div></div>
+      <div><div class="label">Risco agregado</div><div>${d.risco_agregado || '-'}</div></div>
     </div>
 
     <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
@@ -2104,10 +2148,10 @@ app.get('/lead/:token', async (req, res) => {
   </div>
 </div>
 `;
-    res.setHeader('content-type','text/html; charset=utf-8');
+    res.setHeader('content-type', 'text/html; charset=utf-8');
     return res.status(200).send(html);
   } catch (e) {
-    console.error('[ERRO /lead]', e.message||e);
+    console.error('[ERRO /lead]', e.message || e);
     return res.status(400).send('Link inválido ou expirado.');
   }
 });
@@ -2115,33 +2159,33 @@ app.get('/lead/:token', async (req, res) => {
 app.post('/lead/:token/generate', async (req, res) => {
   let lockKey = null;
   let cardId = null;
-  
+
   try {
     const parsed = parseLeadToken(req.params.token);
     cardId = parsed.cardId;
     if (!cardId) {
       throw new Error('Token inválido: cardId não encontrado');
     }
-    
+
     lockKey = `lead:${cardId}`;
     if (!acquireLock(lockKey)) {
       return res.status(200).send('Processando, tente novamente em instantes.');
     }
 
-    preflightDNS().catch(()=>{});
+    preflightDNS().catch(() => { });
 
     const card = await getCard(cardId);
     if (!card) {
       throw new Error(`Card ${cardId} não encontrado no Pipefy`);
     }
-    
+
     const d = await montarDados(card);
     if (!d) {
       throw new Error('Falha ao montar dados do card');
     }
 
     const now = new Date();
-    const nowInfo = { dia: now.getDate(), mes: now.getMonth()+1, ano: now.getFullYear() };
+    const nowInfo = { dia: now.getDate(), mes: now.getMonth() + 1, ano: now.getFullYear() };
 
     // Validar template
     if (!d.templateToUse) {
@@ -2150,12 +2194,12 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO;
     const add = isMarcaTemplate ? montarVarsParaTemplateMarca(d, nowInfo)
-                                : montarVarsParaTemplateOutros(d, nowInfo);
-    
+      : montarVarsParaTemplateOutros(d, nowInfo);
+
     if (!add || typeof add !== 'object') {
       throw new Error('Falha ao montar variáveis do template. Verifique os dados do card.');
     }
-    
+
     // Log para verificar se o número do contrato está sendo passado
     console.log(`[LEAD-GENERATE] ========== DEBUG NÚMERO DO CONTRATO ==========`);
     console.log(`[LEAD-GENERATE] card.id: ${card.id}, tipo: ${typeof card.id}`);
@@ -2172,7 +2216,7 @@ app.post('/lead/:token/generate', async (req, res) => {
     });
     console.log(`[LEAD-GENERATE] Total de chaves no objeto add: ${Object.keys(add).length}`);
     console.log(`[LEAD-GENERATE] =============================================`);
-    
+
     const signers = montarSigners(d);
     if (!signers || signers.length === 0) {
       throw new Error('Nenhum signatário encontrado. Verifique se há email configurado no card.');
@@ -2210,7 +2254,7 @@ app.post('/lead/:token/generate', async (req, res) => {
     }
 
     console.log(`[LEAD-GENERATE] Criando contrato no cofre: ${nomeCofreUsado} (${uuidSafe})`);
-    
+
     let uuidDoc = null;
     try {
       uuidDoc = await makeDocFromWordTemplate(
@@ -2221,94 +2265,94 @@ app.post('/lead/:token/generate', async (req, res) => {
         d.titulo || card.title || 'Contrato',
         add
       );
-      
+
       if (!uuidDoc) {
         throw new Error('Falha ao criar documento no D4Sign. O documento não foi criado.');
       }
-      
+
       console.log(`[D4SIGN] Contrato criado: ${uuidDoc}`);
     } catch (e) {
       console.error('[ERRO] Falha ao criar documento no D4Sign:', e.message);
       throw new Error(`Erro ao criar documento no D4Sign: ${e.message}`);
     }
 
-// ===============================
-// NOVO — Cadastrar webhook deste documento
-// ===============================
-try {
-  await registerWebhookForDocument(
-    D4SIGN_TOKEN,
-    D4SIGN_CRYPT_KEY,
-    uuidDoc,
-    `${PUBLIC_BASE_URL}/d4sign/postback`
-  );
-  console.log('[D4SIGN] Webhook registrado no documento.');
-} catch (e) {
-  console.error('[ERRO] Falha ao registrar webhook:', e.message);
-}
-
-// ===============================
-// UUID será salvo quando o documento for enviado para assinatura
-// ===============================
-
-// ===============================
-// NOVO — GERAR PROCURAÇÃO
-// ===============================
-let uuidProcuracao = null;
-if (TEMPLATE_UUID_PROCURACAO) {
-  try {
-    const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
-    uuidProcuracao = await makeDocFromWordTemplate(
-      D4SIGN_TOKEN,
-      D4SIGN_CRYPT_KEY,
-      uuidSafe,
-      TEMPLATE_UUID_PROCURACAO,
-      `Procuração - ${d.titulo || card.title || 'Contrato'}`,
-      varsProcuracao
-    );
-    console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao}`);
-
-    // UUID será salvo quando a procuração for enviada para assinatura
-
-    // Aguardar documento estar pronto
-    await new Promise(r=>setTimeout(r, 3000));
-    try { 
-      await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao); 
-      console.log('[D4SIGN] Status da procuração verificado.');
-    } catch (e) {
-      console.warn('[D4SIGN] Aviso ao verificar status da procuração:', e.message);
-    }
-
-    // Registrar webhook da procuração (opcional - se quiser rastrear quando for assinada)
+    // ===============================
+    // NOVO — Cadastrar webhook deste documento
+    // ===============================
     try {
       await registerWebhookForDocument(
         D4SIGN_TOKEN,
         D4SIGN_CRYPT_KEY,
-        uuidProcuracao,
+        uuidDoc,
         `${PUBLIC_BASE_URL}/d4sign/postback`
       );
-      console.log('[D4SIGN] Webhook da procuração registrado.');
+      console.log('[D4SIGN] Webhook registrado no documento.');
     } catch (e) {
-      console.error('[ERRO] Falha ao registrar webhook da procuração:', e.message);
+      console.error('[ERRO] Falha ao registrar webhook:', e.message);
     }
 
-    // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
-    // Isso evita duplicação de signatários
-    console.log('[D4SIGN] Procuração criada. Signatários serão cadastrados quando o documento for enviado para assinatura.');
-  } catch (e) {
-    console.error('[ERRO] Falha ao gerar procuração:', e.message);
-    // Não bloqueia o fluxo se a procuração falhar
-  }
-}
+    // ===============================
+    // UUID será salvo quando o documento for enviado para assinatura
+    // ===============================
 
-    await new Promise(r=>setTimeout(r, 3000));
-    try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch {}
+    // ===============================
+    // NOVO — GERAR PROCURAÇÃO
+    // ===============================
+    let uuidProcuracao = null;
+    if (TEMPLATE_UUID_PROCURACAO) {
+      try {
+        const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+        uuidProcuracao = await makeDocFromWordTemplate(
+          D4SIGN_TOKEN,
+          D4SIGN_CRYPT_KEY,
+          uuidSafe,
+          TEMPLATE_UUID_PROCURACAO,
+          `Procuração - ${d.titulo || card.title || 'Contrato'}`,
+          varsProcuracao
+        );
+        console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao}`);
+
+        // UUID será salvo quando a procuração for enviada para assinatura
+
+        // Aguardar documento estar pronto
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao);
+          console.log('[D4SIGN] Status da procuração verificado.');
+        } catch (e) {
+          console.warn('[D4SIGN] Aviso ao verificar status da procuração:', e.message);
+        }
+
+        // Registrar webhook da procuração (opcional - se quiser rastrear quando for assinada)
+        try {
+          await registerWebhookForDocument(
+            D4SIGN_TOKEN,
+            D4SIGN_CRYPT_KEY,
+            uuidProcuracao,
+            `${PUBLIC_BASE_URL}/d4sign/postback`
+          );
+          console.log('[D4SIGN] Webhook da procuração registrado.');
+        } catch (e) {
+          console.error('[ERRO] Falha ao registrar webhook da procuração:', e.message);
+        }
+
+        // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
+        // Isso evita duplicação de signatários
+        console.log('[D4SIGN] Procuração criada. Signatários serão cadastrados quando o documento for enviado para assinatura.');
+      } catch (e) {
+        console.error('[ERRO] Falha ao gerar procuração:', e.message);
+        // Não bloqueia o fluxo se a procuração falhar
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 3000));
+    try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch { }
 
     // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
     // Isso evita duplicação de signatários
     console.log('[D4SIGN] Contrato criado. Signatários serão cadastrados quando o documento for enviado para assinatura.');
 
-    await new Promise(r=>setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 2000));
     // Movimentação de card removida conforme solicitado
 
     releaseLock(lockKey);
@@ -2443,7 +2487,7 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
       stack: e.stack,
       cardId: req.params.token ? parseLeadToken(req.params.token)?.cardId : 'N/A'
     });
-    
+
     // Liberar lock em caso de erro
     try {
       const { cardId } = parseLeadToken(req.params.token);
@@ -2454,7 +2498,7 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     } catch (lockErr) {
       // Ignora erro ao liberar lock
     }
-    
+
     // Retornar mensagem de erro mais detalhada
     const errorMessage = e.message || 'Erro desconhecido ao gerar o contrato';
     return res.status(400).send(`
@@ -2497,39 +2541,39 @@ app.get('/lead/:token/doc/:uuid/download', async (req, res) => {
 });
 
 app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
-    const { cardId } = parseLeadToken(req.params.token);
+  const { cardId } = parseLeadToken(req.params.token);
   if (!cardId) {
     return res.status(400).json({ success: false, message: 'Token inválido' });
   }
-    const uuidDoc = req.params.uuid;
+  const uuidDoc = req.params.uuid;
   const canal = req.query.canal || 'email'; // 'email' ou 'whatsapp'
   const tipo = req.query.tipo || null; // 'contrato' ou 'procuracao' (opcional)
-  
+
   // Proteção contra envio duplicado
   const lockKey = `send:${cardId}:${uuidDoc}:${canal}`;
   if (!acquireLock(lockKey)) {
     return res.status(200).json({ success: false, message: 'Documento já está sendo enviado. Aguarde alguns instantes.' });
   }
-  
+
   try {
     // Buscar informações do card para identificar o tipo de documento
     let card = null;
     let signers = null;
     let nomeCofre = 'Cofre não identificado';
     let isProcuracao = false;
-    
+
     try {
       card = await getCard(cardId);
       const by = toById(card);
       // Verificar se o UUID está nos campos para identificar o tipo
       const uuidProcuracaoCard = by[PIPEFY_FIELD_D4_UUID_PROCURACAO] || null;
       const uuidContratoCard = by[PIPEFY_FIELD_D4_UUID_CONTRATO] || null;
-      
+
       // Determinar se é contrato ou procuração
       // Primeiro verifica se o tipo foi passado como parâmetro
       console.log(`[SEND] Parâmetros recebidos - tipo: ${tipo}, uuidDoc: ${uuidDoc}`);
       console.log(`[SEND] Campos do card - uuidProcuracaoCard: ${uuidProcuracaoCard}, uuidContratoCard: ${uuidContratoCard}`);
-      
+
       if (tipo === 'procuracao') {
         isProcuracao = true;
         console.log('[SEND] Tipo identificado como PROCURAÇÃO pelo parâmetro tipo');
@@ -2541,12 +2585,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       else if (uuidProcuracaoCard && (String(uuidProcuracaoCard) === uuidDoc || String(uuidProcuracaoCard).includes(uuidDoc))) {
         isProcuracao = true;
         console.log('[SEND] Tipo identificado como PROCURAÇÃO pelo campo d4_uuid_procuracao');
-      } 
+      }
       // Se corresponde ao campo de contrato, é contrato
       else if (uuidContratoCard && (String(uuidContratoCard) === uuidDoc || String(uuidContratoCard).includes(uuidDoc))) {
         isProcuracao = false;
         console.log('[SEND] Tipo identificado como CONTRATO pelo campo d4_uuid_contrato');
-      } 
+      }
       // Se não encontrou em nenhum campo, verifica qual campo está vazio
       else if (!uuidProcuracaoCard && uuidContratoCard) {
         // Procuração vazia mas contrato preenchido, então este deve ser procuração
@@ -2561,9 +2605,9 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         isProcuracao = false;
         console.log('[SEND] Ambos campos vazios, assumindo CONTRATO. Se for procuração, passe ?tipo=procuracao na URL.');
       }
-      
+
       console.log(`[SEND] isProcuracao final: ${isProcuracao}`);
-      
+
       // Buscar equipe contrato para identificar o cofre
       const equipeContrato = getEquipeContratoFromCard(card);
       let uuidCofre = null;
@@ -2574,10 +2618,10 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         uuidCofre = DEFAULT_COFRE_UUID;
       }
       nomeCofre = getNomeCofreByUuid(uuidCofre);
-      
+
       // Preparar signatários
       const d = await montarDados(card);
-      
+
       // Validar se tem email/telefone conforme o canal
       if (canal === 'whatsapp') {
         const telefoneEnvio = d.telefone_envio_contrato || d.telefone || '';
@@ -2597,7 +2641,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         }
         signers = montarSigners(d, false);
       }
-      
+
       console.log(`[SEND] Enviando ${isProcuracao ? 'procuração' : 'contrato'} por ${canal}. Signatários preparados:`, signers.map(s => s.email).join(', '));
     } catch (e) {
       console.warn('[SEND] Erro ao buscar informações do card:', e.message);
@@ -2605,14 +2649,14 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     }
 
     // Verificar status do documento antes de enviar
-    await new Promise(r=>setTimeout(r, 2000));
-    try { 
-      await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); 
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
       console.log(`[SEND] Status do ${isProcuracao ? 'procuração' : 'contrato'} verificado.`);
     } catch (e) {
       console.warn(`[SEND] Aviso ao verificar status do ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
     }
-    
+
     // Garantir que os signatários estão cadastrados antes de enviar
     if (!signers || signers.length === 0) {
       try {
@@ -2620,7 +2664,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
           card = await getCard(cardId);
         }
         const d = await montarDados(card);
-        
+
         // Validar novamente conforme o canal
         if (canal === 'whatsapp') {
           const telefoneEnvio = d.telefone_envio_contrato || d.telefone || '';
@@ -2635,14 +2679,14 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
           }
           signers = montarSigners(d, false);
         }
-        
+
         console.log(`[SEND] Signatários do ${isProcuracao ? 'procuração' : 'contrato'} preparados:`, signers.map(s => s.email).join(', '));
       } catch (e) {
         console.error(`[SEND] Erro ao preparar signatários do ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
         throw e;
       }
     }
-    
+
     if (signers && signers.length > 0) {
       try {
         // Para WhatsApp, precisamos garantir que os signatários tenham telefone
@@ -2653,11 +2697,11 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
           }
           console.log(`[SEND] Cadastrando ${signersComTelefone.length} signatário(s) com telefone para WhatsApp`);
           console.log(`[SEND] Telefones:`, signersComTelefone.map(s => `${s.name}: ${s.phone}`).join(', '));
-          console.log(`[DEBUG] Signatários antes de cadastrar (canal: ${canal}):`, 
-            JSON.stringify(signers.map(s => ({ 
-              name: s.name, 
-              email: s.email, 
-              phone: s.phone 
+          console.log(`[DEBUG] Signatários antes de cadastrar (canal: ${canal}):`,
+            JSON.stringify(signers.map(s => ({
+              name: s.name,
+              email: s.email,
+              phone: s.phone
             })), null, 2));
         }
         await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers, canal === 'whatsapp');
@@ -2676,26 +2720,26 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       erro.tipo = 'SEM_SIGNATARIOS';
       throw erro;
     }
-    
+
     // Aguardar um pouco antes de enviar
-    await new Promise(r=>setTimeout(r, 2000));
-    
+    await new Promise(r => setTimeout(r, 2000));
+
     // Enviar documento (contrato ou procuração)
     try {
-      const mensagem = isProcuracao 
+      const mensagem = isProcuracao
         ? 'Olá! Há uma procuração aguardando sua assinatura.'
         : 'Olá! Há um documento aguardando sua assinatura.';
-      
+
       // Se for WhatsApp, não enviar email
       const skip_email = canal === 'whatsapp' ? '1' : '0';
 
-    await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
+      await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
         message: mensagem,
         skip_email: skip_email,
-      workflow: '0'
-    });
+        workflow: '0'
+      });
       console.log(`[SEND] ${isProcuracao ? 'Procuração' : 'Contrato'} enviado para assinatura por ${canal}:`, uuidDoc);
-      
+
       // Salvar UUID do documento no campo correto após enviar para assinatura
       try {
         console.log(`[SEND] Tentando salvar UUID - isProcuracao: ${isProcuracao}, uuidDoc: ${uuidDoc}, cardId: ${cardId}`);
@@ -2734,7 +2778,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     } else {
       emailUsado = dFinal.email_envio_contrato || dFinal.email || null;
     }
-    
+
     // Buscar UUID do cofre novamente para construir a URL
     const equipeContratoFinal = getEquipeContratoFromCard(card);
     let uuidCofreFinal = null;
@@ -2744,13 +2788,13 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     if (!uuidCofreFinal) {
       uuidCofreFinal = DEFAULT_COFRE_UUID;
     }
-    
+
     // Construir URL do cofre (apenas o link base do D4Sign)
     const urlCofre = 'https://secure.d4sign.com.br/desk';
-    
+
     // Liberar lock após envio bem-sucedido
     releaseLock(lockKey);
-    
+
     return res.status(200).json({
       success: true,
       message: `${isProcuracao ? 'Procuração' : 'Contrato'} enviado com sucesso. Os signatários foram notificados.`,
@@ -2769,7 +2813,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     } catch (lockErr) {
       // Ignora erro ao liberar lock
     }
-    
+
     console.error('[ERRO sendtosigner]', {
       message: e.message || e,
       stack: e.stack,
@@ -2777,12 +2821,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       uuidDoc: uuidDoc,
       statusCode: e.statusCode
     });
-    
+
     // Determinar tipo de erro e mensagem amigável
     let tituloErro = 'Erro ao enviar documentos';
     let mensagemErro = e.message || 'Não foi possível enviar os documentos para assinatura.';
     let detalhesAdicionais = '';
-    
+
     // Erros específicos por tipo
     if (e.tipo === 'SEM_SIGNATARIOS' || (e.message && e.message.includes('Nenhum signatário'))) {
       tituloErro = 'Signatários não encontrados';
@@ -2825,7 +2869,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       mensagemErro = 'Ocorreu um erro no servidor de assinatura.';
       detalhesAdicionais = 'O problema é temporário. Tente novamente em alguns minutos.';
     }
-    
+
     // Retornar JSON para requisições AJAX
     return res.status(400).json({
       success: false,
@@ -2899,7 +2943,7 @@ async function findCardIdByD4Uuid(uuidDocument) {
     // Busca alternativa: buscar cards recentes e verificar manualmente
     // Isso é necessário porque o campo d4_uuid_contrato agora contém URL do cofre, não UUID do documento
     console.log(`[findCardIdByD4Uuid] Busca direta não encontrou. Tentando busca alternativa em cards recentes...`);
-    
+
     try {
       // Busca os cards mais recentes do pipe para verificar manualmente
       const searchQuery = `
@@ -2921,7 +2965,7 @@ async function findCardIdByD4Uuid(uuidDocument) {
     `;
 
       const searchData = await gql(searchQuery, {
-      pipeId: NOVO_PIPE_ID,
+        pipeId: NOVO_PIPE_ID,
         first: 100  // Busca nos 100 cards mais recentes
       });
 
@@ -2929,19 +2973,19 @@ async function findCardIdByD4Uuid(uuidDocument) {
       for (const edge of recentCards) {
         const card = edge.node;
         const fields = card.fields || [];
-        
+
         // Verifica se algum campo contém o UUID do documento
         for (const field of fields) {
           const fieldValue = String(field.value || '');
           // Verifica se o UUID está nos campos D4 UUID Contrato ou D4 UUID Procuracao
-          if ((field.id === PIPEFY_FIELD_D4_UUID_CONTRATO || field.id === PIPEFY_FIELD_D4_UUID_PROCURACAO) && 
-              (fieldValue === uuidDocument || fieldValue.includes(uuidDocument))) {
+          if ((field.id === PIPEFY_FIELD_D4_UUID_CONTRATO || field.id === PIPEFY_FIELD_D4_UUID_PROCURACAO) &&
+            (fieldValue === uuidDocument || fieldValue.includes(uuidDocument))) {
             console.log(`[findCardIdByD4Uuid] Card encontrado através de busca alternativa no campo ${field.id}: ${card.id}`);
             return card.id;
           }
         }
       }
-      
+
       console.log(`[findCardIdByD4Uuid] UUID ${uuidDocument} não encontrado em cards recentes.`);
     } catch (searchError) {
       console.warn('[findCardIdByD4Uuid] Erro na busca alternativa:', searchError.message);
@@ -2965,15 +3009,15 @@ app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
     if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
 
     const card = await getCard(cardId);
-    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
+    if (NOVO_PIPE_ID && String(card?.pipe?.id) !== String(NOVO_PIPE_ID)) {
       return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
     }
-    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
+    if (FASE_VISITA_ID && String(card?.current_phase?.id) !== String(FASE_VISITA_ID)) {
       return res.status(400).json({ error: 'Card não está na fase esperada' });
     }
 
     const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
-    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
+    const url = `${PUBLIC_BASE_URL.replace(/\/+$/, '')}/lead/${encodeURIComponent(token)}`;
 
     await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
 
@@ -2987,10 +3031,10 @@ app.post('/novo-pipe/criar-link-confirmacao', async (req, res) => {
       // Não bloqueia o fluxo se falhar ao enviar comentário
     }
 
-    return res.json({ ok:true, link:url });
+    return res.json({ ok: true, link: url });
   } catch (e) {
-    console.error('[ERRO criar-link]', e.message||e);
-    return res.status(500).json({ error: String(e.message||e) });
+    console.error('[ERRO criar-link]', e.message || e);
+    return res.status(500).json({ error: String(e.message || e) });
   }
 });
 app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
@@ -2999,15 +3043,15 @@ app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
     if (!cardId) return res.status(400).json({ error: 'cardId é obrigatório' });
 
     const card = await getCard(cardId);
-    if (NOVO_PIPE_ID && String(card?.pipe?.id)!==String(NOVO_PIPE_ID)) {
+    if (NOVO_PIPE_ID && String(card?.pipe?.id) !== String(NOVO_PIPE_ID)) {
       return res.status(400).json({ error: 'Card não pertence ao pipe configurado' });
     }
-    if (FASE_VISITA_ID && String(card?.current_phase?.id)!==String(FASE_VISITA_ID)) {
+    if (FASE_VISITA_ID && String(card?.current_phase?.id) !== String(FASE_VISITA_ID)) {
       return res.status(400).json({ error: 'Card não está na fase esperada' });
     }
 
     const token = makeLeadToken({ cardId: String(cardId), ts: Date.now() });
-    const url = `${PUBLIC_BASE_URL.replace(/\/+$/,'')}/lead/${encodeURIComponent(token)}`;
+    const url = `${PUBLIC_BASE_URL.replace(/\/+$/, '')}/lead/${encodeURIComponent(token)}`;
 
     await updateCardField(cardId, PIPEFY_FIELD_LINK_CONTRATO, url);
 
@@ -3021,10 +3065,10 @@ app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
       // Não bloqueia o fluxo se falhar ao enviar comentário
     }
 
-    return res.json({ ok:true, link:url });
+    return res.json({ ok: true, link: url });
   } catch (e) {
-    console.error('[ERRO criar-link]', e.message||e);
-    return res.status(500).json({ error: String(e.message||e) });
+    console.error('[ERRO criar-link]', e.message || e);
+    return res.status(500).json({ error: String(e.message || e) });
   }
 });
 
@@ -3043,37 +3087,37 @@ app.get('/_echo/*', (req, res) => {
     query: req.query,
   });
 });
-app.get('/debug/card', async (req,res)=>{
-  try{
+app.get('/debug/card', async (req, res) => {
+  try {
     const { cardId } = req.query; if (!cardId) return res.status(400).send('cardId obrigatório');
     const card = await getCard(cardId);
     res.json({
       id: card.id, title: card.title, pipe: card.pipe, phase: card.current_phase,
-      fields: (card.fields||[]).map(f => ({ name:f.name, id:f.field?.id, type:f.field?.type, value:f.value, array_value:f.array_value }))
+      fields: (card.fields || []).map(f => ({ name: f.name, id: f.field?.id, type: f.field?.type, value: f.value, array_value: f.array_value }))
     });
-  }catch(e){ res.status(500).json({ error:String(e.message||e) }); }
+  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
-app.get('/health', (_req,res)=> res.json({ ok:true }));
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
 /* =========================
  * Start
  * =======================*/
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
-  const list=[];
-  app._router.stack.forEach(m=>{
-    if (m.route && m.route.path){
-      const methods = Object.keys(m.route.methods).map(x=>x.toUpperCase()).join(',');
+  const list = [];
+  app._router.stack.forEach(m => {
+    if (m.route && m.route.path) {
+      const methods = Object.keys(m.route.methods).map(x => x.toUpperCase()).join(',');
       list.push(`${methods} ${m.route.path}`);
-    } else if (m.name==='router' && m.handle?.stack){
-      m.handle.stack.forEach(h=>{
+    } else if (m.name === 'router' && m.handle?.stack) {
+      m.handle.stack.forEach(h => {
         const route = h.route;
-        if (route){
-          const methods = Object.keys(route.methods).map(x=>x.toUpperCase()).join(',');
+        if (route) {
+          const methods = Object.keys(route.methods).map(x => x.toUpperCase()).join(',');
           list.push(`${methods} ${route.path}`);
         }
       });
     }
   });
-  console.log('[rotas-registradas]'); list.sort().forEach(r=>console.log('  -', r));
+  console.log('[rotas-registradas]'); list.sort().forEach(r => console.log('  -', r));
 });
