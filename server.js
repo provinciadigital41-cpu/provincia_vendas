@@ -109,6 +109,16 @@ app.get('/', (req, res) => {
           html += renderTable(varsMarca);
           html += '</div></div>';
 
+          // [NOVO] Prévia dos Textos do Contrato
+          html += '<div class="section"><div class="section-header" onclick="toggle(this)">📄 Prévia dos Textos do Contrato</div><div class="section-content">';
+          html += '<table class="table-view">';
+          html += '<tr><th>Texto Contratante 1</th><td>' + (extracted.contratante_1_texto || '') + '</td></tr>';
+          html += '<tr><th>Texto Contratante 2</th><td>' + (extracted.contratante_2_texto || '') + '</td></tr>';
+          html += '<tr><th>Cláusula Adicional</th><td>' + (extracted.clausula_adicional || '') + '</td></tr>';
+          html += '<tr><th>Valor Total</th><td>' + (extracted.valor_total || '') + '</td></tr>';
+          html += '<tr><th>Parcelas</th><td>' + (extracted.parcelas || '') + '</td></tr>';
+          html += '</table></div></div>';
+
           // Variáveis Outros
           html += '<div class="section"><div class="section-header" onclick="toggle(this)">📑 Variáveis para Template OUTROS</div><div class="section-content">';
           html += renderTable(varsOutros);
@@ -1293,8 +1303,26 @@ function montarTextoContratante(info = {}) {
 
   const cpfDigits = onlyDigits(cpf);
   const cnpjDigits = onlyDigits(cnpj);
-  const isCnpj = cnpjDigits.length === 14;
-  const isCpf = !isCnpj && cpfDigits.length === 11;
+  
+  // [MODIFICADO] Prioridade absoluta para a seleção do Pipefy (docSelecao)
+  // Se docSelecao for 'CNPJ', tratamos como CNPJ.
+  // Se docSelecao for 'CPF', tratamos como CPF.
+  // Se não estiver definido, tentamos inferir pelo tamanho do documento.
+  
+  let isCnpj = false;
+  let isCpf = false;
+
+  const selecao = String(docSelecao || '').toUpperCase().trim();
+
+  if (selecao === 'CNPJ') {
+    isCnpj = true;
+  } else if (selecao === 'CPF') {
+    isCpf = true;
+  } else {
+    // Fallback: inferência automática
+    isCnpj = cnpjDigits.length === 14;
+    isCpf = !isCnpj && cpfDigits.length === 11;
+  }
 
   // Monta endereço em texto único
   const enderecoPartes = [];
