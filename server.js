@@ -61,6 +61,7 @@ app.get('/', (req, res) => {
           <input type="text" id="cardId" placeholder="Ex: 123456789" />
           <button onclick="fetchData()">Visualizar Dados</button>
           <button id="btnGerar" onclick="gerarContrato()" style="background-color: #28a745; display: none;">Gerar Contrato Agora</button>
+          <button id="btnBaixar" onclick="baixarDocumentos()" style="background-color: #17a2b8; display: none;">📥 Baixar e Anexar Documentos</button>
         </div>
 
         <div id="result"></div>
@@ -85,6 +86,7 @@ app.get('/', (req, res) => {
 
             renderResult(data);
             document.getElementById('btnGerar').style.display = 'block';
+            document.getElementById('btnBaixar').style.display = 'block';
           } catch (e) {
             resDiv.innerHTML = '<div class="error">Erro de conexão: ' + e.message + '</div>';
           }
@@ -175,6 +177,37 @@ app.get('/', (req, res) => {
             btn.innerText = 'Gerar Contrato Agora';
           }
         }
+
+        async function baixarDocumentos() {
+          const id = document.getElementById('cardId').value.trim();
+          if (!id) return alert('Digite um ID primeiro');
+          
+          if (!confirm('Deseja baixar e anexar os documentos assinados (Contrato/Procuração) do D4Sign para o Pipefy?')) return;
+
+          const btn = document.getElementById('btnBaixar');
+          btn.disabled = true;
+          btn.innerText = 'Processando...';
+
+          try {
+            const res = await fetch('/manual-attach/' + id, { method: 'POST' });
+            const data = await res.json();
+            
+            if (data.success) {
+              let msg = 'Processo concluído!\n';
+              data.results.forEach(r => {
+                msg += '- ' + r.type + ': ' + r.status + ' (' + r.details + ') \\n';
+              });
+              alert(msg);
+            } else {
+              alert('Erro: ' + data.error);
+            }
+          } catch (e) {
+            alert('Erro de conexão: ' + e.message);
+          } finally {
+            btn.disabled = false;
+            btn.innerText = '📥 Baixar e Anexar Documentos';
+          }
+        }
       </script>
     </body>
     </html>
@@ -231,6 +264,70 @@ app.post('/manual-trigger/:id', async (req, res) => {
   }
 });
 
+// [NOVO] Rota para baixar e anexar documentos manualmente
+app.post('/manual-attach/:id', async (req, res) => {
+  try {
+    const cardId = req.params.id;
+    console.log(`[MANUAL ATTACH] Iniciando processo para card ${cardId}`);
+
+    const card = await getCard(cardId);
+    const byId = toById(card);
+
+    const uuidContrato = byId[PIPEFY_FIELD_D4_UUID_CONTRATO];
+    const uuidProcuracao = byId[PIPEFY_FIELD_D4_UUID_PROCURACAO];
+
+    const results = [];
+
+    // Processar Contrato
+    if (uuidContrato) {
+      try {
+        console.log(`[MANUAL ATTACH] Baixando Contrato ${uuidContrato}...`);
+        const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidContrato, { type: 'PDF', language: 'pt' });
+
+        console.log(`[MANUAL ATTACH] Anexando Contrato ao campo ${PIPEFY_FIELD_CONTRATO_ASSINADO_D4}...`);
+        await updateCardField(cardId, PIPEFY_FIELD_CONTRATO_ASSINADO_D4, [info.url]);
+
+        console.log(`[MANUAL ATTACH] Anexando Contrato ao campo extra ${PIPEFY_FIELD_EXTRA_CONTRATO}...`);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [info.url]);
+
+        results.push({ type: 'Contrato', status: 'Sucesso', details: 'Anexado' });
+      } catch (e) {
+        console.error(`[MANUAL ATTACH] Erro Contrato: ${e.message}`);
+        results.push({ type: 'Contrato', status: 'Erro', details: e.message });
+      }
+    } else {
+      results.push({ type: 'Contrato', status: 'Ignorado', details: 'UUID não encontrado' });
+    }
+
+    // Processar Procuração
+    if (uuidProcuracao) {
+      try {
+        console.log(`[MANUAL ATTACH] Baixando Procuração ${uuidProcuracao}...`);
+        const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, { type: 'PDF', language: 'pt' });
+
+        console.log(`[MANUAL ATTACH] Anexando Procuração ao campo ${PIPEFY_FIELD_PROCURACAO_ASSINADA_D4}...`);
+        await updateCardField(cardId, PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, [info.url]);
+
+        console.log(`[MANUAL ATTACH] Anexando Procuração ao campo extra ${PIPEFY_FIELD_EXTRA_PROCURACAO}...`);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [info.url]);
+
+        results.push({ type: 'Procuração', status: 'Sucesso', details: 'Anexado' });
+      } catch (e) {
+        console.error(`[MANUAL ATTACH] Erro Procuração: ${e.message}`);
+        results.push({ type: 'Procuração', status: 'Erro', details: e.message });
+      }
+    } else {
+      results.push({ type: 'Procuração', status: 'Ignorado', details: 'UUID não encontrado' });
+    }
+
+    res.json({ success: true, results });
+
+  } catch (e) {
+    console.error('[MANUAL ATTACH ERROR]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 /* =========================
  * ENV
  * =======================*/
@@ -251,6 +348,8 @@ let {
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
+  PIPEFY_FIELD_EXTRA_CONTRATO = 'contrato',
+  PIPEFY_FIELD_EXTRA_PROCURACAO = 'procura_o',
 
   // D4Sign
   D4SIGN_TOKEN,
@@ -871,11 +970,13 @@ async function montarDados(card) {
   const cot_rg = by['rg_cotitular'] || '';
   const cot_cpf = by['cpf_cotitular'] || '';
   const cot_cnpj = by['cnpj_cotitular'] || '';
-  const cot_docSelecao = cot_cnpj ? 'CNPJ' : (cot_cpf ? 'CPF' : '');
+  // [ALTERADO] Prioridade CPF para cotitular
+  const cot_docSelecao = cot_cpf ? 'CPF' : (cot_cnpj ? 'CNPJ' : '');
 
   // Envio do contrato principal e cotitular
   const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
-  const emailCotitularEnvio = by['copy_of_email_para_envio_do_contrato'] || '';
+  // [ALTERADO] Busca primeiro no campo novo solicitado
+  const emailCotitularEnvio = by['copy_of_email_para_envio_de_contrato'] || by['copy_of_email_para_envio_do_contrato'] || '';
   const telefoneCotitularEnvio = by['copy_of_telefone_para_envio_do_contrato'] || '';
   // Telefone para envio do contrato (campo específico)
   const telefoneEnvioContrato = by['telefone_para_envio_do_contrato'] || getFirstByNames(card, ['telefone para envio do contrato', 'telefone para envio']) || contatoTelefone || '';
@@ -1303,12 +1404,12 @@ function montarTextoContratante(info = {}) {
 
   const cpfDigits = onlyDigits(cpf);
   const cnpjDigits = onlyDigits(cnpj);
-  
+
   // [MODIFICADO] Prioridade absoluta para a seleção do Pipefy (docSelecao)
   // Se docSelecao for 'CNPJ', tratamos como CNPJ.
   // Se docSelecao for 'CPF', tratamos como CPF.
   // Se não estiver definido, tentamos inferir pelo tamanho do documento.
-  
+
   let isCnpj = false;
   let isCpf = false;
 
@@ -2212,9 +2313,9 @@ app.post('/d4sign/postback', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // type_post = "1" → documento finalizado/assinado
-    // type_post = "4" → documento assinado (também deve ser processado)
-    const isSigned = String(type_post) === '1' || String(type_post) === '4';
+    // type_post = "1" → documento finalizado/assinado (TODOS assinaram)
+    // type_post = "4" → documento assinado (apenas um assinou) - IGNORAR
+    const isSigned = String(type_post) === '1';
     if (!isSigned) {
       console.log('[POSTBACK D4SIGN] Evento ignorado:', type_post);
       return res.status(200).json({ ok: true });
@@ -2283,6 +2384,14 @@ app.post('/d4sign/postback', async (req, res) => {
         console.log(`[POSTBACK D4SIGN] Salvando PDF no campo ${fieldId} com URL: ${info.url}`);
         await updateCardField(cardId, fieldId, newValue);
         console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo ${fieldId} (${isProcuracaoFinal ? 'Procuração' : 'Contrato'} Assinado D4)`);
+
+        // [NOVO] Anexar também nos campos extras solicitados
+        const extraFieldId = isProcuracaoFinal ? PIPEFY_FIELD_EXTRA_PROCURACAO : PIPEFY_FIELD_EXTRA_CONTRATO;
+        if (extraFieldId) {
+          console.log(`[POSTBACK D4SIGN] Salvando PDF também no campo extra ${extraFieldId}...`);
+          await updateCardField(cardId, extraFieldId, newValue);
+          console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo extra ${extraFieldId}`);
+        }
       }
     } catch (e) {
       console.error('[POSTBACK D4SIGN] Erro ao anexar documento:', e.message);
@@ -2551,9 +2660,8 @@ app.post('/lead/:token/generate', async (req, res) => {
           console.error('[ERRO] Falha ao registrar webhook da procuração:', e.message);
         }
 
-        // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
-        // Isso evita duplicação de signatários
-        console.log('[D4SIGN] Procuração criada. Signatários serão cadastrados quando o documento for enviado para assinatura.');
+        // Signatários serão cadastrados abaixo junto com o contrato
+        console.log('[D4SIGN] Procuração criada. Signatários serão cadastrados em breve.');
       } catch (e) {
         console.error('[ERRO] Falha ao gerar procuração:', e.message);
         // Não bloqueia o fluxo se a procuração falhar
@@ -2563,9 +2671,24 @@ app.post('/lead/:token/generate', async (req, res) => {
     await new Promise(r => setTimeout(r, 3000));
     try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch { }
 
-    // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
+    // Signatários serão cadastrados agora
     // Isso evita duplicação de signatários
-    console.log('[D4SIGN] Contrato criado. Signatários serão cadastrados quando o documento for enviado para assinatura.');
+    console.log('[D4SIGN] Contrato criado. Cadastrando signatários...');
+
+    try {
+      if (signers && signers.length > 0) {
+        console.log(`[LEAD-GENERATE] Cadastrando ${signers.length} signatários no contrato ${uuidDoc}...`);
+        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
+
+        if (uuidProcuracao) {
+          console.log(`[LEAD-GENERATE] Cadastrando ${signers.length} signatários na procuração ${uuidProcuracao}...`);
+          await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
+        }
+      }
+    } catch (e) {
+      console.error('[LEAD-GENERATE] Erro ao cadastrar signatários:', e.message);
+      // Não falha o processo todo, mas loga o erro
+    }
 
     await new Promise(r => setTimeout(r, 2000));
     // Movimentação de card removida conforme solicitado
@@ -3345,6 +3468,24 @@ async function processarContrato(cardId) {
       );
       // Webhook procuração...
     } catch (e) { console.error('Erro procuração:', e.message); }
+  }
+
+  // [NOVO] Cadastrar signatários
+  try {
+    const signers = montarSigners(d);
+    if (signers && signers.length > 0) {
+      console.log(`[PROCESSAR] Cadastrando ${signers.length} signatários no contrato ${uuidDoc}...`);
+      await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
+
+      if (uuidProcuracao) {
+        console.log(`[PROCESSAR] Cadastrando ${signers.length} signatários na procuração ${uuidProcuracao}...`);
+        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
+      }
+    } else {
+      console.warn('[PROCESSAR] Nenhum signatário encontrado para cadastrar.');
+    }
+  } catch (e) {
+    console.error('[PROCESSAR] Erro ao cadastrar signatários:', e.message);
   }
 
   return { uuidDoc, uuidProcuracao };
