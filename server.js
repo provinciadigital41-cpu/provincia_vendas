@@ -2725,18 +2725,20 @@ app.post('/lead/:token/generate', async (req, res) => {
   <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
     <div style="margin-bottom:8px"><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
     ${d.email_cotitular_envio ? `<div><strong>Email do Cotitular:</strong> ${d.email_cotitular_envio}</div>` : ''}
-    <div style="margin-top:12px;color:#28a745;font-weight:600">✓ Contrato enviado automaticamente para os emails acima.</div>
+    <div style="margin-top:12px;color:#28a745;font-weight:600">✓ Contrato enviado automaticamente. Caso precise reenviar:</div>
   </div>
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
+    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
   <div class="section">
     <h3>Procuração gerada com sucesso</h3>
-    <div style="margin-bottom:12px;color:#28a745;font-weight:600">✓ Procuração enviada automaticamente para os emails acima.</div>
+    <div style="margin-bottom:12px;color:#28a745;font-weight:600">✓ Procuração enviada automaticamente. Caso precise reenviar:</div>
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
+      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
@@ -3483,6 +3485,9 @@ async function processarContrato(cardId) {
 
   // [NOVO] Cadastrar signatários
   try {
+    // Aguardar um pouco para garantir que o documento foi processado pelo D4Sign
+    await new Promise(r => setTimeout(r, 3000));
+
     const signers = montarSigners(d);
     if (signers && signers.length > 0) {
       console.log(`[PROCESSAR] Cadastrando ${signers.length} signatários no contrato ${uuidDoc}...`);
