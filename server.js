@@ -288,7 +288,14 @@ app.post('/manual-attach/:id', async (req, res) => {
         await updateCardField(cardId, PIPEFY_FIELD_CONTRATO_ASSINADO_D4, [info.url]);
 
         console.log(`[MANUAL ATTACH] Anexando Contrato ao campo extra ${PIPEFY_FIELD_EXTRA_CONTRATO}...`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [info.url]);
+        // Upload para Pipefy
+        const orgId = card.pipe?.organization?.id;
+        if (orgId) {
+          const pipefyUrl = await uploadFileToPipefy(info.url, `Contrato_${uuidContrato}.pdf`, orgId);
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [pipefyUrl]);
+        } else {
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [info.url]);
+        }
 
         results.push({ type: 'Contrato', status: 'Sucesso', details: 'Anexado' });
       } catch (e) {
@@ -309,7 +316,14 @@ app.post('/manual-attach/:id', async (req, res) => {
         await updateCardField(cardId, PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, [info.url]);
 
         console.log(`[MANUAL ATTACH] Anexando Procuração ao campo extra ${PIPEFY_FIELD_EXTRA_PROCURACAO}...`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [info.url]);
+        // Upload para Pipefy
+        const orgId = card.pipe?.organization?.id;
+        if (orgId) {
+          const pipefyUrl = await uploadFileToPipefy(info.url, `Procuracao_${uuidProcuracao}.pdf`, orgId);
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [pipefyUrl]);
+        } else {
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [info.url]);
+        }
 
         results.push({ type: 'Procuração', status: 'Sucesso', details: 'Anexado' });
       } catch (e) {
@@ -634,7 +648,7 @@ async function getCard(cardId) {
     card(id:$id){
       id title
       current_phase{ id name }
-      pipe{ id name }
+      pipe{ id name organization { id } }
       fields{ name value array_value field{ id type label description } }
       assignees{ name email }
     }
@@ -2389,8 +2403,25 @@ app.post('/d4sign/postback', async (req, res) => {
         const extraFieldId = isProcuracaoFinal ? PIPEFY_FIELD_EXTRA_PROCURACAO : PIPEFY_FIELD_EXTRA_CONTRATO;
         if (extraFieldId) {
           console.log(`[POSTBACK D4SIGN] Salvando PDF também no campo extra ${extraFieldId}...`);
-          await updateCardField(cardId, extraFieldId, newValue);
-          console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo extra ${extraFieldId}`);
+
+          // Se for campo de anexo, precisa fazer upload primeiro
+          // Como não sabemos se é anexo ou texto, vamos tentar upload se tiver organizationId
+          try {
+            const orgId = card.pipe?.organization?.id;
+            if (orgId) {
+              const fileName = isProcuracaoFinal ? `Procuracao_${uuid}.pdf` : `Contrato_${uuid}.pdf`;
+              const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
+              await updateCardField(cardId, extraFieldId, [pipefyUrl]);
+              console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo extra ${extraFieldId} (via upload)`);
+            } else {
+              // Fallback para URL direta se não tiver orgId (não deve acontecer se getCard estiver atualizado)
+              await updateCardField(cardId, extraFieldId, newValue);
+              console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo extra ${extraFieldId} (via URL direta)`);
+            }
+          } catch (uploadErr) {
+            console.warn(`[POSTBACK D4SIGN] Falha ao fazer upload para campo extra, tentando URL direta: ${uploadErr.message}`);
+            await updateCardField(cardId, extraFieldId, newValue);
+          }
         }
       }
     } catch (e) {
@@ -2677,10 +2708,11 @@ app.post('/lead/:token/generate', async (req, res) => {
     await new Promise(r => setTimeout(r, 3000));
     try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch { }
 
-    // Signatários serão cadastrados agora
-    // Isso evita duplicação de signatários
-    console.log('[D4SIGN] Contrato criado. Cadastrando signatários...');
+    // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
+    // Isso evita duplicação de signatários e permite envio manual
+    console.log('[D4SIGN] Contrato criado. Aguardando envio manual...');
 
+    /*
     try {
       if (signers && signers.length > 0) {
         console.log(`[LEAD-GENERATE] Cadastrando ${signers.length} signatários no contrato ${uuidDoc}...`);
@@ -2695,6 +2727,7 @@ app.post('/lead/:token/generate', async (req, res) => {
       console.error('[LEAD-GENERATE] Erro ao cadastrar signatários:', e.message);
       // Não falha o processo todo, mas loga o erro
     }
+    */
 
     await new Promise(r => setTimeout(r, 2000));
     // Movimentação de card removida conforme solicitado
@@ -3483,7 +3516,9 @@ async function processarContrato(cardId) {
     } catch (e) { console.error('Erro procuração:', e.message); }
   }
 
-  // [NOVO] Cadastrar signatários
+  // [REMOVIDO] Cadastrar signatários automaticamente
+  // O cadastro será feito apenas quando o usuário clicar em "Enviar por Email"
+  /*
   try {
     // Aguardar um pouco para garantir que o documento foi processado pelo D4Sign
     await new Promise(r => setTimeout(r, 3000));
@@ -3503,6 +3538,7 @@ async function processarContrato(cardId) {
   } catch (e) {
     console.error('[PROCESSAR] Erro ao cadastrar signatários:', e.message);
   }
+  */
 
   return { uuidDoc, uuidProcuracao };
 }
@@ -3554,6 +3590,64 @@ app.get('/debug/card', async (req, res) => {
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
 app.get('/health', (_req, res) => res.json({ ok: true }));
+
+// ===============================
+// NOVO — Upload de arquivo para o Pipefy
+// ===============================
+async function uploadFileToPipefy(url, fileName, organizationId) {
+  try {
+    console.log(`[UPLOAD PIPEFY] Baixando arquivo de: ${url}`);
+
+    // 1. Baixar arquivo (buffer)
+    const res = await fetchWithRetry(url, { method: 'GET' }, { attempts: 3 });
+    if (!res.ok) throw new Error(`Falha ao baixar arquivo: ${res.status}`);
+    const buffer = await res.arrayBuffer();
+
+    console.log(`[UPLOAD PIPEFY] Arquivo baixado (${buffer.byteLength} bytes). Obtendo URL de upload...`);
+
+    // 2. Obter URL presignada do Pipefy
+    const mutation = `
+      mutation($input: CreatePresignedUrlInput!) {
+        createPresignedUrl(input: $input) {
+          url
+          downloadUrl
+        }
+      }
+    `;
+
+    const data = await gql(mutation, {
+      input: {
+        organizationId: organizationId,
+        fileName: fileName
+      }
+    });
+
+    const { url: uploadUrl, downloadUrl } = data.createPresignedUrl;
+    console.log(`[UPLOAD PIPEFY] URL de upload obtida. Enviando arquivo...`);
+
+    // 3. Fazer upload para o S3 do Pipefy
+    const uploadRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: Buffer.from(buffer),
+      headers: {
+        'Content-Type': 'application/pdf' // Assumindo PDF
+      }
+    });
+
+    if (!uploadRes.ok) {
+      throw new Error(`Falha ao fazer upload para o Pipefy: ${uploadRes.status} ${uploadRes.statusText}`);
+    }
+
+    console.log(`[UPLOAD PIPEFY] Upload concluído com sucesso.`);
+
+    // Retorna a URL pública/download que deve ser usada no campo de anexo
+    return downloadUrl;
+
+  } catch (e) {
+    console.error('[UPLOAD PIPEFY ERROR]', e.message);
+    throw e;
+  }
+}
 
 /* =========================
  * Start
