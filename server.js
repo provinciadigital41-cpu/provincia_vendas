@@ -2454,8 +2454,8 @@ app.get('/lead/:token', async (req, res) => {
     <div class="grid">
       <div><div class="label">Dados para contato 1</div><div>${d.dados_contato_1 || '-'}</div></div>
       <div><div class="label">Dados para contato 2</div><div>${d.dados_contato_2 || '-'}</div></div>
-      <div><div class="label">Email para envio do contrato</div><div>${d.email_envio_contrato || '-'}</div></div>
-      <div><div class="label">Email Cotitular</div><div>${d.email_cotitular_envio || '-'}</div></div>
+      <div><div class="label">Email do Titular</div><div>${d.email_envio_contrato || '-'}</div></div>
+      <div><div class="label">Email do Cotitular</div><div>${d.email_cotitular_envio || '-'}</div></div>
     </div>
 
     <h2>Serviços</h2>
@@ -2611,6 +2611,9 @@ app.post('/lead/:token/generate', async (req, res) => {
         `${PUBLIC_BASE_URL}/d4sign/postback`
       );
       console.log('[D4SIGN] Webhook registrado no documento.');
+      // [NOVO] Salvar UUID no card
+      await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc);
+      console.log(`[LEAD-GENERATE] UUID Contrato salvo no card: ${uuidDoc}`);
     } catch (e) {
       console.error('[ERRO] Falha ao registrar webhook:', e.message);
     }
@@ -2656,6 +2659,9 @@ app.post('/lead/:token/generate', async (req, res) => {
             `${PUBLIC_BASE_URL}/d4sign/postback`
           );
           console.log('[D4SIGN] Webhook da procuração registrado.');
+          // [NOVO] Salvar UUID no card
+          await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao);
+          console.log(`[LEAD-GENERATE] UUID Procuração salvo no card: ${uuidProcuracao}`);
         } catch (e) {
           console.error('[ERRO] Falha ao registrar webhook da procuração:', e.message);
         }
@@ -2716,22 +2722,21 @@ app.post('/lead/:token/generate', async (req, res) => {
     Documentos salvos no cofre padrão: <strong>${nomeCofreUsado}</strong>
   </div>
   ` : ''}
-  ${d.email_envio_contrato || d.email ? `
   <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
-    <strong>Email para envio:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}
+    <div style="margin-bottom:8px"><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
+    ${d.email_cotitular_envio ? `<div><strong>Email do Cotitular:</strong> ${d.email_cotitular_envio}</div>` : ''}
+    <div style="margin-top:12px;color:#28a745;font-weight:600">✓ Contrato enviado automaticamente para os emails acima.</div>
   </div>
-  ` : ''}
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
-    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
   <div class="section">
     <h3>Procuração gerada com sucesso</h3>
+    <div style="margin-bottom:12px;color:#28a745;font-weight:600">✓ Procuração enviada automaticamente para os emails acima.</div>
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
-      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
@@ -3451,7 +3456,10 @@ async function processarContrato(cardId) {
   // Webhook
   try {
     await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, `${PUBLIC_BASE_URL}/d4sign/postback`);
-  } catch (e) { console.error('Erro webhook:', e.message); }
+    // [NOVO] Salvar UUID no card
+    await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc);
+    console.log(`[PROCESSAR] UUID Contrato salvo no card: ${uuidDoc}`);
+  } catch (e) { console.error('Erro webhook/salvar UUID:', e.message); }
 
   // Procuração (Opcional)
   let uuidProcuracao = null;
@@ -3467,6 +3475,9 @@ async function processarContrato(cardId) {
         varsProcuracao
       );
       // Webhook procuração...
+      // [NOVO] Salvar UUID no card
+      await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao);
+      console.log(`[PROCESSAR] UUID Procuração salvo no card: ${uuidProcuracao}`);
     } catch (e) { console.error('Erro procuração:', e.message); }
   }
 
