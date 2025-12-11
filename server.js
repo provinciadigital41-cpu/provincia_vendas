@@ -993,7 +993,8 @@ async function montarDados(card) {
   const emailCotitularEnvio = by['copy_of_email_para_envio_de_contrato'] || by['copy_of_email_para_envio_do_contrato'] || '';
   const telefoneCotitularEnvio = by['copy_of_telefone_para_envio_do_contrato'] || '';
   // Telefone para envio do contrato (campo específico)
-  const telefoneEnvioContrato = by['telefone_para_envio_do_contrato'] || getFirstByNames(card, ['telefone para envio do contrato', 'telefone para envio']) || contatoTelefone || '';
+  // Telefone para envio do contrato (campo específico) - SEM FALLBACK
+  const telefoneEnvioContrato = by['telefone_para_envio_do_contrato'] || '';
 
   // Documento (CPF/CNPJ) principal
   const doc = pickDocumento(card);
@@ -2743,7 +2744,9 @@ app.post('/lead/:token/generate', async (req, res) => {
   h2{margin:0 0 12px}
   h3{margin:24px 0 8px;font-size:16px}
   .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
-  .btn{display:inline-block;padding:12px 16px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600}
+  .btn{display:inline-block;padding:12px 16px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600;cursor:pointer}
+  .btn-whatsapp{background:#25D366;color:#fff}
+  .btn-whatsapp:hover{background:#128C7E}
   .muted{color:#666}
   .section{margin-top:24px;padding-top:24px;border-top:1px solid #eee}
 </style>
@@ -2763,6 +2766,7 @@ app.post('/lead/:token/generate', async (req, res) => {
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
     <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
+    <button class="btn btn-whatsapp" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">Enviar por WhatsApp</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
@@ -2772,6 +2776,7 @@ app.post('/lead/:token/generate', async (req, res) => {
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
       <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
+      <button class="btn btn-whatsapp" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp">Enviar por WhatsApp</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
@@ -2783,15 +2788,17 @@ app.post('/lead/:token/generate', async (req, res) => {
 <script>
 async function enviarContrato(token, uuidDoc, canal) {
   const btnEmail = document.getElementById('btn-enviar-contrato-email');
+  const btnWhatsapp = document.getElementById('btn-enviar-contrato-whatsapp');
   const statusDiv = document.getElementById('status-contrato');
-  const btn = btnEmail;
+  
+  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
   
   btn.disabled = true;
   btn.textContent = 'Enviando...';
-  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando contrato por email...</span>';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando contrato por ' + canal + '...</span>';
   
   try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/send?canal=email', {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/send?canal=' + canal, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -2801,35 +2808,37 @@ async function enviarContrato(token, uuidDoc, canal) {
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
       const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
-      const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
+      const destinoMsg = data.email ? ' para ' + data.email + ' por ' + canal : ' por ' + canal;
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
-      btn.textContent = 'Enviado por Email';
+      btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
       btn.style.background = '#28a745';
       btn.disabled = true;
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Contrato: ' + errorMsg + '</span>';
       btn.disabled = false;
-      btn.textContent = 'Enviar por Email';
+      btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
     }
   } catch (error) {
     statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Contrato: Erro ao enviar - ' + error.message + '</span>';
     btn.disabled = false;
-    btn.textContent = 'Enviar por Email';
+    btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
   }
 }
 
 async function enviarProcuracao(token, uuidProcuracao, canal) {
   const btnEmail = document.getElementById('btn-enviar-procuracao-email');
+  const btnWhatsapp = document.getElementById('btn-enviar-procuracao-whatsapp');
   const statusDiv = document.getElementById('status-procuracao');
-  const btn = btnEmail;
+  
+  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
   
   btn.disabled = true;
   btn.textContent = 'Enviando...';
-  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração por email...</span>';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando procuração por ' + canal + '...</span>';
   
   try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send?canal=email&tipo=procuracao', {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidProcuracao) + '/send?canal=' + canal + '&tipo=procuracao', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
@@ -2839,21 +2848,21 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
       const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
-      const destinoMsg = data.email ? ' para ' + data.email + ' por email' : ' por email';
+      const destinoMsg = data.email ? ' para ' + data.email + ' por ' + canal : ' por ' + canal;
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
-      btn.textContent = 'Enviado por Email';
+      btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
       btn.style.background = '#28a745';
       btn.disabled = true;
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Procuração: ' + errorMsg + '</span>';
       btn.disabled = false;
-      btn.textContent = 'Enviar por Email';
+      btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
     }
   } catch (error) {
     statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Procuração: Erro ao enviar - ' + error.message + '</span>';
     btn.disabled = false;
-    btn.textContent = 'Enviar por Email';
+    btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
   }
 }
 </script>`;
