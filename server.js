@@ -2054,21 +2054,16 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
           // Remover todos os caracteres não numéricos exceto +
           phoneFormatted = phoneFormatted.replace(/[^\d+]/g, '');
 
-          // Se não começar com +, adicionar +55 (Brasil)
+          // Garantir formato +55...
           if (!phoneFormatted.startsWith('+')) {
-            // Se começar com 0, remover
-            if (phoneFormatted.startsWith('0')) {
-              phoneFormatted = phoneFormatted.substring(1);
-            }
-            // Adicionar código do país Brasil (+55)
-            phoneFormatted = '+55' + phoneFormatted;
+            phoneFormatted = '+55' + phoneFormatted.replace(/^55/, '');
           }
 
           signer.phone = phoneFormatted;
-          signer.whatsapp_number = phoneFormatted; // [FIX] Adicionado campo específico para WhatsApp
-          signer.send_whatsapp = '1';
+          signer.whatsapp_number = phoneFormatted;
+          signer.send_whatsapp = '1'; // String '1' conforme documentação
           signer.send_email = '0';
-          console.log(`[CADASTRO] Signatário ${s.name} configurado para WhatsApp: ${phoneFormatted} (email: ${s.email})`);
+          console.log(`[CADASTRO] Signatário ${s.name} configurado para WhatsApp: ${phoneFormatted}`);
         } else {
           // Se não tiver telefone mas for WhatsApp, manter como email para este signatário
           // (pode ser o signatário da empresa que não precisa de WhatsApp)
@@ -2500,6 +2495,13 @@ app.get('/lead/:token', async (req, res) => {
       <div><div class="label">Risco agregado</div><div>${d.risco_agregado || '-'}</div></div>
     </div>
 
+    <h2>Valores</h2>
+    <div class="grid3">
+      <div><div class="label">Valor Assessoria</div><div>${d.valor_total || '-'} (${d.parcelas || '1'}x)</div></div>
+      <div><div class="label">Valor Pesquisa</div><div>${d.valor_pesquisa || '-'}</div></div>
+      <div><div class="label">Valor Taxa</div><div>${d.valor_taxa_brl || '-'}</div></div>
+    </div>
+
     <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
       <button class="btn" type="submit">Gerar contrato</button>
     </form>
@@ -2811,8 +2813,19 @@ async function enviarContrato(token, uuidDoc, canal) {
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
       const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
-      const destinoMsg = data.email ? ' para ' + data.email + ' por ' + canal : ' por ' + canal;
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
+      
+      let destinoMsg = '';
+      if (canal === 'whatsapp' && data.telefones) {
+        destinoMsg = ' para: ' + data.telefones;
+      } else if (data.emails) {
+        destinoMsg = ' para: ' + data.emails;
+      } else if (data.email) {
+        destinoMsg = ' para ' + data.email;
+      }
+      
+      const avisoMsg = '<br><br><div style="margin-top:12px;padding:12px;background:#fff3cd;border-radius:8px;border-left:4px solid #ffc107;color:#856404;font-size:14px;"><strong>⚠️ Importante:</strong> Caso o email ou whatsapp não cheguem para assinatura, é necessário abrir o D4Sign (link acima) e clicar em "Enviar novamente".</div>';
+
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg + avisoMsg;
       btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
       btn.style.background = '#28a745';
       btn.disabled = true;
@@ -2851,8 +2864,19 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
       const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
-      const destinoMsg = data.email ? ' para ' + data.email + ' por ' + canal : ' por ' + canal;
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg;
+      
+      let destinoMsg = '';
+      if (canal === 'whatsapp' && data.telefones) {
+        destinoMsg = ' para: ' + data.telefones;
+      } else if (data.emails) {
+        destinoMsg = ' para: ' + data.emails;
+      } else if (data.email) {
+        destinoMsg = ' para ' + data.email;
+      }
+
+      const avisoMsg = '<br><br><div style="margin-top:12px;padding:12px;background:#fff3cd;border-radius:8px;border-left:4px solid #ffc107;color:#856404;font-size:14px;"><strong>⚠️ Importante:</strong> Caso o email ou whatsapp não cheguem para assinatura, é necessário abrir o D4Sign (link acima) e clicar em "Enviar novamente".</div>';
+
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg + avisoMsg;
       btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
       btn.style.background = '#28a745';
       btn.disabled = true;
@@ -3185,7 +3209,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     const urlCofre = 'https://secure.d4sign.com.br/desk';
 
     // Liberar lock após envio bem-sucedido
+    // Liberar lock após envio bem-sucedido
     releaseLock(lockKey);
+
+    // Preparar listas de emails e telefones enviados
+    const emailsEnviados = signers ? signers.map(s => s.email).filter(Boolean) : [];
+    const telefonesEnviados = signers ? signers.map(s => s.phone).filter(Boolean) : [];
 
     return res.status(200).json({
       success: true,
@@ -3193,8 +3222,10 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       tipo: isProcuracao ? 'procuração' : 'contrato',
       cofre: nomeCofre,
       urlCofre: urlCofre,
-      email: emailUsado,
-      telefone: telefoneUsado
+      email: emailsEnviados.join(', '), // Mantendo compatibilidade com string, mas agora lista
+      telefone: telefonesEnviados.join(', '), // Mantendo compatibilidade
+      emails: emailsEnviados,
+      telefones: telefonesEnviados
     });
 
   } catch (e) {
