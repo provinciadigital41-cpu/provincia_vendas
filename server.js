@@ -1888,7 +1888,8 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
 function montarSigners(d, incluirTelefone = false) {
   const list = [];
   const emailPrincipal = d.email_envio_contrato || d.email || '';
-  const telefonePrincipal = d.telefone_envio_contrato || d.telefone || '';
+  // [MODIFICADO] Sem fallback para telefone genérico, conforme solicitado
+  const telefonePrincipal = d.telefone_envio_contrato || '';
 
   if (emailPrincipal) {
     const signer = {
@@ -2064,6 +2065,7 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
           }
 
           signer.phone = phoneFormatted;
+          signer.whatsapp_number = phoneFormatted; // [FIX] Adicionado campo específico para WhatsApp
           signer.send_whatsapp = '1';
           signer.send_email = '0';
           console.log(`[CADASTRO] Signatário ${s.name} configurado para WhatsApp: ${phoneFormatted} (email: ${s.email})`);
@@ -2121,6 +2123,7 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
     throw erro;
   }
 
+  console.log('[CADASTRO] Sucesso D4Sign:', text);
   return text;
 }
 async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', language = 'pt' } = {}) {
@@ -3011,9 +3014,10 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 
       // Validar se tem email/telefone conforme o canal
       if (canal === 'whatsapp') {
-        const telefoneEnvio = d.telefone_envio_contrato || d.telefone || '';
+        // [MODIFICADO] Validação estrita do campo específico
+        const telefoneEnvio = d.telefone_envio_contrato || '';
         if (!telefoneEnvio) {
-          throw new Error('Telefone para envio do contrato não encontrado. Verifique o campo "Telefone para envio do contrato" no card do Pipefy.');
+          throw new Error('Telefone para envio do contrato não encontrado. Verifique se o campo "Telefone para envio do contrato" está preenchido no Pipefy.');
         }
         signers = montarSigners(d, true); // incluir telefone
         console.log(`[SEND] Signatários preparados para WhatsApp:`, signers.map(s => ({
@@ -3054,9 +3058,10 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 
         // Validar novamente conforme o canal
         if (canal === 'whatsapp') {
-          const telefoneEnvio = d.telefone_envio_contrato || d.telefone || '';
+          // [MODIFICADO] Validação estrita
+          const telefoneEnvio = d.telefone_envio_contrato || '';
           if (!telefoneEnvio) {
-            throw new Error('Telefone para envio do contrato não encontrado. Verifique o campo "Telefone para envio do contrato" no card do Pipefy.');
+            throw new Error('Telefone para envio do contrato não encontrado. Verifique se o campo "Telefone para envio do contrato" está preenchido no Pipefy.');
           }
           signers = montarSigners(d, true);
         } else {
