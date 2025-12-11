@@ -2752,6 +2752,8 @@ app.post('/lead/:token/generate', async (req, res) => {
   .btn{display:inline-block;padding:12px 16px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600;cursor:pointer}
   .btn-whatsapp{background:#25D366;color:#fff}
   .btn-whatsapp:hover{background:#128C7E}
+  .btn-email{background:#1976d2;color:#fff}
+  .btn-email:hover{background:#1565c0}
   .muted{color:#666}
   .section{margin-top:24px;padding-top:24px;border-top:1px solid #eee}
 </style>
@@ -2766,21 +2768,19 @@ app.post('/lead/:token/generate', async (req, res) => {
   <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
     <div style="margin-bottom:8px"><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
     ${d.email_cotitular_envio ? `<div><strong>Email do Cotitular:</strong> ${d.email_cotitular_envio}</div>` : ''}
-    <div style="margin-top:12px;color:#28a745;font-weight:600">✓ Contrato enviado automaticamente. Caso precise reenviar:</div>
   </div>
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
-    <button class="btn" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
+    <button class="btn btn-email" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
     <button class="btn btn-whatsapp" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">Enviar por WhatsApp</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
   <div class="section">
     <h3>Procuração gerada com sucesso</h3>
-    <div style="margin-bottom:12px;color:#28a745;font-weight:600">✓ Procuração enviada automaticamente. Caso precise reenviar:</div>
     <div class="row">
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
-      <button class="btn" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
+      <button class="btn btn-email" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
       <button class="btn btn-whatsapp" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp">Enviar por WhatsApp</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
@@ -2812,7 +2812,7 @@ async function enviarContrato(token, uuidDoc, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
+      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do D4 para reenviar ou alterar os signatarios:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
       
       let destinoMsg = '';
       if (canal === 'whatsapp' && data.telefones) {
@@ -2827,7 +2827,7 @@ async function enviarContrato(token, uuidDoc, canal) {
 
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Contrato: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg + avisoMsg;
       btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
-      btn.style.background = '#28a745';
+      btn.style.background = '#6c757d'; // Cinza
       btn.disabled = true;
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
@@ -2863,7 +2863,7 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
     
     if (response.ok && data.success) {
       const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link D4 para adicionar novos signatários ou enviar por whatsapp:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
+      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do D4 para reenviar ou alterar os signatarios:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
       
       let destinoMsg = '';
       if (canal === 'whatsapp' && data.telefones) {
@@ -2878,7 +2878,7 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
 
       statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Procuração: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg + avisoMsg;
       btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
-      btn.style.background = '#28a745';
+      btn.style.background = '#6c757d'; // Cinza
       btn.disabled = true;
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
