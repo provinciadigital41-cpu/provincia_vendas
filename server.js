@@ -1389,6 +1389,7 @@ async function montarDados(card) {
   // TAXA
   // [MODIFICADO] Agora usa o campo 'valor_total_da_taxa' diretamente
   const valorTaxaRaw = by['valor_total_da_taxa'] || getFirstByNames(card, ['valor_total_da_taxa']) || '';
+  const taxaFaixaRaw = valorTaxaRaw; // Definindo alias para compatibilidade
   const valorTaxaBRL = valorTaxaRaw; // Assumindo que já vem formatado ou tratado depois
   const formaPagtoTaxa = by['tipo_de_pagamento'] || '';
 
