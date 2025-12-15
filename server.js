@@ -1979,7 +1979,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'Número do contrato do bloco físico': cardIdStr,
     'Numero do contrato do bloco fisico': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
-    'Contratante 2': d.contratante_2_texto || '',
+    'Contratante 2': (d.contratante_2_texto || '') + (d.contratante_3_texto ? '\n\n' + d.contratante_3_texto : ''),
     'Contratante 3': d.contratante_3_texto || '', // [NOVO]
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
@@ -2117,7 +2117,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'Número do contrato do bloco físico': cardIdStr,
     'Numero do contrato do bloco fisico': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
-    'Contratante 2': d.contratante_2_texto || '',
+    'Contratante 2': (d.contratante_2_texto || '') + (d.contratante_3_texto ? '\n\n' + d.contratante_3_texto : ''),
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
     'CNPJ': d.cnpj_campo || '',
