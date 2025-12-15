@@ -493,6 +493,62 @@ async function reenviarProcuracao(token, uuidDoc) {
     btn.disabled = false;
   }
 }
+
+async function reenviarContrato(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-contrato');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      alert('Sucesso: ' + data.message);
+    } else {
+      alert('Erro: ' + (data.message || 'Falha ao reenviar'));
+    }
+  } catch (e) {
+    alert('Erro ao reenviar: ' + e.message);
+  } finally {
+    btn.textContent = originalText;
+    if (!originalText.includes('s)')) {
+        btn.disabled = false;
+    }
+  }
+}
+
+async function reenviarProcuracao(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-procuracao');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      alert('Sucesso: ' + data.message);
+    } else {
+      alert('Erro: ' + (data.message || 'Falha ao reenviar'));
+    }
+  } catch (e) {
+    alert('Erro ao reenviar: ' + e.message);
+  } finally {
+    btn.textContent = originalText;
+    if (!originalText.includes('s)')) {
+        btn.disabled = false;
+    }
+  }
+}
 </script>
     </body>
     </html>
@@ -949,8 +1005,8 @@ async function updateCardField(cardId, fieldId, newValue) {
 
 async function createCardComment(cardId, comment) {
   try {
-    const data = await gql(`mutation($input: CreateCardCommentInput!){
-      createCardComment(input:$input){
+    const data = await gql(`mutation($input: CreateCommentInput!){
+      createComment(input:$input){
         comment{
           id
           text
@@ -962,7 +1018,7 @@ async function createCardComment(cardId, comment) {
         text: comment
       }
     });
-    return data?.createCardComment?.comment;
+    return data?.createComment?.comment;
   } catch (e) {
     console.error('[ERRO createCardComment]', e.message || e);
     throw e;
