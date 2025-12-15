@@ -208,7 +208,292 @@ app.get('/', (req, res) => {
             btn.innerText = '📥 Baixar e Anexar Documentos';
           }
         }
-      </script>
+        }
+}
+
+async function reenviarContrato(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-contrato');
+  const statusDiv = document.getElementById('status-contrato');
+  
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
+      
+      // Reiniciar timer de 60s
+      let timeLeft = 60;
+      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+      btn.style.background = '#6c757d';
+      
+      const timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          btn.textContent = 'Reenviar Link';
+          btn.disabled = false;
+          btn.style.background = '#111';
+        } else {
+          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        }
+      }, 1000);
+      
+    } else {
+      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
+      btn.textContent = 'Reenviar Link';
+      btn.disabled = false;
+    }
+  } catch (error) {
+    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
+    btn.textContent = 'Reenviar Link';
+    btn.disabled = false;
+  }
+}
+
+async function reenviarProcuracao(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-procuracao');
+  const statusDiv = document.getElementById('status-procuracao');
+  
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
+      
+      // Reiniciar timer de 60s
+      let timeLeft = 60;
+      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+      btn.style.background = '#6c757d';
+      
+      const timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          btn.textContent = 'Reenviar Link';
+          btn.disabled = false;
+          btn.style.background = '#111';
+        } else {
+          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        }
+      }, 1000);
+      
+    } else {
+      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
+      btn.textContent = 'Reenviar Link';
+      btn.disabled = false;
+    }
+  } catch (error) {
+    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
+    btn.textContent = 'Reenviar Link';
+    btn.disabled = false;
+  }
+}
+  }
+}
+
+async function reenviarContrato(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-contrato');
+  const statusDiv = document.getElementById('status-contrato');
+  
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
+      
+      // Reiniciar timer de 60s
+      let timeLeft = 60;
+      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+      btn.style.background = '#6c757d';
+      
+      const timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          btn.textContent = 'Reenviar Link';
+          btn.disabled = false;
+          btn.style.background = '#111';
+        } else {
+          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        }
+      }, 1000);
+      
+    } else {
+      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
+      btn.textContent = 'Reenviar Link';
+      btn.disabled = false;
+    }
+  } catch (error) {
+    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
+    btn.textContent = 'Reenviar Link';
+    btn.disabled = false;
+  }
+}
+
+async function reenviarProcuracao(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-procuracao');
+  const statusDiv = document.getElementById('status-procuracao');
+  
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
+      
+      // Reiniciar timer de 60s
+      let timeLeft = 60;
+      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+      btn.style.background = '#6c757d';
+      
+      const timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          btn.textContent = 'Reenviar Link';
+          btn.disabled = false;
+          btn.style.background = '#111';
+        } else {
+          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        }
+      }, 1000);
+      
+    } else {
+      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
+      btn.textContent = 'Reenviar Link';
+      btn.disabled = false;
+    }
+  } catch (error) {
+    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
+    btn.textContent = 'Reenviar Link';
+    btn.disabled = false;
+  }
+}
+async function reenviarContrato(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-contrato');
+  const statusDiv = document.getElementById('status-contrato');
+  
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
+      
+      // Reiniciar timer de 60s
+      let timeLeft = 60;
+      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+      btn.style.background = '#6c757d';
+      
+      const timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          btn.textContent = 'Reenviar Link';
+          btn.disabled = false;
+          btn.style.background = '#111';
+        } else {
+          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        }
+      }, 1000);
+      
+    } else {
+      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
+      btn.textContent = 'Reenviar Link';
+      btn.disabled = false;
+    }
+  } catch (error) {
+    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
+    btn.textContent = 'Reenviar Link';
+    btn.disabled = false;
+  }
+}
+
+async function reenviarProcuracao(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-procuracao');
+  const statusDiv = document.getElementById('status-procuracao');
+  
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+  
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    const data = await response.json();
+    
+    if (response.ok && data.success) {
+      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
+      
+      // Reiniciar timer de 60s
+      let timeLeft = 60;
+      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+      btn.style.background = '#6c757d';
+      
+      const timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          btn.textContent = 'Reenviar Link';
+          btn.disabled = false;
+          btn.style.background = '#111';
+        } else {
+          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        }
+      }, 1000);
+      
+    } else {
+      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
+      btn.textContent = 'Reenviar Link';
+      btn.disabled = false;
+    }
+  } catch (error) {
+    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
+    btn.textContent = 'Reenviar Link';
+    btn.disabled = false;
+  }
+}
+</script>
     </body>
     </html>
   `);
@@ -996,6 +1281,24 @@ async function montarDados(card) {
   // Telefone para envio do contrato (campo específico) - SEM FALLBACK
   const telefoneEnvioContrato = by['telefone_para_envio_do_contrato'] || '';
 
+  // [NOVO] Campos de COTITULAR 3 (Novo Cotitular)
+  const cot3_nome = by['raz_o_social_ou_nome_completo_cotitular_2'] || '';
+  const cot3_nacionalidade = by['nacionalidade_cotitular_2'] || '';
+  const cot3_estado_civil = by['estado_civil_cotitular_3'] || '';
+  const cot3_rua = by['rua_av_do_cnpj_cotitular_2'] || '';
+  const cot3_bairro = by['bairro_cotitular_2'] || '';
+  const cot3_cidade = by['cidade_cotitular_2'] || '';
+  const cot3_uf = by['estado_cotitular_2'] || '';
+  const cot3_numero = ''; // não informado
+  const cot3_cep = '';    // não informado
+  const cot3_rg = by['rg_cotitular_3'] || '';
+  const cot3_cpf = by['cpf_cotitular_3'] || '';
+  const cot3_cnpj = by['cnpj_cotitular_3'] || '';
+  const cot3_docSelecao = cot3_cpf ? 'CPF' : (cot3_cnpj ? 'CNPJ' : '');
+
+  const emailCotitular3Envio = by['email_2'] || '';
+  const telefoneCotitular3Envio = by['telefone_2'] || '';
+
   // Documento (CPF/CNPJ) principal
   const doc = pickDocumento(card);
   let cpfDoc = doc.tipo === 'CPF' ? doc.valor : '';
@@ -1028,8 +1331,9 @@ async function montarDados(card) {
   const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
 
   // TAXA
-  const taxaFaixaRaw = by['taxa'] || getFirstByNames(card, ['taxa']);
-  const valorTaxaBRL = computeValorTaxaBRLFromFaixa({ taxa_faixa: taxaFaixaRaw });
+  // [MODIFICADO] Agora usa o campo 'valor_total_da_taxa' diretamente
+  const valorTaxaRaw = by['valor_total_da_taxa'] || getFirstByNames(card, ['valor_total_da_taxa']) || '';
+  const valorTaxaBRL = valorTaxaRaw; // Assumindo que já vem formatado ou tratado depois
   const formaPagtoTaxa = by['tipo_de_pagamento'] || '';
 
   // PESQUISA - Tipo de pagamento e data
@@ -1219,6 +1523,32 @@ async function montarDados(card) {
     })
     : '';
 
+  // Detecta se há cotitular 3
+  const hasCotitular3 = Boolean(
+    cot3_nome || cot3_cpf || cot3_cnpj || emailCotitular3Envio || telefoneCotitular3Envio
+  );
+
+  // Contratante 3
+  const contratante3Texto = hasCotitular3
+    ? montarTextoContratante({
+      nome: cot3_nome || 'Cotitular 3',
+      nacionalidade: cot3_nacionalidade || '',
+      estadoCivil: cot3_estado_civil || '',
+      rua: cot3_rua || ruaCnpj,
+      bairro: cot3_bairro || bairroCnpj,
+      numero: cot3_numero || '',
+      cidade: cot3_cidade || cidadeCnpj,
+      uf: cot3_uf || ufCnpj,
+      cep: cot3_cep || '',
+      rg: cot3_rg || '',
+      docSelecao: cot3_docSelecao,
+      cpf: cot3_cpf || '',
+      cnpj: cot3_cnpj || '',
+      telefone: telefoneCotitular3Envio,
+      email: emailCotitular3Envio
+    })
+    : '';
+
   // Dados para contato 1 e 2
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
   const dadosContato2 = hasCotitular
@@ -1323,14 +1653,17 @@ async function montarDados(card) {
     // Textos completos dos contratantes
     contratante_1_texto: contratante1Texto,
     contratante_2_texto: contratante2Texto,
+    contratante_3_texto: contratante3Texto, // [NOVO]
 
     // Email para assinatura
     email_envio_contrato: emailEnvioContrato,
     email_cotitular_envio: emailCotitularEnvio,
+    email_cotitular_3_envio: emailCotitular3Envio, // [NOVO]
 
     // Telefone para envio
     telefone_envio_contrato: telefoneEnvioContrato,
     telefone_cotitular_envio: telefoneCotitularEnvio,
+    telefone_cotitular_3_envio: telefoneCotitular3Envio, // [NOVO]
 
     // MARCA 1..5: linhas e cabeçalhos do formulário
     cabecalho_servicos_1: headersServicos.h1,
@@ -1590,6 +1923,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'Numero do contrato do bloco fisico': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
+    'Contratante 3': d.contratante_3_texto || '', // [NOVO]
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
     'CNPJ': d.cnpj_campo || '',
@@ -1943,6 +2277,33 @@ function montarSigners(d, incluirTelefone = false) {
     list.push(signer);
   }
 
+  // [NOVO] Cotitular 3
+  if (d.email_cotitular_3_envio) {
+    const signer = {
+      email: d.email_cotitular_3_envio,
+      name: 'Cotitular 3',
+      act: '1',
+      foreign: '0',
+      send_email: '1'
+    };
+    if (incluirTelefone && d.telefone_cotitular_3_envio) {
+      // Formatar telefone para formato internacional (+55...)
+      let phone = d.telefone_cotitular_3_envio.replace(/[^\d+]/g, '');
+      // Se não começar com +, adicionar +55 (Brasil)
+      if (!phone.startsWith('+')) {
+        // Se começar com 0, remover
+        if (phone.startsWith('0')) {
+          phone = phone.substring(1);
+        }
+        // Adicionar código do país Brasil (+55)
+        phone = '+55' + phone;
+      }
+      signer.phone = phone;
+      console.log(`[SIGNERS] Telefone preparado para ${signer.name}: ${signer.phone}`);
+    }
+    list.push(signer);
+  }
+
   if (EMAIL_ASSINATURA_EMPRESA) {
     list.push({
       email: EMAIL_ASSINATURA_EMPRESA,
@@ -2119,6 +2480,45 @@ async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, u
   }
 
   console.log('[CADASTRO] Sucesso D4Sign:', text);
+  return text;
+}
+
+async function listSigners(tokenAPI, cryptKey, uuidDocument) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidDocument}/list`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+
+  const res = await fetchWithRetry(url.toString(), { method: 'GET' }, { attempts: 3 });
+  if (!res.ok) {
+    throw new Error(`Falha ao listar signatários: ${res.status} - ${await res.text()}`);
+  }
+  const data = await res.json();
+  return data; // Retorna array de signatários ou objeto com propriedade list/message
+}
+
+async function resendToSigner(tokenAPI, cryptKey, uuidDocument, email, keySigner) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidDocument}/resend`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+
+  const body = {
+    email: email,
+    key_signer: keySigner
+  };
+
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 1 }); // Sem retry automático para evitar spam/bloqueio
+
+  const text = await res.text();
+  if (!res.ok) {
+    // Se for erro de tempo (429 ou mensagem específica), vamos repassar
+    throw new Error(`Falha ao reenviar: ${res.status} - ${text}`);
+  }
   return text;
 }
 async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', language = 'pt' } = {}) {
@@ -2478,14 +2878,19 @@ app.get('/lead/:token', async (req, res) => {
     <div class="grid">
       <div><div class="label">Contratante 1</div><div>${d.contratante_1_texto || '-'}</div></div>
       <div><div class="label">Contratante 2</div><div>${d.contratante_2_texto || '-'}</div></div>
+      <div><div class="label">Contratante 3</div><div>${d.contratante_3_texto || '-'}</div></div>
     </div>
 
     <h2>Contato</h2>
     <div class="grid">
       <div><div class="label">Dados para contato 1</div><div>${d.dados_contato_1 || '-'}</div></div>
       <div><div class="label">Dados para contato 2</div><div>${d.dados_contato_2 || '-'}</div></div>
-      <div><div class="label">Email do Titular</div><div>${d.email_envio_contrato || '-'}</div></div>
-      <div><div class="label">Email do Cotitular</div><div>${d.email_cotitular_envio || '-'}</div></div>
+      <div><div class="label">Email Envio (Titular)</div><div>${d.email_envio_contrato || '-'}</div></div>
+      <div><div class="label">Telefone Envio (Titular)</div><div>${d.telefone_envio_contrato || '-'}</div></div>
+      <div><div class="label">Email Envio (Cotitular)</div><div>${d.email_cotitular_envio || '-'}</div></div>
+      <div><div class="label">Telefone Envio (Cotitular)</div><div>${d.telefone_cotitular_envio || '-'}</div></div>
+      <div><div class="label">Email Envio (Cotitular 3)</div><div>${d.email_cotitular_3_envio || '-'}</div></div>
+      <div><div class="label">Telefone Envio (Cotitular 3)</div><div>${d.telefone_cotitular_3_envio || '-'}</div></div>
     </div>
 
     <h2>Serviços</h2>
@@ -2773,6 +3178,7 @@ app.post('/lead/:token/generate', async (req, res) => {
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
     <button class="btn btn-email" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
     <button class="btn btn-whatsapp" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">Enviar por WhatsApp</button>
+    <button class="btn" onclick="reenviarContrato('${token}', '${uuidDoc}')" id="btn-reenviar-contrato" style="display:none; margin-left:12px; background:#6c757d" disabled>Reenviar Link (60s)</button>
   </div>
   <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
   ${uuidProcuracao ? `
@@ -2782,6 +3188,7 @@ app.post('/lead/:token/generate', async (req, res) => {
       <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
       <button class="btn btn-email" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
       <button class="btn btn-whatsapp" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp">Enviar por WhatsApp</button>
+      <button class="btn" onclick="reenviarProcuracao('${token}', '${uuidProcuracao}')" id="btn-reenviar-procuracao" style="display:none; margin-left:12px; background:#6c757d" disabled>Reenviar Link (60s)</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
   </div>
@@ -2829,6 +3236,27 @@ async function enviarContrato(token, uuidDoc, canal) {
       btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
       btn.style.background = '#6c757d'; // Cinza
       btn.disabled = true;
+
+      // Ativar botão de reenvio com timer
+      const btnReenviar = document.getElementById('btn-reenviar-contrato');
+      if (btnReenviar) {
+        btnReenviar.style.display = 'inline-block';
+        let timeLeft = 60;
+        btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        btnReenviar.disabled = true;
+        
+        const timerId = setInterval(() => {
+          timeLeft--;
+          if (timeLeft <= 0) {
+            clearInterval(timerId);
+            btnReenviar.textContent = 'Reenviar Link';
+            btnReenviar.disabled = false;
+            btnReenviar.style.background = '#111'; // Cor padrão (preto) ou outra cor de destaque
+          } else {
+            btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
+          }
+        }, 1000);
+      }
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Contrato: ' + errorMsg + '</span>';
@@ -2880,6 +3308,27 @@ async function enviarProcuracao(token, uuidProcuracao, canal) {
       btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
       btn.style.background = '#6c757d'; // Cinza
       btn.disabled = true;
+
+      // Ativar botão de reenvio com timer
+      const btnReenviar = document.getElementById('btn-reenviar-procuracao');
+      if (btnReenviar) {
+        btnReenviar.style.display = 'inline-block';
+        let timeLeft = 60;
+        btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        btnReenviar.disabled = true;
+        
+        const timerId = setInterval(() => {
+          timeLeft--;
+          if (timeLeft <= 0) {
+            clearInterval(timerId);
+            btnReenviar.textContent = 'Reenviar Link';
+            btnReenviar.disabled = false;
+            btnReenviar.style.background = '#111';
+          } else {
+            btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
+          }
+        }, 1000);
+      }
     } else {
       const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
       statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Procuração: ' + errorMsg + '</span>';
@@ -3300,6 +3749,58 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       detalhes: detalhesAdicionais || '',
       titulo: tituloErro
     });
+  }
+});
+
+app.post('/lead/:token/doc/:uuid/resend', async (req, res) => {
+  const { cardId } = parseLeadToken(req.params.token);
+  if (!cardId) {
+    return res.status(400).json({ success: false, message: 'Token inválido' });
+  }
+  const uuidDoc = req.params.uuid;
+
+  try {
+    // 1. Listar signatários para obter key_signer
+    const signersData = await listSigners(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
+    // A resposta pode ser um array direto ou um objeto { message: '...', list: [...] }
+    const signersList = Array.isArray(signersData) ? signersData : (signersData.list || []);
+
+    if (!signersList || signersList.length === 0) {
+      return res.status(404).json({ success: false, message: 'Nenhum signatário encontrado para este documento.' });
+    }
+
+    const resultados = [];
+    let errors = 0;
+
+    // 2. Reenviar para cada signatário
+    for (const signer of signersList) {
+      // Ignorar signatários que já assinaram (status 2 = assinado, 1 = pendente?)
+      // Na dúvida, reenviamos para todos que têm key_signer
+      if (!signer.key_signer) continue;
+
+      try {
+        await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signer.email, signer.key_signer);
+        resultados.push({ email: signer.email, status: 'enviado' });
+      } catch (e) {
+        console.error(`[RESEND] Erro ao reenviar para ${signer.email}:`, e.message);
+        resultados.push({ email: signer.email, status: 'erro', error: e.message });
+        errors++;
+      }
+    }
+
+    if (errors === signersList.length) {
+      return res.status(500).json({ success: false, message: 'Falha ao reenviar para todos os signatários.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Reenvio solicitado com sucesso.',
+      detalhes: resultados
+    });
+
+  } catch (e) {
+    console.error('[ERRO RESEND]', e.message);
+    return res.status(500).json({ success: false, message: 'Erro ao processar reenvio: ' + e.message });
   }
 });
 // ===============================
