@@ -2974,7 +2974,7 @@ app.get('/lead/:token', async (req, res) => {
     return res.status(200).send(html);
   } catch (e) {
     console.error('[ERRO /lead]', e.message || e);
-    return res.status(400).send('Link inválido ou expirado.');
+    return res.status(400).send('Link inválido ou expirado. Erro: ' + (e.message || String(e)));
   }
 });
 
