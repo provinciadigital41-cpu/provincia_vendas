@@ -1911,29 +1911,29 @@ function montarTextoContratante(info = {}) {
   }
 
   // ===============================
-  // CPF (ou genérico) → mantém lógica original (Brasileiro, Casado, empresário(a), ...)
+  // CPF (ou genérico) → UPPERCASE para padronizar com CNPJ
   // ===============================
   const partes = [];
   const identidade = [];
 
-  if (nome) identidade.push(nome);
-  if (nacionalidade) identidade.push(nacionalidade);
-  if (estadoCivil) identidade.push(estadoCivil);
-  if (identidade.length) identidade.push('empresário(a)');
+  if (nome) identidade.push(nome.toUpperCase());
+  if (nacionalidade) identidade.push(nacionalidade.toUpperCase());
+  if (estadoCivil) identidade.push(estadoCivil.toUpperCase());
+  if (identidade.length) identidade.push('EMPRESÁRIO(A)');
   if (identidade.length) partes.push(identidade.join(', '));
 
-  if (enderecoStr) partes.push(`residente na ${enderecoStr}`);
+  if (enderecoStr) partes.push(`RESIDENTE NA ${enderecoStr.toUpperCase()}`);
 
   const documentos = [];
-  if (rg) documentos.push(`portador(a) da cédula de identidade RG de nº ${rg}`);
+  if (rg) documentos.push(`PORTADOR(A) DA CÉDULA DE IDENTIDADE RG DE Nº ${rg.toUpperCase()}`);
 
-  // Preferência: se tiver CPF com 11 dígitos, usa "portador(a) do CPF nº ..."
+  // Preferência: se tiver CPF com 11 dígitos, usa "PORTADOR(A) DO CPF Nº ..."
   if (isCpf && cpfDigits) {
     const cpfFmt = cpfDigits.replace(
       /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
       '$1.$2.$3-$4'
     );
-    documentos.push(`portador(a) do CPF nº ${cpfFmt}`);
+    documentos.push(`PORTADOR(A) DO CPF Nº ${cpfFmt}`);
   } else {
     const docUpper = String(docSelecao || '').trim().toUpperCase();
     const docNums = [];
@@ -1941,10 +1941,10 @@ function montarTextoContratante(info = {}) {
     if (cnpj && !isCnpj) docNums.push({ tipo: 'CNPJ', valor: cnpj });
 
     if (docUpper && docNums.length) {
-      documentos.push(`devidamente inscrito no ${docUpper} sob o nº ${docNums[0].valor}`);
+      documentos.push(`DEVIDAMENTE INSCRITO NO ${docUpper} SOB O Nº ${docNums[0].valor}`);
     } else {
       for (const doc of docNums) {
-        documentos.push(`devidamente inscrito no ${doc.tipo} sob o nº ${doc.valor}`);
+        documentos.push(`DEVIDAMENTE INSCRITO NO ${doc.tipo} SOB O Nº ${doc.valor}`);
       }
     }
   }
@@ -1952,9 +1952,9 @@ function montarTextoContratante(info = {}) {
   if (documentos.length) partes.push(documentos.join(', '));
 
   const contatoPartes = [];
-  if (telefone) contatoPartes.push(`com telefone de nº ${telefone}`);
-  if (email) contatoPartes.push(`com o seguinte endereço eletrônico: ${email}`);
-  if (contatoPartes.length) partes.push(contatoPartes.join(' e '));
+  if (telefone) contatoPartes.push(`COM TELEFONE DE Nº ${telefone}`);
+  if (email) contatoPartes.push(`COM O SEGUINTE ENDEREÇO ELETRÔNICO: ${email.toUpperCase()}`);
+  if (contatoPartes.length) partes.push(contatoPartes.join(' E '));
 
   if (!partes.length) return '';
   const texto = partes.join(', ').replace(/\s+,/g, ',').trim();
