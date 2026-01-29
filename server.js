@@ -638,8 +638,8 @@ app.post('/manual-attach/:id', async (req, res) => {
         const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
 
         // Anexar no campo de anexo
-        console.log(`[MANUAL ATTACH] Anexando Contrato ao campo ${PIPEFY_FIELD_EXTRA_CONTRATO}...`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, pipefyUrl);
+        const attachmentValue = JSON.stringify([pipefyUrl]);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, attachmentValue);
 
         // Também salvar URL permanente no campo de texto (se existir)
         if (PIPEFY_FIELD_CONTRATO_ASSINADO_D4) {
@@ -668,8 +668,8 @@ app.post('/manual-attach/:id', async (req, res) => {
         const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
 
         // Anexar no campo de anexo
-        console.log(`[MANUAL ATTACH] Anexando Procuração ao campo ${PIPEFY_FIELD_EXTRA_PROCURACAO}...`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, pipefyUrl);
+        const attachmentValue = JSON.stringify([pipefyUrl]);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, attachmentValue);
 
         // Também salvar URL permanente no campo de texto (se existir)
         if (PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) {
@@ -2912,8 +2912,10 @@ app.post('/d4sign/postback', async (req, res) => {
           const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
           console.log(`[POSTBACK D4SIGN] Upload concluído. URL Pipefy: ${pipefyUrl}`);
 
-          // Atualizar campo de anexo - usar string (não array) para campos de anexo
-          await updateCardField(cardId, extraFieldId, pipefyUrl);
+          // Atualizar campo de anexo - Pipefy espera uma string JSON para campos de anexo
+          const attachmentValue = JSON.stringify([pipefyUrl]);
+          console.log(`[POSTBACK D4SIGN] Valor para campo de anexo: ${attachmentValue}`);
+          await updateCardField(cardId, extraFieldId, attachmentValue);
           console.log(`[POSTBACK D4SIGN] ✓ ${docType} anexado com sucesso no campo ${extraFieldId}`);
 
           // Também atualizar o campo de texto/link como backup (opcional)
