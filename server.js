@@ -639,11 +639,11 @@ app.post('/manual-attach/:id', async (req, res) => {
 
         // Anexar no campo de anexo
         console.log(`[MANUAL ATTACH] Anexando Contrato ao campo ${PIPEFY_FIELD_EXTRA_CONTRATO}...`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [pipefyUrl]);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, pipefyUrl);
 
         // Também salvar URL permanente no campo de texto (se existir)
         if (PIPEFY_FIELD_CONTRATO_ASSINADO_D4) {
-          await updateCardField(cardId, PIPEFY_FIELD_CONTRATO_ASSINADO_D4, [pipefyUrl]);
+          await updateCardField(cardId, PIPEFY_FIELD_CONTRATO_ASSINADO_D4, pipefyUrl);
           console.log(`[MANUAL ATTACH] URL permanente salva no campo ${PIPEFY_FIELD_CONTRATO_ASSINADO_D4}`);
         }
 
@@ -669,11 +669,11 @@ app.post('/manual-attach/:id', async (req, res) => {
 
         // Anexar no campo de anexo
         console.log(`[MANUAL ATTACH] Anexando Procuração ao campo ${PIPEFY_FIELD_EXTRA_PROCURACAO}...`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [pipefyUrl]);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, pipefyUrl);
 
         // Também salvar URL permanente no campo de texto (se existir)
         if (PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) {
-          await updateCardField(cardId, PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, [pipefyUrl]);
+          await updateCardField(cardId, PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, pipefyUrl);
           console.log(`[MANUAL ATTACH] URL permanente salva no campo ${PIPEFY_FIELD_PROCURACAO_ASSINADA_D4}`);
         }
 
@@ -2912,8 +2912,8 @@ app.post('/d4sign/postback', async (req, res) => {
           const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
           console.log(`[POSTBACK D4SIGN] Upload concluído. URL Pipefy: ${pipefyUrl}`);
 
-          // Atualizar campo de anexo - usar string direta para campos de anexo
-          await updateCardField(cardId, extraFieldId, [pipefyUrl]);
+          // Atualizar campo de anexo - usar string (não array) para campos de anexo
+          await updateCardField(cardId, extraFieldId, pipefyUrl);
           console.log(`[POSTBACK D4SIGN] ✓ ${docType} anexado com sucesso no campo ${extraFieldId}`);
 
           // Também atualizar o campo de texto/link como backup (opcional)
@@ -2923,7 +2923,7 @@ app.post('/d4sign/postback', async (req, res) => {
 
           if (textFieldId) {
             // Salvar a URL do Pipefy (que não expira) no campo de texto também
-            await updateCardField(cardId, textFieldId, [pipefyUrl]);
+            await updateCardField(cardId, textFieldId, pipefyUrl);
             console.log(`[POSTBACK D4SIGN] ✓ URL permanente salva no campo de texto ${textFieldId}`);
           }
         }
