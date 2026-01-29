@@ -637,15 +637,12 @@ app.post('/manual-attach/:id', async (req, res) => {
         console.log(`[MANUAL ATTACH] Fazendo upload do Contrato: ${fileName}...`);
         const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
 
-        // Anexar no campo de anexo
-        const attachmentValue = JSON.stringify([pipefyUrl]);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, attachmentValue);
+        // Anexar no campo de anexo - usar array com caminho relativo
+        console.log(`[MANUAL ATTACH] Caminho do anexo: ${pipefyUrl}`);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [pipefyUrl]);
+        console.log(`[MANUAL ATTACH] ✓ Contrato anexado no campo ${PIPEFY_FIELD_EXTRA_CONTRATO}`);
 
-        // Também salvar URL permanente no campo de texto (se existir)
-        if (PIPEFY_FIELD_CONTRATO_ASSINADO_D4) {
-          await updateCardField(cardId, PIPEFY_FIELD_CONTRATO_ASSINADO_D4, pipefyUrl);
-          console.log(`[MANUAL ATTACH] URL permanente salva no campo ${PIPEFY_FIELD_CONTRATO_ASSINADO_D4}`);
-        }
+
 
         results.push({ type: 'Contrato', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
       } catch (e) {
@@ -667,15 +664,12 @@ app.post('/manual-attach/:id', async (req, res) => {
         console.log(`[MANUAL ATTACH] Fazendo upload da Procuração: ${fileName}...`);
         const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
 
-        // Anexar no campo de anexo
-        const attachmentValue = JSON.stringify([pipefyUrl]);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, attachmentValue);
+        // Anexar no campo de anexo - usar array com caminho relativo
+        console.log(`[MANUAL ATTACH] Caminho do anexo: ${pipefyUrl}`);
+        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [pipefyUrl]);
+        console.log(`[MANUAL ATTACH] ✓ Procuração anexada no campo ${PIPEFY_FIELD_EXTRA_PROCURACAO}`);
 
-        // Também salvar URL permanente no campo de texto (se existir)
-        if (PIPEFY_FIELD_PROCURACAO_ASSINADA_D4) {
-          await updateCardField(cardId, PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, pipefyUrl);
-          console.log(`[MANUAL ATTACH] URL permanente salva no campo ${PIPEFY_FIELD_PROCURACAO_ASSINADA_D4}`);
-        }
+
 
         results.push({ type: 'Procuração', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
       } catch (e) {
@@ -2912,22 +2906,13 @@ app.post('/d4sign/postback', async (req, res) => {
           const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
           console.log(`[POSTBACK D4SIGN] Upload concluído. URL Pipefy: ${pipefyUrl}`);
 
-          // Atualizar campo de anexo - Pipefy espera uma string JSON para campos de anexo
-          const attachmentValue = JSON.stringify([pipefyUrl]);
-          console.log(`[POSTBACK D4SIGN] Valor para campo de anexo: ${attachmentValue}`);
-          await updateCardField(cardId, extraFieldId, attachmentValue);
+          // Atualizar campo de anexo - Pipefy espera array com caminho relativo do S3
+          console.log(`[POSTBACK D4SIGN] Caminho do anexo para Pipefy: ${pipefyUrl}`);
+          await updateCardField(cardId, extraFieldId, [pipefyUrl]);
           console.log(`[POSTBACK D4SIGN] ✓ ${docType} anexado com sucesso no campo ${extraFieldId}`);
 
-          // Também atualizar o campo de texto/link como backup (opcional)
-          const textFieldId = isProcuracaoFinal
-            ? PIPEFY_FIELD_PROCURACAO_ASSINADA_D4
-            : PIPEFY_FIELD_CONTRATO_ASSINADO_D4;
-
-          if (textFieldId) {
-            // Salvar a URL do Pipefy (que não expira) no campo de texto também
-            await updateCardField(cardId, textFieldId, pipefyUrl);
-            console.log(`[POSTBACK D4SIGN] ✓ URL permanente salva no campo de texto ${textFieldId}`);
-          }
+          // Nota: não salvamos no campo de texto porque retornamos apenas o caminho relativo do S3
+          // O arquivo está acessível pelo campo de anexo diretamente
         }
       }
     } catch (e) {
@@ -4370,7 +4355,7 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
     });
 
     const { url: uploadUrl, downloadUrl } = data.createPresignedUrl;
-    console.log(`[UPLOAD PIPEFY] URL de upload obtida. Enviando arquivo...`);
+    console.log(`[UPLOAD PIPEFY] URL de upload obtida: ${uploadUrl}`);
 
     // 3. Fazer upload para o S3 do Pipefy
     const uploadRes = await fetch(uploadUrl, {
@@ -4387,8 +4372,35 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
 
     console.log(`[UPLOAD PIPEFY] Upload concluído com sucesso.`);
 
-    // Retorna a URL pública/download que deve ser usada no campo de anexo
-    return downloadUrl;
+    // 4. Extrair o caminho relativo do S3 da URL presignada
+    // O Pipefy exige que campos de anexo usem apenas o caminho relativo, não a URL completa
+    // Formato esperado: orgs/{org-id}/uploads/{upload-id}/filename.pdf
+    // A URL presignada tem formato: https://...s3...amazonaws.com/orgs/.../uploads/.../file.pdf?...
+
+    let attachmentPath = '';
+    try {
+      // Tentar extrair o caminho da URL de upload
+      const urlObj = new URL(uploadUrl);
+      const pathname = urlObj.pathname; // Ex: /orgs/.../uploads/.../file.pdf
+      // Remover a barra inicial se houver
+      attachmentPath = pathname.startsWith('/') ? pathname.substring(1) : pathname;
+    } catch (parseErr) {
+      // Fallback: tentar extrair usando regex
+      const match = uploadUrl.match(/\/(orgs\/[^?]+)/);
+      if (match) {
+        attachmentPath = match[1];
+      }
+    }
+
+    if (!attachmentPath) {
+      throw new Error(`Não foi possível extrair o caminho do anexo da URL: ${uploadUrl}`);
+    }
+
+    console.log(`[UPLOAD PIPEFY] Caminho do anexo extraído: ${attachmentPath}`);
+    console.log(`[UPLOAD PIPEFY] Download URL (para referência): ${downloadUrl}`);
+
+    // Retorna o caminho relativo para usar no campo de anexo do Pipefy
+    return attachmentPath;
 
   } catch (e) {
     console.error('[UPLOAD PIPEFY ERROR]', e.message);
