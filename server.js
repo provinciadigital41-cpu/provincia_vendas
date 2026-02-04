@@ -7,6 +7,8 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const path = require('path');
+const fse = require('fs-extra');
 
 const app = express();
 app.use(express.json());
@@ -613,18 +615,11 @@ app.post('/manual-attach/:id', async (req, res) => {
 
     const card = await getCard(cardId);
     const byId = toById(card);
-    const orgId = card.pipe?.organization?.id;
-
-    if (!orgId) {
-      console.error(`[MANUAL ATTACH] Organization ID não encontrado`);
-      return res.status(400).json({ success: false, error: 'Organization ID não encontrado no card' });
-    }
 
     const uuidContrato = byId[PIPEFY_FIELD_D4_UUID_CONTRATO];
     const uuidProcuracao = byId[PIPEFY_FIELD_D4_UUID_PROCURACAO];
 
     const results = [];
-    const dataAtual = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
     // Processar Contrato
     if (uuidContrato) {
@@ -632,19 +627,25 @@ app.post('/manual-attach/:id', async (req, res) => {
         console.log(`[MANUAL ATTACH] Baixando Contrato ${uuidContrato}...`);
         const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidContrato, { type: 'PDF', language: 'pt' });
 
-        // Upload para Pipefy (anexo real, não link que expira)
-        const fileName = `Contrato_Assinado_${dataAtual}_${uuidContrato.slice(-8)}.pdf`;
-        console.log(`[MANUAL ATTACH] Fazendo upload do Contrato: ${fileName}...`);
-        const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
+        console.log(`[MANUAL ATTACH] Anexando Contrato ao campo ${PIPEFY_FIELD_CONTRATO_ASSINADO_D4}...`);
+        await updateCardField(cardId, PIPEFY_FIELD_CONTRATO_ASSINADO_D4, [info.url]);
 
-        // Anexar no campo de anexo - usar array com caminho relativo
-        console.log(`[MANUAL ATTACH] Caminho do anexo: ${pipefyUrl}`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [pipefyUrl]);
-        console.log(`[MANUAL ATTACH] ✓ Contrato anexado no campo ${PIPEFY_FIELD_EXTRA_CONTRATO}`);
+        console.log(`[MANUAL ATTACH] Anexando Contrato ao campo extra ${PIPEFY_FIELD_EXTRA_CONTRATO}...`);
+        // Upload para Pipefy
+        const orgId = card.pipe?.organization?.id;
+        if (orgId) {
+          const pipefyUrl = await uploadFileToPipefy(info.url, `Contrato_${uuidContrato}.pdf`, orgId);
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [pipefyUrl]);
+        } else {
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [info.url]);
+        }
 
+        // Salvamento local no servidor interno
+        const equipeContrato = getEquipeContratoFromCard(card);
+        const cofreName = equipeContrato || 'Contratos';
+        await saveDocumentLocally(info.url, info.name || `Contrato_${uuidContrato}`, cofreName);
 
-
-        results.push({ type: 'Contrato', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
+        results.push({ type: 'Contrato', status: 'Sucesso', details: 'Anexado' });
       } catch (e) {
         console.error(`[MANUAL ATTACH] Erro Contrato: ${e.message}`);
         results.push({ type: 'Contrato', status: 'Erro', details: e.message });
@@ -659,19 +660,25 @@ app.post('/manual-attach/:id', async (req, res) => {
         console.log(`[MANUAL ATTACH] Baixando Procuração ${uuidProcuracao}...`);
         const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, { type: 'PDF', language: 'pt' });
 
-        // Upload para Pipefy (anexo real, não link que expira)
-        const fileName = `Procuracao_Assinada_${dataAtual}_${uuidProcuracao.slice(-8)}.pdf`;
-        console.log(`[MANUAL ATTACH] Fazendo upload da Procuração: ${fileName}...`);
-        const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
+        console.log(`[MANUAL ATTACH] Anexando Procuração ao campo ${PIPEFY_FIELD_PROCURACAO_ASSINADA_D4}...`);
+        await updateCardField(cardId, PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, [info.url]);
 
-        // Anexar no campo de anexo - usar array com caminho relativo
-        console.log(`[MANUAL ATTACH] Caminho do anexo: ${pipefyUrl}`);
-        await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [pipefyUrl]);
-        console.log(`[MANUAL ATTACH] ✓ Procuração anexada no campo ${PIPEFY_FIELD_EXTRA_PROCURACAO}`);
+        console.log(`[MANUAL ATTACH] Anexando Procuração ao campo extra ${PIPEFY_FIELD_EXTRA_PROCURACAO}...`);
+        // Upload para Pipefy
+        const orgId = card.pipe?.organization?.id;
+        if (orgId) {
+          const pipefyUrl = await uploadFileToPipefy(info.url, `Procuracao_${uuidProcuracao}.pdf`, orgId);
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [pipefyUrl]);
+        } else {
+          await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [info.url]);
+        }
 
+        // Salvamento local no servidor interno
+        const equipeContrato = getEquipeContratoFromCard(card);
+        const cofreName = equipeContrato || 'Procuracoes';
+        await saveDocumentLocally(info.url, info.name || `Procuracao_${uuidProcuracao}`, cofreName);
 
-
-        results.push({ type: 'Procuração', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
+        results.push({ type: 'Procuração', status: 'Sucesso', details: 'Anexado' });
       } catch (e) {
         console.error(`[MANUAL ATTACH] Erro Procuração: ${e.message}`);
         results.push({ type: 'Procuração', status: 'Erro', details: e.message });
@@ -723,6 +730,16 @@ let {
   EMAIL_ASSINATURA_EMPRESA,
 
   // Cofres
+  COFRE_UUID_EDNA,
+  COFRE_UUID_GREYCE,
+  COFRE_UUID_MARIANA,
+  COFRE_UUID_VALDEIR,
+  COFRE_UUID_DEBORA,
+  COFRE_UUID_MAYKON,
+  COFRE_UUID_JEFERSON,
+  COFRE_UUID_RONALDO,
+  COFRE_UUID_BRENDA,
+  COFRE_UUID_MAURO,
   COFRE_UUID_REPRESENTANTESCLEISON,
   COFRE_UUID_FILIALSAOPAULO,
   COFRE_UUID_REPRESENTANTELUAN,
@@ -758,6 +775,10 @@ PIPEFY_FIELD_CONTRATO_ASSINADO_D4 = PIPEFY_FIELD_CONTRATO_ASSINADO_D4 || 'contra
 PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 = PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 || 'procura_o_assinada_d4';
 D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
 
+// Configuração para salvamento local no servidor interno
+const LOCAL_SAVE_ENABLED = process.env.LOCAL_SAVE_ENABLED === 'true';
+const LOCAL_SAVE_BASE_DIR = process.env.LOCAL_SAVE_BASE_DIR || '\\\\192.168.1.115\\publico$\\12345678';
+
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
 if (!D4SIGN_TOKEN || !D4SIGN_CRYPT_KEY) console.warn('[AVISO] D4SIGN_TOKEN / D4SIGN_CRYPT_KEY ausentes');
@@ -772,6 +793,16 @@ if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO au
 // Cofres mapeados por EQUIPE (campo "Equipe contrato" no Pipefy)
 // ⚠️ ATENÇÃO: as chaves DEVEM ser exatamente os valores de "Equipe contrato"
 const COFRES_UUIDS = {
+  'EDNA BERTO DA SILVA': COFRE_UUID_EDNA,
+  'Greyce Maria Candido Souza': COFRE_UUID_GREYCE,
+  'mariana cristina de oliveira': COFRE_UUID_MARIANA,
+  'Valdeir Almedia': COFRE_UUID_VALDEIR,
+  'Débora Gonçalves': COFRE_UUID_DEBORA,
+  'Maykon Campos': COFRE_UUID_MAYKON,
+  'Jeferson Andrade Siqueira': COFRE_UUID_JEFERSON,
+  'RONALDO SCARIOT DA SILVA': COFRE_UUID_RONALDO,
+  'BRENDA ROSA DA SILVA': COFRE_UUID_BRENDA,
+  'Mauro Furlan Neto': COFRE_UUID_MAURO,
   'Cleison Villas Boas': COFRE_UUID_REPRESENTANTESCLEISON,
   'Felipe Cordeiro': COFRE_UUID_FILIALSAOPAULO,
   'PROVÍNCIACG': COFRE_UUID_REPRESENTANTELUAN,
@@ -824,6 +855,16 @@ function getNomeCofreByUuid(uuidCofre) {
 
   // Mapeamento reverso: UUID -> Nome da variável
   const mapeamento = {
+    [COFRE_UUID_EDNA]: 'COFRE_UUID_EDNA',
+    [COFRE_UUID_GREYCE]: 'COFRE_UUID_GREYCE',
+    [COFRE_UUID_MARIANA]: 'COFRE_UUID_MARIANA',
+    [COFRE_UUID_VALDEIR]: 'COFRE_UUID_VALDEIR',
+    [COFRE_UUID_DEBORA]: 'COFRE_UUID_DEBORA',
+    [COFRE_UUID_MAYKON]: 'COFRE_UUID_MAYKON',
+    [COFRE_UUID_JEFERSON]: 'COFRE_UUID_JEFERSON',
+    [COFRE_UUID_RONALDO]: 'COFRE_UUID_RONALDO',
+    [COFRE_UUID_BRENDA]: 'COFRE_UUID_BRENDA',
+    [COFRE_UUID_MAURO]: 'COFRE_UUID_MAURO',
     [COFRE_UUID_REPRESENTANTESCLEISON]: 'COFRE_UUID_REPRESENTANTESCLEISON',
     [COFRE_UUID_FILIALSAOPAULO]: 'COFRE_UUID_FILIALSAOPAULO',
     [COFRE_UUID_REPRESENTANTELUAN]: 'COFRE_UUID_REPRESENTANTELUAN',
@@ -872,6 +913,67 @@ function parseNumberBR(v) {
 function onlyNumberBR(s) {
   const n = parseNumberBR(s);
   return isNaN(n) ? 0 : n;
+}
+
+// ========================= Salvamento Local =========================
+const MONTH_MAP_LOCAL = {
+  1: "JANEIRO", 2: "FEVEREIRO", 3: "MARCO", 4: "ABRIL", 5: "MAIO", 6: "JUNHO",
+  7: "JULHO", 8: "AGOSTO", 9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"
+};
+
+function sanitizeFilename(name) {
+  if (!name) return "SemNome";
+  return name.toString().replace(/[<>:"/\\|?*]/g, '').trim().replace(/\.$/, '');
+}
+
+function extractBrand(docName) {
+  let cleanName = sanitizeFilename(docName);
+  let lowerName = cleanName.toLowerCase();
+  if (lowerName.includes("procuracao -") || lowerName.includes("procuração -")) {
+    const parts = cleanName.split("-");
+    if (parts.length > 1) return sanitizeFilename(parts[1].trim());
+  }
+  if (docName.includes(" - ")) {
+    return sanitizeFilename(docName.split(" - ")[0]);
+  }
+  return cleanName;
+}
+
+async function saveDocumentLocally(downloadUrl, docName, cofreName) {
+  if (!LOCAL_SAVE_ENABLED) {
+    console.log('[LOCAL SAVE] Desabilitado - pulando salvamento local');
+    return null;
+  }
+
+  try {
+    const now = new Date();
+    const year = now.getFullYear().toString();
+    const monthNum = String(now.getMonth() + 1).padStart(2, '0');
+    const monthName = MONTH_MAP_LOCAL[now.getMonth() + 1];
+
+    const brand = extractBrand(docName);
+    const safeCofreName = sanitizeFilename(cofreName || 'Cofre');
+    const safeDocName = sanitizeFilename(docName);
+
+    const relativePath = path.join(safeCofreName, year, monthNum, monthName, brand);
+    const targetDir = path.join(LOCAL_SAVE_BASE_DIR, relativePath);
+    const targetFile = path.join(targetDir, `${safeDocName}.pdf`);
+
+    await fse.ensureDir(targetDir);
+
+    // Baixar o arquivo
+    const response = await fetch(downloadUrl);
+    if (!response.ok) throw new Error(`Falha HTTP: ${response.status}`);
+
+    const buffer = await response.arrayBuffer();
+    await fse.writeFile(targetFile, Buffer.from(buffer));
+
+    console.log(`[LOCAL SAVE] Salvo: ${targetFile}`);
+    return targetFile;
+  } catch (error) {
+    console.error(`[LOCAL SAVE] Erro: ${error.message}`);
+    return null;
+  }
 }
 
 // Datas
@@ -1374,11 +1476,11 @@ async function montarDados(card) {
 
   // Se tipo de pagamento não estiver preenchido, pesquisa é isenta
   const pesquisaIsenta = !tipoPagtoPesquisa || tipoPagtoPesquisa.trim() === '';
-  const formaPesquisa = pesquisaIsenta ? 'ISENTA' : tipoPagtoPesquisa;
+  const formaPesquisa = pesquisaIsenta ? '---' : tipoPagtoPesquisa;
 
   // Data de pagamento só aparece se o tipo de pagamento for "boleto"
   const isBoleto = !pesquisaIsenta && String(tipoPagtoPesquisa).toLowerCase().includes('boleto');
-  const dataPesquisa = isBoleto ? dataBoletoPesquisa : (pesquisaIsenta ? 'N/A' : '');
+  const dataPesquisa = isBoleto ? dataBoletoPesquisa : (pesquisaIsenta ? '00/00/00' : '');
 
   // Datas novas
   const dataPagtoAssessoria = fmtDMY2(by['copy_of_copy_of_data_do_boleto_pagamento_pesquisa'] || '');
@@ -1509,18 +1611,13 @@ async function montarDados(card) {
   console.log(`[CLAUSULA] clausulaAdicional final (primeiros 300 chars): "${clausulaAdicional.substring(0, 300)}"`);
 
   // Contratante 1
-  // [ADICIONAL] Campos do sócio administrador para formato PJ
-  const nomeSocioAdmin = by['nome_completo_do_s_cio_administrador'] || '';
-  const cpfSocioAdmin = by['cpf_do_s_cio_administrador'] || '';
-  const numeroEnderecoCnpj = by['n_mero_endere_o_do_cnpj'] || numeroCnpj || '';
-
   const contratante1Texto = montarTextoContratante({
     nome: by['r_social_ou_n_completo'] || contatoNome || '',
     nacionalidade,
     estadoCivil,
     rua: ruaCnpj,
     bairro: bairroCnpj,
-    numero: numeroEnderecoCnpj,
+    numero: numeroCnpj,
     cidade: cidadeCnpj,
     uf: ufCnpj,
     cep: cepCnpj,
@@ -1529,10 +1626,7 @@ async function montarDados(card) {
     cpf: cpfCampo || cpfDoc,
     cnpj: cnpjCampo || cnpjDoc,
     telefone: contatoTelefone,
-    email: contatoEmail,
-    // [NOVO] Dados do sócio administrador para formato PJ
-    nomeSocio: nomeSocioAdmin,
-    cpfSocio: cpfSocioAdmin
+    email: contatoEmail
   });
 
   // Detecta se há cotitular com base nos campos dedicados OU nos antigos campos 2
@@ -1589,15 +1683,20 @@ async function montarDados(card) {
     })
     : '';
 
-  // Dados para contato 1 e 2
+  // Dados para contato 1, 2 e 3
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
-  const dadosContato2 = hasCotitular
-    ? [
-      (cot_nome || contato2Nome_old || 'Cotitular'),
-      (telefoneCotitularEnvio || contato2Telefone_old || ''),
-      (emailCotitularEnvio || contato2Email_old || '')
-    ].filter(Boolean).join(' | ')
-    : '';
+
+  // Contato 2 - usando novos campos do Pipefy
+  const nomeContato2 = by['nome_contato_2'] || '';
+  const telefoneContato2 = by['copy_of_telefone_de_contato'] || '';
+  const emailContato2 = by['copy_of_email_de_contato'] || '';
+  const dadosContato2 = [nomeContato2, telefoneContato2, emailContato2].filter(Boolean).join(' | ');
+
+  // Contato 3 - usando novos campos do Pipefy
+  const nomeContato3 = by['nome_do_contato_3'] || '';
+  const telefoneContato3 = by['n_mero_de_telefone_3'] || '';
+  const emailContato3 = by['email_do_contato_3'] || '';
+  const dadosContato3 = [nomeContato3, telefoneContato3, emailContato3].filter(Boolean).join(' | ');
 
   // Entradas consolidadas
   const entries = [
@@ -1689,11 +1788,17 @@ async function montarDados(card) {
     telefone: contatoTelefone || '',
     dados_contato_1: dadosContato1,
     dados_contato_2: dadosContato2,
+    dados_contato_3: dadosContato3,
 
     // Textos completos dos contratantes
     contratante_1_texto: contratante1Texto,
     contratante_2_texto: contratante2Texto,
     contratante_3_texto: contratante3Texto, // [NOVO]
+
+    // Nomes dos contratantes para campos de assinatura
+    nome_contratante_1: by['r_social_ou_n_completo'] || contatoNome || '',
+    nome_contratante_2: hasCotitular ? (cot_nome || contato2Nome_old || '') : '',
+    nome_contratante_3: hasCotitular3 ? (cot3_nome || '') : '',
 
     // Email para assinatura
     email_envio_contrato: emailEnvioContrato,
@@ -1741,7 +1846,7 @@ async function montarDados(card) {
     data_pagto_assessoria: dataPagtoAssessoria,
 
     // Pesquisa
-    valor_pesquisa: pesquisaIsenta ? 'ISENTA' : 'R$ 98,00',
+    valor_pesquisa: pesquisaIsenta ? 'R$00,00' : 'R$ 98,00',
     forma_pesquisa: formaPesquisa,
     data_pesquisa: dataPesquisa,
 
@@ -1826,10 +1931,10 @@ function montarTextoContratante(info = {}) {
   const enderecoStr = enderecoPartes.join(', ');
 
   // ===============================
-  // CNPJ → Pessoa Jurídica (NOVO FORMATO)
+  // CNPJ → Pessoa Jurídica
   // ===============================
   if (isCnpj) {
-    const razao = (nome || 'Razão Social não informada').toUpperCase();
+    const razao = nome || 'Razão Social não informada';
 
     let cnpjFmt = cnpj || '';
     if (cnpjDigits.length === 14) {
@@ -1839,71 +1944,18 @@ function montarTextoContratante(info = {}) {
       );
     }
 
-    // Extrai dados do sócio administrador
-    const nomeSocio = info.nomeSocio || '';
-    const cpfSocio = info.cpfSocio || '';
-    const cpfSocioDigits = onlyDigits(cpfSocio);
-    let cpfSocioFmt = cpfSocio;
-    if (cpfSocioDigits.length === 11) {
-      cpfSocioFmt = cpfSocioDigits.replace(
-        /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
-        '$1.$2.$3-$4'
-      );
-    }
-
-    // Formata CEP no padrão XX.XXX-XXX
-    const cepDigits = onlyDigits(cep);
-    let cepFmt = cep || '';
-    if (cepDigits.length === 8) {
-      cepFmt = cepDigits.replace(/^(\d{2})(\d{3})(\d{3})$/, '$1.$2-$3');
-    }
-
-    // Monta endereço no novo formato: RUA, NUMERO - BAIRRO - CIDADE - UF - CEP: XX.XXX-XXX
-    const enderecoPartesPJ = [];
-    if (rua) enderecoPartesPJ.push(rua.toUpperCase());
-    if (numero) enderecoPartesPJ.push(numero);
-    const enderecoBase = enderecoPartesPJ.join(', ');
-
-    const localizacaoPartes = [];
-    if (enderecoBase) localizacaoPartes.push(enderecoBase);
-    if (bairro) localizacaoPartes.push(bairro.toUpperCase());
-    if (cidade) localizacaoPartes.push(cidade.toUpperCase());
-    if (uf) localizacaoPartes.push(uf.toUpperCase());
-    if (cepFmt) localizacaoPartes.push(`CEP: ${cepFmt}`);
-    const localizacaoStr = localizacaoPartes.join(' - ');
-
-    // Monta texto do representante/sócio administrador
-    const nacionalidadeUpper = (nacionalidade || 'BRASILEIRO').toUpperCase();
-    const estadoCivilUpper = (estadoCivil || '').toUpperCase();
-    const profissao = 'EMPRESÁRIO';
-
-    // Monta as partes do texto PJ
     const partesPJ = [];
-    partesPJ.push(`${razao}, CNPJ: ${cnpjFmt}`);
+    partesPJ.push(`${razao}, inscrita no CNPJ sob nº ${cnpjFmt}`);
 
-    if (localizacaoStr) {
-      partesPJ.push(`LOCALIZADA NA RUA: ${localizacaoStr}`);
+    if (enderecoStr) {
+      partesPJ.push(`com sede em ${enderecoStr}`);
     }
 
-    // Adiciona dados do sócio administrador
-    if (nomeSocio) {
-      const socioPartes = [];
-      socioPartes.push(`NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR. ${nomeSocio.toUpperCase()}`);
-
-      const qualificacaoSocio = [nacionalidadeUpper];
-      if (estadoCivilUpper) qualificacaoSocio.push(estadoCivilUpper);
-      qualificacaoSocio.push(profissao);
-
-      const rgFmt = rg || '';
-      if (rgFmt || cpfSocioFmt) {
-        const docsPartes = [];
-        if (rgFmt) docsPartes.push(`PORTADOR DO RG. ${rgFmt}`);
-        if (cpfSocioFmt) docsPartes.push(`DO CPF. ${cpfSocioFmt}`);
-        qualificacaoSocio.push(docsPartes.join(' E '));
-      }
-
-      socioPartes.push(qualificacaoSocio.join(', '));
-      partesPJ.push(socioPartes.join(', '));
+    if (telefone || email) {
+      const contato = [];
+      if (telefone) contato.push(`telefone nº ${telefone}`);
+      if (email) contato.push(`endereço eletrônico: ${email}`);
+      partesPJ.push(`com ${contato.join(' e ')}`);
     }
 
     const textoPJ = partesPJ.join(', ').replace(/\s+,/g, ',').trim();
@@ -1911,29 +1963,29 @@ function montarTextoContratante(info = {}) {
   }
 
   // ===============================
-  // CPF (ou genérico) → UPPERCASE para padronizar com CNPJ
+  // CPF (ou genérico) → mantém lógica original (Brasileiro, Casado, empresário(a), ...)
   // ===============================
   const partes = [];
   const identidade = [];
 
-  if (nome) identidade.push(nome.toUpperCase());
-  if (nacionalidade) identidade.push(nacionalidade.toUpperCase());
-  if (estadoCivil) identidade.push(estadoCivil.toUpperCase());
-  if (identidade.length) identidade.push('EMPRESÁRIO(A)');
+  if (nome) identidade.push(nome);
+  if (nacionalidade) identidade.push(nacionalidade);
+  if (estadoCivil) identidade.push(estadoCivil);
+  if (identidade.length) identidade.push('empresário(a)');
   if (identidade.length) partes.push(identidade.join(', '));
 
-  if (enderecoStr) partes.push(`RESIDENTE NA ${enderecoStr.toUpperCase()}`);
+  if (enderecoStr) partes.push(`residente na ${enderecoStr}`);
 
   const documentos = [];
-  if (rg) documentos.push(`PORTADOR(A) DA CÉDULA DE IDENTIDADE RG DE Nº ${rg.toUpperCase()}`);
+  if (rg) documentos.push(`portador(a) da cédula de identidade RG de nº ${rg}`);
 
-  // Preferência: se tiver CPF com 11 dígitos, usa "PORTADOR(A) DO CPF Nº ..."
+  // Preferência: se tiver CPF com 11 dígitos, usa "portador(a) do CPF nº ..."
   if (isCpf && cpfDigits) {
     const cpfFmt = cpfDigits.replace(
       /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
       '$1.$2.$3-$4'
     );
-    documentos.push(`PORTADOR(A) DO CPF Nº ${cpfFmt}`);
+    documentos.push(`portador(a) do CPF nº ${cpfFmt}`);
   } else {
     const docUpper = String(docSelecao || '').trim().toUpperCase();
     const docNums = [];
@@ -1941,10 +1993,10 @@ function montarTextoContratante(info = {}) {
     if (cnpj && !isCnpj) docNums.push({ tipo: 'CNPJ', valor: cnpj });
 
     if (docUpper && docNums.length) {
-      documentos.push(`DEVIDAMENTE INSCRITO NO ${docUpper} SOB O Nº ${docNums[0].valor}`);
+      documentos.push(`devidamente inscrito no ${docUpper} sob o nº ${docNums[0].valor}`);
     } else {
       for (const doc of docNums) {
-        documentos.push(`DEVIDAMENTE INSCRITO NO ${doc.tipo} SOB O Nº ${doc.valor}`);
+        documentos.push(`devidamente inscrito no ${doc.tipo} sob o nº ${doc.valor}`);
       }
     }
   }
@@ -1952,9 +2004,9 @@ function montarTextoContratante(info = {}) {
   if (documentos.length) partes.push(documentos.join(', '));
 
   const contatoPartes = [];
-  if (telefone) contatoPartes.push(`COM TELEFONE DE Nº ${telefone}`);
-  if (email) contatoPartes.push(`COM O SEGUINTE ENDEREÇO ELETRÔNICO: ${email.toUpperCase()}`);
-  if (contatoPartes.length) partes.push(contatoPartes.join(' E '));
+  if (telefone) contatoPartes.push(`com telefone de nº ${telefone}`);
+  if (email) contatoPartes.push(`com o seguinte endereço eletrônico: ${email}`);
+  if (contatoPartes.length) partes.push(contatoPartes.join(' e '));
 
   if (!partes.length) return '';
   const texto = partes.join(', ').replace(/\s+,/g, ',').trim();
@@ -2038,6 +2090,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     telefone: d.telefone || '',
     'dados para contato 1': d.dados_contato_1 || '',
     'dados para contato 2': d.dados_contato_2 || '',
+    'dados para contato 3': d.dados_contato_3 || '',
 
     // Resultado da pesquisa prévia
     'Risco': d.risco_agregado || '',
@@ -2093,7 +2146,12 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     UF: d.uf_cnpj || '',
 
     // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || ''
+    'clausula-adicional': d.clausula_adicional || '',
+
+    // Tipo de marca (apresentação) - Campo no final do contrato
+    'tipo de marca': d.tipo1 || '',
+    'Tipo de Marca': d.tipo1 || '',
+    'Tipo de marca': d.tipo1 || ''
   };
 
   // Preencher até 30 linhas por segurança
@@ -2175,6 +2233,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     telefone: d.telefone || '',
     'dados para contato 1': d.dados_contato_1 || '',
     'dados para contato 2': d.dados_contato_2 || '',
+    'dados para contato 3': d.dados_contato_3 || '',
 
     // Resultado da pesquisa prévia
     'Risco': d.risco_agregado || '',
@@ -2240,7 +2299,12 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     UF: d.uf_cnpj || '',
 
     // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || ''
+    'clausula-adicional': d.clausula_adicional || '',
+
+    // Tipo de marca (apresentação) - Campo no final do contrato
+    'tipo de marca': d.tipo1 || '',
+    'Tipo de Marca': d.tipo1 || '',
+    'Tipo de marca': d.tipo1 || ''
   };
 
   return base;
@@ -2294,6 +2358,7 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
     'Telefone': d.telefone || '',
     'dados para contato 1': d.dados_contato_1 || '',
     'dados para contato 2': d.dados_contato_2 || '',
+    'dados para contato 3': d.dados_contato_3 || '',
 
     // Datas
     'Dia': dia,
@@ -2305,7 +2370,15 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
     // Informações do contrato relacionadas
     'Título': d.titulo || '',
     'Serviços': d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.OUTROS || '',
-    'Risco': d.risco_agregado || ''
+    'Risco': d.risco_agregado || '',
+
+    // Campos de assinatura dos contratantes (apenas nome)
+    'ASSINATURA CONTRATANTE 1': d.nome_contratante_1 || '',
+    'ASSINATURA CONTRATANTE 2': d.nome_contratante_2 || '',
+    'ASSINATURA CONTRATANTE 3': d.nome_contratante_3 || '',
+    'Assinatura Contratante 1': d.nome_contratante_1 || '',
+    'Assinatura Contratante 2': d.nome_contratante_2 || '',
+    'Assinatura Contratante 3': d.nome_contratante_3 || ''
   };
 
   return base;
@@ -2874,45 +2947,46 @@ app.post('/d4sign/postback', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // 3. Anexar PDF assinado como ANEXO no Pipefy (não apenas link)
-    // [REFATORADO] Removida a salvação de URL direta (que expira), usando apenas upload para campos de anexo
+    // 3. anexar PDF no campo correto (Contrato Assinado D4 ou Procuração Assinada D4)
     try {
-      const extraFieldId = isProcuracaoFinal ? PIPEFY_FIELD_EXTRA_PROCURACAO : PIPEFY_FIELD_EXTRA_CONTRATO;
-      const docType = isProcuracaoFinal ? 'Procuração' : 'Contrato';
+      const fieldId = isProcuracaoFinal
+        ? PIPEFY_FIELD_PROCURACAO_ASSINADA_D4
+        : PIPEFY_FIELD_CONTRATO_ASSINADO_D4;
 
-      console.log(`[POSTBACK D4SIGN] Iniciando anexação de ${docType}...`);
-      console.log(`[POSTBACK D4SIGN] Campo de anexo: ${extraFieldId}`);
+      console.log(`[POSTBACK D4SIGN] Tentando salvar PDF - isProcuracaoFinal: ${isProcuracaoFinal}, fieldId: ${fieldId}`);
+      console.log(`[POSTBACK D4SIGN] Valores dos campos - PIPEFY_FIELD_PROCURACAO_ASSINADA_D4: ${PIPEFY_FIELD_PROCURACAO_ASSINADA_D4}, PIPEFY_FIELD_CONTRATO_ASSINADO_D4: ${PIPEFY_FIELD_CONTRATO_ASSINADO_D4}`);
 
-      if (!extraFieldId) {
-        console.warn(`[POSTBACK D4SIGN] Campo de anexo não configurado para ${docType}`);
+      if (!fieldId) {
+        console.warn(`[POSTBACK D4SIGN] Campo não configurado para ${isProcuracaoFinal ? 'procuração' : 'contrato'}`);
       } else {
-        const orgId = card.pipe?.organization?.id;
+        const newValue = [info.url];
+        console.log(`[POSTBACK D4SIGN] Salvando PDF no campo ${fieldId} com URL: ${info.url}`);
+        await updateCardField(cardId, fieldId, newValue);
+        console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo ${fieldId} (${isProcuracaoFinal ? 'Procuração' : 'Contrato'} Assinado D4)`);
 
-        if (!orgId) {
-          console.error(`[POSTBACK D4SIGN] ERRO: Organization ID não encontrado no card. Não é possível fazer upload.`);
-        } else {
-          console.log(`[POSTBACK D4SIGN] Organization ID: ${orgId}`);
+        // [NOVO] Anexar também nos campos extras solicitados
+        const extraFieldId = isProcuracaoFinal ? PIPEFY_FIELD_EXTRA_PROCURACAO : PIPEFY_FIELD_EXTRA_CONTRATO;
+        if (extraFieldId) {
+          console.log(`[POSTBACK D4SIGN] Salvando PDF também no campo extra ${extraFieldId}...`);
 
-          // Gerar nome do arquivo com data para evitar cache
-          const dataAtual = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-          const fileName = isProcuracaoFinal
-            ? `Procuracao_Assinada_${dataAtual}_${uuid.slice(-8)}.pdf`
-            : `Contrato_Assinado_${dataAtual}_${uuid.slice(-8)}.pdf`;
-
-          console.log(`[POSTBACK D4SIGN] Fazendo upload do arquivo: ${fileName}`);
-          console.log(`[POSTBACK D4SIGN] URL origem D4Sign: ${info.url}`);
-
-          // Fazer upload para o Pipefy
-          const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
-          console.log(`[POSTBACK D4SIGN] Upload concluído. URL Pipefy: ${pipefyUrl}`);
-
-          // Atualizar campo de anexo - Pipefy espera array com caminho relativo do S3
-          console.log(`[POSTBACK D4SIGN] Caminho do anexo para Pipefy: ${pipefyUrl}`);
-          await updateCardField(cardId, extraFieldId, [pipefyUrl]);
-          console.log(`[POSTBACK D4SIGN] ✓ ${docType} anexado com sucesso no campo ${extraFieldId}`);
-
-          // Nota: não salvamos no campo de texto porque retornamos apenas o caminho relativo do S3
-          // O arquivo está acessível pelo campo de anexo diretamente
+          // Se for campo de anexo, precisa fazer upload primeiro
+          // Como não sabemos se é anexo ou texto, vamos tentar upload se tiver organizationId
+          try {
+            const orgId = card.pipe?.organization?.id;
+            if (orgId) {
+              const fileName = isProcuracaoFinal ? `Procuracao_${uuid}.pdf` : `Contrato_${uuid}.pdf`;
+              const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
+              await updateCardField(cardId, extraFieldId, [pipefyUrl]);
+              console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo extra ${extraFieldId} (via upload)`);
+            } else {
+              // Fallback para URL direta se não tiver orgId (não deve acontecer se getCard estiver atualizado)
+              await updateCardField(cardId, extraFieldId, newValue);
+              console.log(`[POSTBACK D4SIGN] ✓ PDF anexado com sucesso no campo extra ${extraFieldId} (via URL direta)`);
+            }
+          } catch (uploadErr) {
+            console.warn(`[POSTBACK D4SIGN] Falha ao fazer upload para campo extra, tentando URL direta: ${uploadErr.message}`);
+            await updateCardField(cardId, extraFieldId, newValue);
+          }
         }
       }
     } catch (e) {
@@ -4355,7 +4429,7 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
     });
 
     const { url: uploadUrl, downloadUrl } = data.createPresignedUrl;
-    console.log(`[UPLOAD PIPEFY] URL de upload obtida: ${uploadUrl}`);
+    console.log(`[UPLOAD PIPEFY] URL de upload obtida. Enviando arquivo...`);
 
     // 3. Fazer upload para o S3 do Pipefy
     const uploadRes = await fetch(uploadUrl, {
@@ -4372,35 +4446,8 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
 
     console.log(`[UPLOAD PIPEFY] Upload concluído com sucesso.`);
 
-    // 4. Extrair o caminho relativo do S3 da URL presignada
-    // O Pipefy exige que campos de anexo usem apenas o caminho relativo, não a URL completa
-    // Formato esperado: orgs/{org-id}/uploads/{upload-id}/filename.pdf
-    // A URL presignada tem formato: https://...s3...amazonaws.com/orgs/.../uploads/.../file.pdf?...
-
-    let attachmentPath = '';
-    try {
-      // Tentar extrair o caminho da URL de upload
-      const urlObj = new URL(uploadUrl);
-      const pathname = urlObj.pathname; // Ex: /orgs/.../uploads/.../file.pdf
-      // Remover a barra inicial se houver
-      attachmentPath = pathname.startsWith('/') ? pathname.substring(1) : pathname;
-    } catch (parseErr) {
-      // Fallback: tentar extrair usando regex
-      const match = uploadUrl.match(/\/(orgs\/[^?]+)/);
-      if (match) {
-        attachmentPath = match[1];
-      }
-    }
-
-    if (!attachmentPath) {
-      throw new Error(`Não foi possível extrair o caminho do anexo da URL: ${uploadUrl}`);
-    }
-
-    console.log(`[UPLOAD PIPEFY] Caminho do anexo extraído: ${attachmentPath}`);
-    console.log(`[UPLOAD PIPEFY] Download URL (para referência): ${downloadUrl}`);
-
-    // Retorna o caminho relativo para usar no campo de anexo do Pipefy
-    return attachmentPath;
+    // Retorna a URL pública/download que deve ser usada no campo de anexo
+    return downloadUrl;
 
   } catch (e) {
     console.error('[UPLOAD PIPEFY ERROR]', e.message);
