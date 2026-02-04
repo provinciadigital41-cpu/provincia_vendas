@@ -1492,7 +1492,11 @@ async function montarDados(card) {
   const bairroCnpj = by['bairro_do_cnpj'] || '';
   const cidadeCnpj = by['cidade_do_cnpj'] || '';
   const ufCnpj = by['estado_do_cnpj'] || '';
-  const numeroCnpj = by['n_mero_1'] || getFirstByNames(card, ['numero', 'número', 'nº']) || '';
+  const numeroCnpj = by['n_mero_endere_o_do_cnpj'] || by['n_mero_1'] || getFirstByNames(card, ['numero', 'número', 'nº']) || '';
+
+  // Dados do sócio administrador (para PJ/CNPJ)
+  const socioAdmNome = by['nome_completo_do_s_cio_administrador'] || '';
+  const socioAdmCpf = by['cpf_do_s_cio_administrador'] || '';
 
   // Vendedor (ainda usado apenas para exibição)
   const vendedor = (() => {
@@ -1626,7 +1630,10 @@ async function montarDados(card) {
     cpf: cpfCampo || cpfDoc,
     cnpj: cnpjCampo || cnpjDoc,
     telefone: contatoTelefone,
-    email: contatoEmail
+    email: contatoEmail,
+    // Dados do sócio administrador (para PJ/CNPJ)
+    socioAdmNome,
+    socioAdmCpf
   });
 
   // Detecta se há cotitular com base nos campos dedicados OU nos antigos campos 2
@@ -1796,7 +1803,9 @@ async function montarDados(card) {
     contratante_3_texto: contratante3Texto, // [NOVO]
 
     // Nomes dos contratantes para campos de assinatura
-    nome_contratante_1: by['r_social_ou_n_completo'] || contatoNome || '',
+    // Nomes dos contratantes para campos de assinatura
+    // Se for CNPJ (isSelecaoCnpj), usa o nome do sócio administrador
+    nome_contratante_1: (isSelecaoCnpj && socioAdmNome) ? socioAdmNome : (by['r_social_ou_n_completo'] || contatoNome || ''),
     nome_contratante_2: hasCotitular ? (cot_nome || contato2Nome_old || '') : '',
     nome_contratante_3: hasCotitular3 ? (cot3_nome || '') : '',
 
@@ -1892,7 +1901,10 @@ function montarTextoContratante(info = {}) {
     cpf,
     cnpj,
     telefone,
-    email
+    email,
+    // Dados do sócio administrador (para PJ/CNPJ)
+    socioAdmNome = '',
+    socioAdmCpf = ''
   } = info;
 
   const cpfDigits = onlyDigits(cpf);
@@ -1918,23 +1930,11 @@ function montarTextoContratante(info = {}) {
     isCpf = !isCnpj && cpfDigits.length === 11;
   }
 
-  // Monta endereço em texto único
-  const enderecoPartes = [];
-  if (rua) enderecoPartes.push(`Rua ${rua}`);
-  if (numero) enderecoPartes.push(`nº ${numero}`);
-  if (bairro) enderecoPartes.push(`Bairro ${bairro}`);
-  let cidadeUf = '';
-  if (cidade) cidadeUf += cidade;
-  if (uf) cidadeUf += (cidadeUf ? ' - ' : '') + uf;
-  if (cidadeUf) enderecoPartes.push(cidadeUf);
-  if (cep) enderecoPartes.push(`CEP: ${cep}`);
-  const enderecoStr = enderecoPartes.join(', ');
-
   // ===============================
-  // CNPJ → Pessoa Jurídica
+  // CNPJ → Pessoa Jurídica (NOVO FORMATO EM MAIÚSCULAS)
   // ===============================
   if (isCnpj) {
-    const razao = nome || 'Razão Social não informada';
+    const razao = (nome || 'Razão Social não informada').toUpperCase();
 
     let cnpjFmt = cnpj || '';
     if (cnpjDigits.length === 14) {
@@ -1944,48 +1944,102 @@ function montarTextoContratante(info = {}) {
       );
     }
 
-    const partesPJ = [];
-    partesPJ.push(`${razao}, inscrita no CNPJ sob nº ${cnpjFmt}`);
+    // Montar endereço em formato maiúsculo
+    const enderecoPartesPJ = [];
+    if (rua) enderecoPartesPJ.push(rua.toUpperCase());
+    if (numero) enderecoPartesPJ.push(numero);
+    if (bairro) enderecoPartesPJ.push(bairro.toUpperCase());
+    if (cidade) enderecoPartesPJ.push(cidade.toUpperCase());
+    if (uf) enderecoPartesPJ.push(uf.toUpperCase());
+    if (cep) {
+      // Formatar CEP com ponto (80.010-010)
+      const cepDigits = onlyDigits(cep);
+      const cepFmt = cepDigits.length === 8
+        ? cepDigits.replace(/^(\d{2})(\d{3})(\d{3})$/, '$1.$2-$3')
+        : cep;
+      enderecoPartesPJ.push(`CEP: ${cepFmt}`);
+    }
+    const enderecoPJ = enderecoPartesPJ.join(' - ');
 
-    if (enderecoStr) {
-      partesPJ.push(`com sede em ${enderecoStr}`);
+    // Montar texto base: RAZÃO SOCIAL, CNPJ: XX.XXX.XXX/XXXX-XX, LOCALIZADA NA RUA: ...
+    let textoPJ = `${razao}, CNPJ: ${cnpjFmt}`;
+
+    if (enderecoPJ) {
+      textoPJ += `, LOCALIZADA NA RUA: ${enderecoPJ}`;
     }
 
-    if (telefone || email) {
-      const contato = [];
-      if (telefone) contato.push(`telefone nº ${telefone}`);
-      if (email) contato.push(`endereço eletrônico: ${email}`);
-      partesPJ.push(`com ${contato.join(' e ')}`);
+    // Adicionar dados do sócio administrador/representante legal
+    if (socioAdmNome) {
+      const socioNomeUpper = socioAdmNome.toUpperCase();
+      const nacionalidadeUpper = (nacionalidade || 'BRASILEIRO(A)').toUpperCase();
+      const estadoCivilUpper = (estadoCivil || '').toUpperCase();
+
+      textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR. ${socioNomeUpper}`;
+
+      // Adicionar qualificação do sócio
+      const qualificacao = [nacionalidadeUpper];
+      if (estadoCivilUpper) qualificacao.push(estadoCivilUpper);
+      qualificacao.push('EMPRESÁRIO(A)');
+
+      textoPJ += `, ${qualificacao.join(', ')}`;
+
+      // CPF do sócio administrador
+      if (socioAdmCpf) {
+        const socioAdmCpfDigits = onlyDigits(socioAdmCpf);
+        let cpfSocioFmt = socioAdmCpf;
+        if (socioAdmCpfDigits.length === 11) {
+          cpfSocioFmt = socioAdmCpfDigits.replace(
+            /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
+            '$1.$2.$3-$4'
+          );
+        }
+        textoPJ += `, PORTADOR(A) DO CPF: ${cpfSocioFmt}`;
+      }
     }
 
-    const textoPJ = partesPJ.join(', ').replace(/\s+,/g, ',').trim();
     return textoPJ.endsWith('.') ? textoPJ : `${textoPJ}.`;
   }
 
   // ===============================
-  // CPF (ou genérico) → mantém lógica original (Brasileiro, Casado, empresário(a), ...)
+  // CPF (ou genérico) → Tudo em MAIÚSCULAS para padronização
   // ===============================
+
+  // Monta endereço em texto único para CPF
+  const enderecoPartes = [];
+  if (rua) enderecoPartes.push(`RUA ${rua.toUpperCase()}`);
+  if (numero) enderecoPartes.push(`Nº ${numero}`);
+  if (bairro) enderecoPartes.push(`BAIRRO ${bairro.toUpperCase()}`);
+
+  let cidadeUf = '';
+  if (cidade) cidadeUf += cidade.toUpperCase();
+  if (uf) cidadeUf += (cidadeUf ? ' - ' : '') + uf.toUpperCase();
+  if (cidadeUf) enderecoPartes.push(cidadeUf);
+
+  if (cep) enderecoPartes.push(`CEP: ${cep}`);
+  const enderecoStr = enderecoPartes.join(', ');
+
   const partes = [];
   const identidade = [];
 
-  if (nome) identidade.push(nome);
-  if (nacionalidade) identidade.push(nacionalidade);
-  if (estadoCivil) identidade.push(estadoCivil);
-  if (identidade.length) identidade.push('empresário(a)');
+  if (nome) identidade.push(nome.toUpperCase());
+  if (nacionalidade) identidade.push(nacionalidade.toUpperCase());
+  if (estadoCivil) identidade.push(estadoCivil.toUpperCase());
+  if (identidade.length) identidade.push('EMPRESÁRIO(A)');
+
   if (identidade.length) partes.push(identidade.join(', '));
 
-  if (enderecoStr) partes.push(`residente na ${enderecoStr}`);
+  if (enderecoStr) partes.push(`RESIDENTE NA ${enderecoStr}`);
 
   const documentos = [];
-  if (rg) documentos.push(`portador(a) da cédula de identidade RG de nº ${rg}`);
+  if (rg) documentos.push(`PORTADOR(A) DA CÉDULA DE IDENTIDADE RG DE Nº ${rg}`);
 
-  // Preferência: se tiver CPF com 11 dígitos, usa "portador(a) do CPF nº ..."
+  // Preferência: se tiver CPF com 11 dígitos, usa "PORTADOR(A) DO CPF Nº ..."
   if (isCpf && cpfDigits) {
     const cpfFmt = cpfDigits.replace(
       /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
       '$1.$2.$3-$4'
     );
-    documentos.push(`portador(a) do CPF nº ${cpfFmt}`);
+    documentos.push(`PORTADOR(A) DO CPF Nº ${cpfFmt}`);
   } else {
     const docUpper = String(docSelecao || '').trim().toUpperCase();
     const docNums = [];
@@ -1993,10 +2047,10 @@ function montarTextoContratante(info = {}) {
     if (cnpj && !isCnpj) docNums.push({ tipo: 'CNPJ', valor: cnpj });
 
     if (docUpper && docNums.length) {
-      documentos.push(`devidamente inscrito no ${docUpper} sob o nº ${docNums[0].valor}`);
+      documentos.push(`DEVIDAMENTE INSCRITO NO ${docUpper} SOB O Nº ${docNums[0].valor}`);
     } else {
       for (const doc of docNums) {
-        documentos.push(`devidamente inscrito no ${doc.tipo} sob o nº ${doc.valor}`);
+        documentos.push(`DEVIDAMENTE INSCRITO NO ${doc.tipo} SOB O Nº ${doc.valor}`);
       }
     }
   }
@@ -2004,9 +2058,9 @@ function montarTextoContratante(info = {}) {
   if (documentos.length) partes.push(documentos.join(', '));
 
   const contatoPartes = [];
-  if (telefone) contatoPartes.push(`com telefone de nº ${telefone}`);
-  if (email) contatoPartes.push(`com o seguinte endereço eletrônico: ${email}`);
-  if (contatoPartes.length) partes.push(contatoPartes.join(' e '));
+  if (telefone) contatoPartes.push(`COM TELEFONE DE Nº ${telefone}`);
+  if (email) contatoPartes.push(`COM O SEGUINTE ENDEREÇO ELETRÔNICO: ${email.toLowerCase()}`);
+  if (contatoPartes.length) partes.push(contatoPartes.join(' E '));
 
   if (!partes.length) return '';
   const texto = partes.join(', ').replace(/\s+,/g, ',').trim();
