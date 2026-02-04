@@ -1974,7 +1974,7 @@ function montarTextoContratante(info = {}) {
       const nacionalidadeUpper = (nacionalidade || 'BRASILEIRO(A)').toUpperCase();
       const estadoCivilUpper = (estadoCivil || '').toUpperCase();
 
-      textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR(A). ${socioNomeUpper}`;
+      textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR. ${socioNomeUpper}`;
 
       // Adicionar qualificação do sócio
       const qualificacao = [nacionalidadeUpper];
@@ -3046,6 +3046,30 @@ app.post('/d4sign/postback', async (req, res) => {
     } catch (e) {
       console.error('[POSTBACK D4SIGN] Erro ao anexar documento:', e.message);
       console.error('[POSTBACK D4SIGN] Stack trace:', e.stack);
+    }
+
+    // [NOVO] Salvamento Local Automático
+    try {
+      if (LOCAL_SAVE_ENABLED) {
+        console.log('[POSTBACK D4SIGN] Iniciando salvamento local...');
+
+        // Determinar nome do documento
+        const tituloCard = card.title || 'Sem Titulo';
+        const docName = isProcuracaoFinal
+          ? `Procuração - ${tituloCard}`
+          : `Contrato - ${tituloCard}`;
+
+        // Determinar cofre
+        const equipeContrato = getEquipeContratoFromCard(card);
+        let uuidCofre = COFRES_UUIDS[equipeContrato] || DEFAULT_COFRE_UUID;
+        const nomeCofre = getNomeCofreByUuid(uuidCofre);
+
+        await saveDocumentLocally(info.url, docName, nomeCofre);
+        console.log('[POSTBACK D4SIGN] ✓ Salvamento local concluído.');
+      }
+    } catch (saveErr) {
+      console.error('[POSTBACK D4SIGN] Erro no salvamento local:', saveErr.message);
+      // Não falha o webhook se o salvamento local falhar
     }
 
     return res.status(200).json({ ok: true });
