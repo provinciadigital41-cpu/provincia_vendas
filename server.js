@@ -1974,7 +1974,7 @@ function montarTextoContratante(info = {}) {
       const nacionalidadeUpper = (nacionalidade || 'BRASILEIRO(A)').toUpperCase();
       const estadoCivilUpper = (estadoCivil || '').toUpperCase();
 
-      textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR. ${socioNomeUpper}`;
+      textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR(A). ${socioNomeUpper}`;
 
       // Adicionar qualificação do sócio
       const qualificacao = [nacionalidadeUpper];
@@ -4500,8 +4500,28 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
 
     console.log(`[UPLOAD PIPEFY] Upload concluído com sucesso.`);
 
-    // Retorna a URL pública/download que deve ser usada no campo de anexo
-    return downloadUrl;
+    // [CORREÇÃO] O Pipefy espera apenas o PATH relativo para o anexo (orgs/...)
+    // A URL retornada é algo como: https://s3.amazonaws.com/.../orgs/UUID/uploads/UUID/file.pdf?params...
+    // Extrair 'orgs/...'
+
+    // Usamos 'uploadUrl' ou 'downloadUrl' (geralmente contém a mesma estrutura básica de path)
+    const rawUrl = downloadUrl || uploadUrl;
+
+    // Remover query params
+    const urlNoQuery = rawUrl.split('?')[0];
+
+    // Encontrar onde começa "orgs/"
+    const match = urlNoQuery.match(/(orgs\/.*)/);
+
+    if (match && match[1]) {
+      const relativePath = match[1];
+      console.log(`[UPLOAD PIPEFY] Path relativo extraído: ${relativePath}`);
+      return relativePath;
+    }
+
+    // Fallback: se não encontrar, retorna a URL limpa ou original
+    console.warn(`[UPLOAD PIPEFY] Não foi possível extrair caminho relativo padrão. Retornando URL sem query.`);
+    return urlNoQuery;
 
   } catch (e) {
     console.error('[UPLOAD PIPEFY ERROR]', e.message);
