@@ -1680,7 +1680,8 @@ async function montarDados(card) {
       cnpj: cot_cnpj || '',
       telefone: telefoneCotitularEnvio || contato2Telefone_old,
       email: emailCotitularEnvio || contato2Email_old,
-      socioAdmNome: cot_socio_nome
+      socioAdmNome: cot_socio_nome,
+      socioAdmCpf: cot_cpf
     })
     : '';
 
