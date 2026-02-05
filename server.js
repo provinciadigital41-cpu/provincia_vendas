@@ -1525,12 +1525,6 @@ async function montarDados(card) {
   const tipoPagamento = by['copy_of_tipo_de_pagamento'] || '';
   const isCreditoProgramado = String(tipoPagamento).trim() === 'Crédito programado';
 
-  // [NOVO] Verificar campo Benefício
-  const beneficio = by['tipo_de_pagamento_benef_cio'] || '';
-  const isLogomarcaGratuita = String(beneficio).trim() === 'Logomarca gratuita';
-
-  console.log(`[CLAUSULA] Benefício: "${beneficio}", isLogomarcaGratuita: ${isLogomarcaGratuita}`);
-
   // Texto da cláusula adicional para Crédito programado
   const clausulaCreditoProgramado = 'Caso o pagamento não seja realizado até a data do vencimento, o benefício concedido será automaticamente cancelado, sendo emitido boleto bancário com os valores previstos em contrato.';
 
@@ -1572,16 +1566,23 @@ async function montarDados(card) {
   // Remove também variações com quebras de linha
   clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
 
-  // [LÓGICA ALTERADA]
-  // Se for "Logomarca gratuita", usa esse texto e ignora a clausula manual (clausulaLimpa)
-  // Caso contrário, usa clausulaLimpa
-  let clausulaBase = clausulaLimpa;
-  if (isLogomarcaGratuita) {
-    clausulaBase = 'Logomarca gratuita';
-    console.log('[CLAUSULA] Benefício "Logomarca gratuita" selecionado - sobrescrevendo cláusula manual.');
+  // [LÓGICA BLINDADA - CORREÇÃO DE TRAVAMENTO]
+  try {
+    const beneficioVal = by['tipo_de_pagamento_benef_cio'];
+    // Log apenas se tiver valor para não poluir
+    if (beneficioVal) console.log('[DEBUG CLAUSULA] Valor bruto beneficio:', beneficioVal);
+
+    if (beneficioVal && String(beneficioVal).trim() === 'Logomarca gratuita') {
+      console.log('[DEBUG CLAUSULA] Aplicando Logomarca Gratuita (sobrescrevendo manual)');
+      clausulaLimpa = 'Logomarca gratuita';
+    }
+  } catch (errBeneficio) {
+    console.error('[ERRO CLAUSULA] Falha crítica ao processar beneficio:', errBeneficio);
+    // Em caso de erro, mantém o clausulaLimpa original
   }
 
-  clausulaLimpa = clausulaBase; // Reatribui para usar na lógica abaixo
+  // Debug para acompanhar fluxo
+  console.log(`[DEBUG CLAUSULA] clausulaLimpa após lógica de benefício: "${clausulaLimpa}"`);
 
   if (isCreditoProgramado) {
     // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
