@@ -1403,7 +1403,7 @@ async function montarDados(card) {
   const cot_cpf = by['cpf_cotitular'] || '';
   const cot_cnpj = by['cnpj_cotitular'] || '';
   // [ALTERADO] Prioridade CPF para cotitular
-  const cot_docSelecao = cot_cpf ? 'CPF' : (cot_cnpj ? 'CNPJ' : '');
+  const cot_docSelecao = cot_cnpj ? 'CNPJ' : (cot_cpf ? 'CPF' : '');
 
   // Envio do contrato principal e cotitular
   const emailEnvioContrato = by['email_para_envio_do_contrato'] || contatoEmail || '';
@@ -1427,7 +1427,7 @@ async function montarDados(card) {
   const cot3_rg = by['rg_cotitular_3'] || '';
   const cot3_cpf = by['cpf_cotitular_3'] || '';
   const cot3_cnpj = by['cnpj_cotitular_3'] || '';
-  const cot3_docSelecao = cot3_cpf ? 'CPF' : (cot3_cnpj ? 'CNPJ' : '');
+  const cot3_docSelecao = cot3_cnpj ? 'CNPJ' : (cot3_cpf ? 'CPF' : '');
 
   const emailCotitular3Envio = by['email_2'] || '';
   const telefoneCotitular3Envio = by['telefone_2'] || '';
