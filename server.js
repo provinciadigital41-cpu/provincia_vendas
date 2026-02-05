@@ -1566,6 +1566,24 @@ async function montarDados(card) {
   // Remove também variações com quebras de linha
   clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
 
+  // [LÓGICA BLINDADA - CORREÇÃO DE TRAVAMENTO]
+  try {
+    const beneficioVal = by['tipo_de_pagamento_benef_cio'];
+    // Log apenas se tiver valor para não poluir
+    if (beneficioVal) console.log('[DEBUG CLAUSULA] Valor bruto beneficio:', beneficioVal);
+
+    if (beneficioVal && String(beneficioVal).trim() === 'Logomarca gratuita') {
+      console.log('[DEBUG CLAUSULA] Aplicando Logomarca Gratuita (sobrescrevendo manual)');
+      clausulaLimpa = 'Logomarca gratuita';
+    }
+  } catch (errBeneficio) {
+    console.error('[ERRO CLAUSULA] Falha crítica ao processar beneficio:', errBeneficio);
+    // Em caso de erro, mantém o clausulaLimpa original
+  }
+
+  // Debug para acompanhar fluxo
+  console.log(`[DEBUG CLAUSULA] clausulaLimpa após lógica de benefício: "${clausulaLimpa}"`);
+
   if (isCreditoProgramado) {
     // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
     // Se já houver cláusula existente (após limpeza), concatena com quebra de linha; senão, usa apenas a do crédito programado
