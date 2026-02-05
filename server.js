@@ -1525,6 +1525,12 @@ async function montarDados(card) {
   const tipoPagamento = by['copy_of_tipo_de_pagamento'] || '';
   const isCreditoProgramado = String(tipoPagamento).trim() === 'Crédito programado';
 
+  // [NOVO] Verificar campo Benefício
+  const beneficio = by['tipo_de_pagamento_benef_cio'] || '';
+  const isLogomarcaGratuita = String(beneficio).trim() === 'Logomarca gratuita';
+
+  console.log(`[CLAUSULA] Benefício: "${beneficio}", isLogomarcaGratuita: ${isLogomarcaGratuita}`);
+
   // Texto da cláusula adicional para Crédito programado
   const clausulaCreditoProgramado = 'Caso o pagamento não seja realizado até a data do vencimento, o benefício concedido será automaticamente cancelado, sendo emitido boleto bancário com os valores previstos em contrato.';
 
@@ -1565,6 +1571,17 @@ async function montarDados(card) {
   console.log(`[CLAUSULA] Texto foi removido? ${antesLimpeza.length !== clausulaLimpa.length} (diferença: ${antesLimpeza.length - clausulaLimpa.length} chars)`);
   // Remove também variações com quebras de linha
   clausulaLimpa = clausulaLimpa.replace(/\n\n+/g, '\n').trim();
+
+  // [LÓGICA ALTERADA]
+  // Se for "Logomarca gratuita", usa esse texto e ignora a clausula manual (clausulaLimpa)
+  // Caso contrário, usa clausulaLimpa
+  let clausulaBase = clausulaLimpa;
+  if (isLogomarcaGratuita) {
+    clausulaBase = 'Logomarca gratuita';
+    console.log('[CLAUSULA] Benefício "Logomarca gratuita" selecionado - sobrescrevendo cláusula manual.');
+  }
+
+  clausulaLimpa = clausulaBase; // Reatribui para usar na lógica abaixo
 
   if (isCreditoProgramado) {
     // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
