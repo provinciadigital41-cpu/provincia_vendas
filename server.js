@@ -1398,10 +1398,11 @@ async function montarDados(card) {
   const cot_cidade = by['cidade_cotitular'] || '';
   const cot_uf = by['estado_cotitular'] || '';
   const cot_numero = ''; // não informado
-  const cot_cep = '';    // não informado
+  const cot_cep = by['cep_cotitular_1'] || '';
   const cot_rg = by['rg_cotitular'] || '';
   const cot_cpf = by['cpf_cotitular'] || '';
   const cot_cnpj = by['cnpj_cotitular'] || '';
+  const cot_socio_nome = by['nome_s_cio_adminstrador_cotitular_1'] || '';
   // [ALTERADO] Prioridade CPF para cotitular
   const cot_docSelecao = cot_cnpj ? 'CNPJ' : (cot_cpf ? 'CPF' : '');
 
@@ -1678,7 +1679,8 @@ async function montarDados(card) {
       cpf: cot_cpf || '',
       cnpj: cot_cnpj || '',
       telefone: telefoneCotitularEnvio || contato2Telefone_old,
-      email: emailCotitularEnvio || contato2Email_old
+      email: emailCotitularEnvio || contato2Email_old,
+      socioAdmNome: cot_socio_nome
     })
     : '';
 
