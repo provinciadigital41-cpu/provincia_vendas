@@ -1434,8 +1434,9 @@ async function montarDados(card) {
   const cot3_socio_nome = by['nome_s_cio_adminstrador_cotitular_2'] || '';
   const cot3_docSelecao = cot3_cnpj ? 'CNPJ' : (cot3_cpf ? 'CPF' : '');
 
-  const emailCotitular3Envio = by['email_2'] || '';
-  const telefoneCotitular3Envio = by['telefone_2'] || '';
+  // [ALTERADO] Novos campos específicos para email/telefone do Cotitular 2, com fallback para os antigos
+  const emailCotitular3Envio = by['email_para_envio_do_contrato_cotitular_2'] || by['email_2'] || '';
+  const telefoneCotitular3Envio = by['telefone_para_envio_do_contrato_cotitular_2'] || by['telefone_2'] || '';
 
   // Documento (CPF/CNPJ) principal
   const doc = pickDocumento(card);
@@ -3489,6 +3490,12 @@ app.post('/lead/:token/generate', async (req, res) => {
   <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
     <div style="margin-bottom:8px"><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
     ${d.email_cotitular_envio ? `<div><strong>Email do Cotitular:</strong> ${d.email_cotitular_envio}</div>` : ''}
+    ${d.telefone_cotitular_envio ? `<div><strong>Telefone do Cotitular:</strong> ${d.telefone_cotitular_envio}</div>` : ''}
+    ${d.email_cotitular_3_envio ? `<div><strong>Email do Cotitular 2:</strong> ${d.email_cotitular_3_envio}</div>` : ''}
+    ${d.telefone_cotitular_3_envio ? `<div><strong>Telefone do Cotitular 2:</strong> ${d.telefone_cotitular_3_envio}</div>` : ''}
+    <div style="margin-top:12px;color:red;font-weight:bold;font-size:14px">
+      Em caso de envio por Whatsapp+Email, necessário remover no D4 um dos Signatários para que o contrato e procuração fiquem com status finalizado, baixar os arquivos e anexar documentos no card!
+    </div>
   </div>
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
