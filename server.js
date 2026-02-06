@@ -2464,6 +2464,11 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
     // Identificação do outorgante
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
+    'Contratante 3': d.contratante_3_texto || '',
+    'CONTRATANTE 3': d.contratante_3_texto || '',
+    'contratante_1': d.contratante_1_texto || d.nome || '',
+    'contratante_2': d.contratante_2_texto || '',
+    'contratante_3': d.contratante_3_texto || '',
     'Nome': d.nome || '',
     'CPF': cpfFmt || '',
     'CNPJ': cnpjFmt || '',
