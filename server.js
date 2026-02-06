@@ -1842,11 +1842,10 @@ async function montarDados(card) {
     contratante_3_texto: contratante3Texto, // [NOVO]
 
     // Nomes dos contratantes para campos de assinatura
-    // Nomes dos contratantes para campos de assinatura
     // Se for CNPJ (isSelecaoCnpj), usa o nome do sócio administrador
-    nome_contratante_1: (isSelecaoCnpj && socioAdmNome) ? socioAdmNome : (by['r_social_ou_n_completo'] || contatoNome || ''),
-    nome_contratante_2: hasCotitular ? (cot_nome || contato2Nome_old || '') : '',
-    nome_contratante_3: hasCotitular3 ? (cot3_nome || '') : '',
+    nome_contratante_1: ((isSelecaoCnpj && socioAdmNome) ? socioAdmNome : (by['r_social_ou_n_completo'] || contatoNome || '')).toUpperCase(),
+    nome_contratante_2: (hasCotitular ? (cot_nome || contato2Nome_old || '') : '').toUpperCase(),
+    nome_contratante_3: (hasCotitular3 ? (cot3_nome || '') : '').toUpperCase(),
 
     // Email para assinatura
     email_envio_contrato: emailEnvioContrato,
@@ -2194,7 +2193,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'Número do contrato do bloco físico': cardIdStr,
     'Numero do contrato do bloco fisico': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
-    'Contratante 2': (d.contratante_2_texto || '') + (d.contratante_3_texto ? '<br><br>' + d.contratante_3_texto : ''),
+    'Contratante 2': d.contratante_2_texto || '',
     'Contratante 3': d.contratante_3_texto || '', // [NOVO]
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
@@ -2338,7 +2337,9 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'Número do contrato do bloco físico': cardIdStr,
     'Numero do contrato do bloco fisico': cardIdStr,
     'Contratante 1': d.contratante_1_texto || d.nome || '',
-    'Contratante 2': (d.contratante_2_texto || '') + (d.contratante_3_texto ? '<br><br>' + d.contratante_3_texto : ''),
+    'Contratante 2': d.contratante_2_texto || '',
+    'Contratante 3': d.contratante_3_texto || '',
+    'CONTRATANTE 3': d.contratante_3_texto || '',
     'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
     'CPF': d.cpf_campo || '',
     'CNPJ': d.cnpj_campo || '',
