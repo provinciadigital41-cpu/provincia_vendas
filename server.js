@@ -1416,7 +1416,10 @@ async function montarDados(card) {
   const telefoneEnvioContrato = by['telefone_para_envio_do_contrato'] || '';
 
   // [NOVO] Campos de COTITULAR 3 (Novo Cotitular)
-  const cot3_nome = by['raz_o_social_ou_nome_completo_cotitular_2'] || '';
+  const cot3_ativo = by['cotitularidade_2'] || '';
+  const isCot3Ativo = String(cot3_ativo).toLowerCase().trim() === 'sim';
+
+  const cot3_nome = by['raz_o_social_ou_nome_completo_do_cotitular_2'] || by['raz_o_social_ou_nome_completo_cotitular_2'] || '';
   const cot3_nacionalidade = by['nacionalidade_cotitular_2'] || '';
   const cot3_estado_civil = by['estado_civil_cotitular_3'] || '';
   const cot3_rua = by['rua_av_do_cnpj_cotitular_2'] || '';
@@ -1424,10 +1427,11 @@ async function montarDados(card) {
   const cot3_cidade = by['cidade_cotitular_2'] || '';
   const cot3_uf = by['estado_cotitular_2'] || '';
   const cot3_numero = ''; // não informado
-  const cot3_cep = '';    // não informado
+  const cot3_cep = by['cep_cotitular_2'] || '';
   const cot3_rg = by['rg_cotitular_3'] || '';
   const cot3_cpf = by['cpf_cotitular_3'] || '';
   const cot3_cnpj = by['cnpj_cotitular_3'] || '';
+  const cot3_socio_nome = by['nome_s_cio_adminstrador_cotitular_2'] || '';
   const cot3_docSelecao = cot3_cnpj ? 'CNPJ' : (cot3_cpf ? 'CPF' : '');
 
   const emailCotitular3Envio = by['email_2'] || '';
@@ -1698,15 +1702,13 @@ async function montarDados(card) {
     })
     : '';
 
-  // Detecta se há cotitular 3
-  const hasCotitular3 = Boolean(
-    cot3_nome || cot3_cpf || cot3_cnpj || emailCotitular3Envio || telefoneCotitular3Envio
-  );
+  // Detecta se há cotitular 3 (BASEADO NA SINALIZAÇÃO 'Sim')
+  const hasCotitular3 = isCot3Ativo;
 
   // Contratante 3
   const contratante3Texto = hasCotitular3
     ? montarTextoContratante({
-      nome: cot3_nome || 'Cotitular 3',
+      nome: cot3_nome || 'Cotitular 2',
       nacionalidade: cot3_nacionalidade || '',
       estadoCivil: cot3_estado_civil || '',
       rua: cot3_rua || ruaCnpj,
@@ -1720,7 +1722,9 @@ async function montarDados(card) {
       cpf: cot3_cpf || '',
       cnpj: cot3_cnpj || '',
       telefone: telefoneCotitular3Envio,
-      email: emailCotitular3Envio
+      email: emailCotitular3Envio,
+      socioAdmNome: cot3_socio_nome,
+      socioAdmCpf: cot3_cpf
     })
     : '';
 
