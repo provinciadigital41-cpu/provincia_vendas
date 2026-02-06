@@ -1499,6 +1499,15 @@ async function montarDados(card) {
   const socioAdmNome = by['nome_completo_do_s_cio_administrador'] || '';
   const socioAdmCpf = by['cpf_do_s_cio_administrador'] || '';
 
+  // [NOVO] Sócio 2 (se houver)
+  const temSocio = by['tem_s_cio'] || '';
+  const isTemSocio = String(temSocio).toLowerCase().trim() === 'sim';
+
+  const socio2Nome = by['nome_do_s_cio'] || '';
+  const socio2Cpf = by['cpf_do_s_cio'] || by['cpf_do_s_cio_1'] || '';
+  const socio2EstadoCivil = by['estado_c_vil_s_cio'] || '';
+  const socio2Rg = by['rg_do_s_cio'] || '';
+
   // Vendedor (ainda usado apenas para exibição)
   const vendedor = (() => {
     const raw = by['vendedor_respons_vel'] || by['vendedor_respons_vel_1'] || by['respons_vel_5'];
@@ -1652,7 +1661,11 @@ async function montarDados(card) {
     email: contatoEmail,
     // Dados do sócio administrador (para PJ/CNPJ)
     socioAdmNome,
-    socioAdmCpf
+    socioAdmCpf,
+    // [NOVO] Sócio 2
+    socio2Nome: isTemSocio ? socio2Nome : '',
+    socio2Cpf: isTemSocio ? socio2Cpf : '',
+    socio2EstadoCivil: isTemSocio ? socio2EstadoCivil : ''
   });
 
   // Detecta se há cotitular com base nos campos dedicados OU nos antigos campos 2
@@ -1925,7 +1938,11 @@ function montarTextoContratante(info = {}) {
     email,
     // Dados do sócio administrador (para PJ/CNPJ)
     socioAdmNome = '',
-    socioAdmCpf = ''
+    socioAdmCpf = '',
+    // Sócio 2
+    socio2Nome = '',
+    socio2Cpf = '',
+    socio2EstadoCivil = ''
   } = info;
 
   const cpfDigits = onlyDigits(cpf);
@@ -1995,7 +2012,13 @@ function montarTextoContratante(info = {}) {
       const nacionalidadeUpper = (nacionalidade || 'BRASILEIRO(A)').toUpperCase();
       const estadoCivilUpper = (estadoCivil || '').toUpperCase();
 
-      textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR. ${socioNomeUpper}`;
+      if (socio2Nome) {
+        // Plural
+        textoPJ += `, NESTE ATO REPRESENTADA POR SEUS SÓCIOS ADMINSTRADORES: SR(A). ${socioNomeUpper}`;
+      } else {
+        // Singular
+        textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR. ${socioNomeUpper}`;
+      }
 
       // Adicionar qualificação do sócio
       const qualificacao = [nacionalidadeUpper];
@@ -2015,6 +2038,30 @@ function montarTextoContratante(info = {}) {
           );
         }
         textoPJ += `, PORTADOR(A) DO CPF: ${cpfSocioFmt}`;
+      }
+
+      // Adicionar Segundo Sócio se existir
+      if (socio2Nome) {
+        const socio2NomeUpper = socio2Nome.toUpperCase();
+        const socio2EstCivilUpper = (socio2EstadoCivil || 'BRASILEIRO(A)').toUpperCase(); // Fallback ou vazio? Prompt diz ESTADO CIVIL
+        // Ajuste: se socio2EstadoCivil vier vazio, fica vazio? O prompt pede "BRASILEIRO(A), ESTADO CIVIL, ..."
+        // Vou assumir NACIONALIDADE fixa BRASILEIRO(A) como no prompt "E NOME ..., BRASILEIRO(A), ESTADO CIVIL..."
+
+        textoPJ += ` E ${socio2NomeUpper}, BRASILEIRO(A)`;
+        if (socio2EstadoCivil) textoPJ += `, ${socio2EstadoCivil.toUpperCase()}`;
+        textoPJ += `, EMPRESÁRIO(A)`;
+
+        if (socio2Cpf) {
+          const s2CpfDigits = onlyDigits(socio2Cpf);
+          let s2CpfFmt = socio2Cpf;
+          if (s2CpfDigits.length === 11) {
+            s2CpfFmt = s2CpfDigits.replace(
+              /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
+              '$1.$2.$3-$4'
+            );
+          }
+          textoPJ += `, PORTADOR DO CPF ${s2CpfFmt}`;
+        }
       }
     }
 
