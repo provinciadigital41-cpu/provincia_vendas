@@ -1866,8 +1866,6 @@ async function montarDados(card) {
     linhas_marcas_espec_3: linhasMarcasEspec3,
     linhas_marcas_espec_4: linhasMarcasEspec4,
     linhas_marcas_espec_5: linhasMarcasEspec5,
-    // [TESTE] Texto bruto completo para marcas-espec_1
-    marcasEspecRaw1: marcasEspecRaw1,
 
     // Quantidades e descrições por categoria
     qtd_desc: {
@@ -2239,21 +2237,11 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Formulário de Classes
     'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
-    // ========== TESTE: marcas-espec_1 recebe todo o texto original ==========
-    // CÓDIGO ORIGINAL (COMENTADO PARA VOLTAR DEPOIS):
-    // 'marcas-espec_1': d.linhas_marcas_espec_1[0] || '',
-    // 'marcas-espec_2': d.linhas_marcas_espec_1[1] || '',
-    // 'marcas-espec_3': d.linhas_marcas_espec_1[2] || '',
-    // 'marcas-espec_4': d.linhas_marcas_espec_1[3] || '',
-    // 'marcas-espec_5': d.linhas_marcas_espec_1[4] || '',
-    // FIM DO CÓDIGO ORIGINAL
-    // CÓDIGO DE TESTE (marcas-espec_1 com texto completo):
-    'marcas-espec_1': d.marcasEspecRaw1 || '',
-    'marcas-espec_2': '',
-    'marcas-espec_3': '',
-    'marcas-espec_4': '',
-    'marcas-espec_5': '',
-    // ========== FIM DO TESTE ==========
+    'marcas-espec_1': d.linhas_marcas_espec_1[0] || '',
+    'marcas-espec_2': d.linhas_marcas_espec_1[1] || '',
+    'marcas-espec_3': d.linhas_marcas_espec_1[2] || '',
+    'marcas-espec_4': d.linhas_marcas_espec_1[3] || '',
+    'marcas-espec_5': d.linhas_marcas_espec_1[4] || '',
 
     'Cabeçalho - SERVIÇOS 2': d.cabecalho_servicos_2 || '',
     'marcas2-espec_1': d.linhas_marcas_espec_2[0] || '',
