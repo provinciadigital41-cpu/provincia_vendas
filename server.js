@@ -1318,6 +1318,38 @@ function parseListFromLongText(value, max = 30) {
   return arr;
 }
 
+/**
+ * Agrupa linhas por "Classe XX" — cada classe e suas especificações
+ * ficam em uma única string, separadas por vírgula.
+ * Ex: "Classe 06 - Abraçadeiras de metal, Construções de aço, ..."
+ */
+function parseClassesFromText(value, max = 30) {
+  const lines = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const classes = [];
+  let current = null;
+
+  for (const line of lines) {
+    // Detecta início de nova classe: "Classe 06", "Classe 11 -", etc.
+    if (/^Classe\s+\d+/i.test(line)) {
+      if (current !== null) classes.push(current);
+      current = line;
+    } else if (current !== null) {
+      current += ', ' + line;
+    } else {
+      // Linha antes de qualquer cabeçalho de classe — trata como standalone
+      current = line;
+    }
+  }
+  if (current !== null) classes.push(current);
+
+  console.log(`[CLASSES AGRUPADAS] ${classes.length} classe(s) encontrada(s):`, classes.map(c => c.substring(0, 60) + '...'));
+
+  // Preenche até max posições
+  const arr = [];
+  for (let i = 0; i < max; i++) arr.push(classes[i] || '');
+  return arr;
+}
+
 async function montarDados(card) {
   const by = toById(card);
 
@@ -1326,6 +1358,7 @@ async function montarDados(card) {
   const marcasEspecRaw1 = by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '';
   console.log('[DEBUG CLASSES] marcasEspecRaw1 bruto:', JSON.stringify(marcasEspecRaw1));
   const linhasMarcasEspec1 = parseListFromLongText(marcasEspecRaw1, 30);
+  const classesAgrupadas1 = parseClassesFromText(marcasEspecRaw1, 30);
   const classeSomenteNumeros1 = extractClasseNumbersFromText(marcasEspecRaw1);
   const tipoMarca1 = checklistToText(by['checklist_vertical'] || getFirstByNames(card, ['tipo de marca']));
 
@@ -1333,6 +1366,7 @@ async function montarDados(card) {
   const tituloMarca2 = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2', 'marca - 2']) || '';
   const marcasEspecRaw2 = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
   const linhasMarcasEspec2 = parseListFromLongText(marcasEspecRaw2, 30);
+  const classesAgrupadas2 = parseClassesFromText(marcasEspecRaw2, 30);
   const classeSomenteNumeros2 = extractClasseNumbersFromText(marcasEspecRaw2);
   const tipoMarca2 = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
 
@@ -1340,6 +1374,7 @@ async function montarDados(card) {
   const tituloMarca3 = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
   const marcasEspecRaw3 = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
   const linhasMarcasEspec3 = parseListFromLongText(marcasEspecRaw3, 30);
+  const classesAgrupadas3 = parseClassesFromText(marcasEspecRaw3, 30);
   const classeSomenteNumeros3 = extractClasseNumbersFromText(marcasEspecRaw3);
   const tipoMarca3 = checklistToText(by['copy_of_copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 3']));
 
@@ -1347,6 +1382,7 @@ async function montarDados(card) {
   const tituloMarca4 = by['marca_ou_patente_4'] || '';
   const marcasEspecRaw4 = by['classes_e_especifica_es_marca_4'] || '';
   const linhasMarcasEspec4 = parseListFromLongText(marcasEspecRaw4, 30);
+  const classesAgrupadas4 = parseClassesFromText(marcasEspecRaw4, 30);
   const classeSomenteNumeros4 = extractClasseNumbersFromText(marcasEspecRaw4);
   const tipoMarca4 = checklistToText(by['copy_of_tipo_de_marca_3'] || '');
 
@@ -1354,6 +1390,7 @@ async function montarDados(card) {
   const tituloMarca5 = by['marca_ou_patente_5'] || '';
   const marcasEspecRaw5 = by['copy_of_classes_e_especifica_es_marca_4'] || '';
   const linhasMarcasEspec5 = parseListFromLongText(marcasEspecRaw5, 30);
+  const classesAgrupadas5 = parseClassesFromText(marcasEspecRaw5, 30);
   const classeSomenteNumeros5 = extractClasseNumbersFromText(marcasEspecRaw5);
   const tipoMarca5 = checklistToText(by['copy_of_tipo_de_marca_3_1'] || '');
 
@@ -1863,11 +1900,15 @@ async function montarDados(card) {
     cabecalho_servicos_2: headersServicos.h2,
 
     linhas_marcas_espec_1: linhasMarcasEspec1,
-    marcas_espec_raw_1: marcasEspecRaw1,
     linhas_marcas_espec_2: linhasMarcasEspec2,
     linhas_marcas_espec_3: linhasMarcasEspec3,
     linhas_marcas_espec_4: linhasMarcasEspec4,
     linhas_marcas_espec_5: linhasMarcasEspec5,
+    classes_agrupadas_1: classesAgrupadas1,
+    classes_agrupadas_2: classesAgrupadas2,
+    classes_agrupadas_3: classesAgrupadas3,
+    classes_agrupadas_4: classesAgrupadas4,
+    classes_agrupadas_5: classesAgrupadas5,
 
     // Quantidades e descrições por categoria
     qtd_desc: {
@@ -2239,12 +2280,12 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Formulário de Classes
     'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
-    // [TESTE] Todo o conteúdo de classes em marcas-espec_1 com \n
-    'marcas-espec_1': d.marcas_espec_raw_1 || '',
-    'marcas-espec_2': '',
-    'marcas-espec_3': '',
-    'marcas-espec_4': '',
-    'marcas-espec_5': '',
+    // Classes agrupadas por "Classe XX" com especificações separadas por vírgula
+    'marcas-espec_1': d.classes_agrupadas_1[0] || '',
+    'marcas-espec_2': d.classes_agrupadas_1[1] || '',
+    'marcas-espec_3': d.classes_agrupadas_1[2] || '',
+    'marcas-espec_4': d.classes_agrupadas_1[3] || '',
+    'marcas-espec_5': d.classes_agrupadas_1[4] || '',
 
     'Cabeçalho - SERVIÇOS 2': d.cabecalho_servicos_2 || '',
     'marcas2-espec_1': d.linhas_marcas_espec_2[0] || '',
@@ -2288,7 +2329,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
   // Preencher até 30 linhas por segurança
   for (let i = 5; i < 30; i++) {
-    base[`marcas-espec_${i + 1}`] = '';  // [TESTE] Tudo em marcas-espec_1
+    base[`marcas-espec_${i + 1}`] = d.classes_agrupadas_1[i] || '';
     base[`marcas2-espec_${i - 4}`] = d.linhas_marcas_espec_2[i - 5] || '';
   }
 
@@ -2648,7 +2689,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   const varsObjValidated = {};
   for (const [key, value] of Object.entries(varsObj || {})) {
     let v = value == null ? '' : String(value);
-    v = v.replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '').trim();
+    v = v.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
     varsObjValidated[key] = v;
   }
 
