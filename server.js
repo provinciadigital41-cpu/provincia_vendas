@@ -1329,8 +1329,8 @@ function parseClassesFromText(value, max = 30) {
   let current = null;
 
   for (const line of lines) {
-    // Detecta início de nova classe: "Classe 06", "Classe 11 -", etc.
-    if (/^Classe\s+\d+/i.test(line)) {
+    // Detecta início de nova classe: "Classe 06", "Classe 11 -", "06 -", "11 -", "06 Abc", etc.
+    if (/^(?:Classe\s+)?\d+\s*(?:-\s*)?(?=\S)/i.test(line)) {
       if (current !== null) classes.push(current);
       current = line;
     } else if (current !== null) {
