@@ -1324,6 +1324,7 @@ async function montarDados(card) {
   // Marca 1 dados base
   const tituloMarca1 = by['marca'] || card.title || '';
   const marcasEspecRaw1 = by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '';
+  console.log('[DEBUG CLASSES] marcasEspecRaw1 bruto:', JSON.stringify(marcasEspecRaw1));
   const linhasMarcasEspec1 = parseListFromLongText(marcasEspecRaw1, 30);
   const classeSomenteNumeros1 = extractClasseNumbersFromText(marcasEspecRaw1);
   const tipoMarca1 = checklistToText(by['checklist_vertical'] || getFirstByNames(card, ['tipo de marca']));
@@ -1862,6 +1863,7 @@ async function montarDados(card) {
     cabecalho_servicos_2: headersServicos.h2,
 
     linhas_marcas_espec_1: linhasMarcasEspec1,
+    marcas_espec_raw_1: marcasEspecRaw1,
     linhas_marcas_espec_2: linhasMarcasEspec2,
     linhas_marcas_espec_3: linhasMarcasEspec3,
     linhas_marcas_espec_4: linhasMarcasEspec4,
@@ -2237,11 +2239,12 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Formulário de Classes
     'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
-    'marcas-espec_1': d.linhas_marcas_espec_1[0] || '',
-    'marcas-espec_2': d.linhas_marcas_espec_1[1] || '',
-    'marcas-espec_3': d.linhas_marcas_espec_1[2] || '',
-    'marcas-espec_4': d.linhas_marcas_espec_1[3] || '',
-    'marcas-espec_5': d.linhas_marcas_espec_1[4] || '',
+    // [TESTE] Todo o conteúdo de classes em marcas-espec_1 com \n
+    'marcas-espec_1': d.marcas_espec_raw_1 || '',
+    'marcas-espec_2': '',
+    'marcas-espec_3': '',
+    'marcas-espec_4': '',
+    'marcas-espec_5': '',
 
     'Cabeçalho - SERVIÇOS 2': d.cabecalho_servicos_2 || '',
     'marcas2-espec_1': d.linhas_marcas_espec_2[0] || '',
@@ -2285,7 +2288,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
   // Preencher até 30 linhas por segurança
   for (let i = 5; i < 30; i++) {
-    base[`marcas-espec_${i + 1}`] = d.linhas_marcas_espec_1[i] || '';
+    base[`marcas-espec_${i + 1}`] = '';  // [TESTE] Tudo em marcas-espec_1
     base[`marcas2-espec_${i - 4}`] = d.linhas_marcas_espec_2[i - 5] || '';
   }
 
@@ -2645,7 +2648,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   const varsObjValidated = {};
   for (const [key, value] of Object.entries(varsObj || {})) {
     let v = value == null ? '' : String(value);
-    v = v.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
+    v = v.replace(/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '').trim();
     varsObjValidated[key] = v;
   }
 
