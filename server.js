@@ -2183,6 +2183,12 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Formulário de Classes
     'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
+    // Tipo de marca (token no template Word: ${"tipo de marca"})
+    'tipo de marca': d.tipo1 || '',
+    'tipo de marca 2': d.tipo2 || '',
+    'tipo de marca 3': d.tipo3 || '',
+    'tipo de marca 4': d.tipo4 || '',
+    'tipo de marca 5': d.tipo5 || '',
     // Classes agrupadas por "Classe XX" / "NCL XX" com especificações separadas por vírgula
     'marcas-espec_1': d.classes_agrupadas_1[0] || '',
     'marcas-espec_2': d.classes_agrupadas_1[1] || '',
