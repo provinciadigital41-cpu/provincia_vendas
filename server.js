@@ -1291,6 +1291,8 @@ async function montarDados(card) {
   const contatoNome = by['nome_1'] || getFirstByNames(card, ['nome do contato', 'contratante', 'responsável legal', 'responsavel legal']) || '';
   const contatoEmail = by['email_de_contato'] || getFirstByNames(card, ['email', 'e-mail']) || '';
   const contatoTelefone = by['telefone_de_contato'] || getFirstByNames(card, ['telefone', 'celular', 'whatsapp', 'whats']) || '';
+  const nomeContato2 = by['nome_contato_2'] || '';
+  const nomeContato3 = by['nome_do_contato_3'] || '';
 
   // Campos de “contratante 2” antigos, se existirem
   const contato2Nome_old = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
@@ -1777,7 +1779,12 @@ async function montarDados(card) {
     risco_agregado: riscoAgregado,
 
     // Cláusula adicional
-    clausula_adicional: clausulaAdicional
+    clausula_adicional: clausulaAdicional,
+
+    // Nomes para assinatura da procuração
+    nome_assinatura_1: contatoNome || '',
+    nome_assinatura_2: nomeContato2 || '',
+    nome_assinatura_3: nomeContato3 || ''
   };
 }
 
@@ -2316,7 +2323,12 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
     // Informações do contrato relacionadas
     'Título': d.titulo || '',
     'Serviços': d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.OUTROS || '',
-    'Risco': d.risco_agregado || ''
+    'Risco': d.risco_agregado || '',
+
+    // Assinatura dos contratantes (apenas nomes)
+    'ASSINATURA CONTRATANTE 1': d.nome_assinatura_1 || d.nome || '',
+    'ASSINATURA CONTRATANTE 2': d.nome_assinatura_2 || '',
+    'ASSINATURA CONTRATANTE 3': d.nome_assinatura_3 || ''
   };
 
   return base;
