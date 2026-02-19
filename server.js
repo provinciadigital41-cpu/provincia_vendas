@@ -1544,335 +1544,336 @@ async function montarDados(card) {
   // Debug para acompanhar fluxo
   console.log(`[DEBUG CLAUSULA] clausulaLimpa após lógica de benefício: "${clausulaLimpa}"`);
 
-  // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
-  // Se já houver cláusula existente (após limpeza), concatena com quebra de linha; senão, usa apenas a do crédito programado
-  clausulaAdicional = clausulaLimpa
-    ? `${clausulaLimpa}\n\n${clausulaCreditoProgramado}`
-    : clausulaCreditoProgramado;
-  console.log(`[CLAUSULA] Crédito programado detectado - adicionando cláusula específica`);
-} else if (isFiliais) {
-  // Se for Filiais (e não for Crédito programado), remove o texto específico de observações e não tem cláusula adicional
-  clausulaAdicional = clausulaLimpa;
-  // Se após remover ficar vazio, deixa vazio
-  if (!clausulaAdicional) {
-    clausulaAdicional = '';
+  if (isCreditoProgramado) {
+    // Se for Crédito programado, SEMPRE adiciona a cláusula específica (independente de Filiais/Digital)
+    // Se já houver cláusula existente (após limpeza), concatena com quebra de linha; senão, usa apenas a do crédito programado
+    clausulaAdicional = clausulaLimpa
+      ? `${clausulaLimpa}\n\n${clausulaCreditoProgramado}`
+      : clausulaCreditoProgramado;
+    console.log(`[CLAUSULA] Crédito programado detectado - adicionando cláusula específica`);
+  } else if (isFiliais) {
+    // Se for Filiais (e não for Crédito programado), remove o texto específico de observações e não tem cláusula adicional
+    clausulaAdicional = clausulaLimpa;
+    // Se após remover ficar vazio, deixa vazio
+    if (!clausulaAdicional) {
+      clausulaAdicional = '';
+    }
+    console.log(`[CLAUSULA] Filiais (sem crédito programado) - cláusula final: "${clausulaAdicional.substring(0, 200)}"`);
+  } else {
+    // Caso padrão - remove o texto de observações se existir
+    clausulaAdicional = clausulaLimpa;
+    // Se após remover ficar vazio, usa o padrão
+    if (!clausulaAdicional) {
+      clausulaAdicional = 'Sem aditivos contratuais.';
+    }
   }
-  console.log(`[CLAUSULA] Filiais (sem crédito programado) - cláusula final: "${clausulaAdicional.substring(0, 200)}"`);
-} else {
-  // Caso padrão - remove o texto de observações se existir
-  clausulaAdicional = clausulaLimpa;
-  // Se após remover ficar vazio, usa o padrão
-  if (!clausulaAdicional) {
-    clausulaAdicional = 'Sem aditivos contratuais.';
+
+  // Garantir remoção final do texto das observações (sempre, independente de Filiais ou Digital)
+  if (clausulaAdicional) {
+    const antesRemocaoFinal = clausulaAdicional;
+    // Aplicar todas as regexes novamente para garantir remoção completa
+    clausulaAdicional = clausulaAdicional.replace(textoObservacoesRemover, '');
+    // Regex flexível - aceita qualquer coisa entre as palavras-chave
+    const regexFlexivelFinal = /Observações[:\s]*Entrada[^\n]*440[^\n]*TAXA[^\n]*6[^\n]*X[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+    clausulaAdicional = clausulaAdicional.replace(regexFlexivelFinal, '');
+    // Regex simples - busca por padrão mais simples (apenas palavras-chave)
+    const regexSimplesFinal = /Observações[^\n]*440[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
+    clausulaAdicional = clausulaAdicional.replace(regexSimplesFinal, '');
+    // Regex parcial - busca parcial por "Observações" seguido de "440" e "450"
+    const regexParcialFinal = /Observações[^\n]*?440[^\n]*?450[^\n]*?assessoria[^\n]*?Crédito[^\n]*?programado[^\n]*/gi;
+    clausulaAdicional = clausulaAdicional.replace(regexParcialFinal, '');
+    // Remover também variações com quebras de linha duplas
+    clausulaAdicional = clausulaAdicional.replace(/\n\n+/g, '\n').trim();
+
+    if (antesRemocaoFinal !== clausulaAdicional) {
+      console.log(`[CLAUSULA] Remoção final aplicada - texto removido: ${antesRemocaoFinal.length - clausulaAdicional.length} chars`);
+    }
   }
-}
 
-// Garantir remoção final do texto das observações (sempre, independente de Filiais ou Digital)
-if (clausulaAdicional) {
-  const antesRemocaoFinal = clausulaAdicional;
-  // Aplicar todas as regexes novamente para garantir remoção completa
-  clausulaAdicional = clausulaAdicional.replace(textoObservacoesRemover, '');
-  // Regex flexível - aceita qualquer coisa entre as palavras-chave
-  const regexFlexivelFinal = /Observações[:\s]*Entrada[^\n]*440[^\n]*TAXA[^\n]*6[^\n]*X[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
-  clausulaAdicional = clausulaAdicional.replace(regexFlexivelFinal, '');
-  // Regex simples - busca por padrão mais simples (apenas palavras-chave)
-  const regexSimplesFinal = /Observações[^\n]*440[^\n]*450[^\n]*assessoria[^\n]*Crédito[^\n]*programado[^\n]*/gi;
-  clausulaAdicional = clausulaAdicional.replace(regexSimplesFinal, '');
-  // Regex parcial - busca parcial por "Observações" seguido de "440" e "450"
-  const regexParcialFinal = /Observações[^\n]*?440[^\n]*?450[^\n]*?assessoria[^\n]*?Crédito[^\n]*?programado[^\n]*/gi;
-  clausulaAdicional = clausulaAdicional.replace(regexParcialFinal, '');
-  // Remover também variações com quebras de linha duplas
-  clausulaAdicional = clausulaAdicional.replace(/\n\n+/g, '\n').trim();
+  console.log(`[CLAUSULA] clausulaAdicional final (primeiros 300 chars): "${clausulaAdicional.substring(0, 300)}"`);
 
-  if (antesRemocaoFinal !== clausulaAdicional) {
-    console.log(`[CLAUSULA] Remoção final aplicada - texto removido: ${antesRemocaoFinal.length - clausulaAdicional.length} chars`);
-  }
-}
+  // Contratante 1
+  // [ADICIONAL] Campos do sócio administrador para formato PJ
+  const socioAdmNome = by['nome_completo_do_s_cio_administrador'] || '';
+  const socioAdmCpf = by['cpf_do_s_cio_administrador'] || '';
+  const numeroEnderecoCnpj = by['n_mero_endere_o_do_cnpj'] || numeroCnpj || '';
 
-console.log(`[CLAUSULA] clausulaAdicional final (primeiros 300 chars): "${clausulaAdicional.substring(0, 300)}"`);
+  const contratante1Texto = montarTextoContratante({
+    nome: by['r_social_ou_n_completo'] || contatoNome || '',
+    nacionalidade,
+    estadoCivil,
+    rua: ruaCnpj,
+    bairro: bairroCnpj,
+    numero: numeroEnderecoCnpj,
+    cidade: cidadeCnpj,
+    uf: ufCnpj,
+    cep: cepCnpj,
+    rg: by['rg'] || '',
+    docSelecao: selecaoCnpjOuCpf,
+    cpf: cpfCampo || cpfDoc,
+    cnpj: cnpjCampo || cnpjDoc,
+    telefone: contatoTelefone,
+    email: contatoEmail,
+    // Dados do sócio administrador para formato PJ
+    socioAdmNome,
+    socioAdmCpf,
+    // [NOVO] Sócio 2
+    socio2Nome: isTemSocio ? socio2Nome : '',
+    socio2Cpf: isTemSocio ? socio2Cpf : '',
+    socio2EstadoCivil: isTemSocio ? socio2EstadoCivil : ''
+  });
 
-// Contratante 1
-// [ADICIONAL] Campos do sócio administrador para formato PJ
-const socioAdmNome = by['nome_completo_do_s_cio_administrador'] || '';
-const socioAdmCpf = by['cpf_do_s_cio_administrador'] || '';
-const numeroEnderecoCnpj = by['n_mero_endere_o_do_cnpj'] || numeroCnpj || '';
+  // Detecta se há cotitular com base nos campos dedicados OU nos antigos campos 2
+  const hasCotitular = Boolean(
+    cot_nome || cot_nacionalidade || cot_estado_civil || cot_rua || cot_bairro || cot_cidade || cot_uf ||
+    cot_rg || cot_cpf || cot_cnpj || emailCotitularEnvio || telefoneCotitularEnvio ||
+    contato2Nome_old || contato2Email_old || contato2Telefone_old
+  );
 
-const contratante1Texto = montarTextoContratante({
-  nome: by['r_social_ou_n_completo'] || contatoNome || '',
-  nacionalidade,
-  estadoCivil,
-  rua: ruaCnpj,
-  bairro: bairroCnpj,
-  numero: numeroEnderecoCnpj,
-  cidade: cidadeCnpj,
-  uf: ufCnpj,
-  cep: cepCnpj,
-  rg: by['rg'] || '',
-  docSelecao: selecaoCnpjOuCpf,
-  cpf: cpfCampo || cpfDoc,
-  cnpj: cnpjCampo || cnpjDoc,
-  telefone: contatoTelefone,
-  email: contatoEmail,
-  // Dados do sócio administrador para formato PJ
-  socioAdmNome,
-  socioAdmCpf,
-  // [NOVO] Sócio 2
-  socio2Nome: isTemSocio ? socio2Nome : '',
-  socio2Cpf: isTemSocio ? socio2Cpf : '',
-  socio2EstadoCivil: isTemSocio ? socio2EstadoCivil : ''
-});
+  // Contratante 2 com os CAMPOS DO COTITULAR como fonte principal
+  const contratante2Texto = hasCotitular
+    ? montarTextoContratante({
+      nome: cot_nome || contato2Nome_old || 'Cotitular',
+      nacionalidade: cot_nacionalidade || '',
+      estadoCivil: cot_estado_civil || '',
+      rua: cot_rua || ruaCnpj,
+      bairro: cot_bairro || bairroCnpj,
+      numero: cot_numero || '',
+      cidade: cot_cidade || cidadeCnpj,
+      uf: cot_uf || ufCnpj,
+      cep: cot_cep || '',
+      rg: cot_rg || '',
+      docSelecao: cot_docSelecao,
+      cpf: cot_cpf || '',
+      cnpj: cot_cnpj || '',
+      telefone: telefoneCotitularEnvio || contato2Telefone_old,
+      email: emailCotitularEnvio || contato2Email_old,
+      socioAdmNome: cot_socio_nome,
+      socioAdmCpf: cot_cpf
+    })
+    : '';
 
-// Detecta se há cotitular com base nos campos dedicados OU nos antigos campos 2
-const hasCotitular = Boolean(
-  cot_nome || cot_nacionalidade || cot_estado_civil || cot_rua || cot_bairro || cot_cidade || cot_uf ||
-  cot_rg || cot_cpf || cot_cnpj || emailCotitularEnvio || telefoneCotitularEnvio ||
-  contato2Nome_old || contato2Email_old || contato2Telefone_old
-);
+  // Detecta se há cotitular 3 (BASEADO NA SINALIZAÇÃO 'Sim')
+  const hasCotitular3 = isCot3Ativo;
 
-// Contratante 2 com os CAMPOS DO COTITULAR como fonte principal
-const contratante2Texto = hasCotitular
-  ? montarTextoContratante({
-    nome: cot_nome || contato2Nome_old || 'Cotitular',
-    nacionalidade: cot_nacionalidade || '',
-    estadoCivil: cot_estado_civil || '',
-    rua: cot_rua || ruaCnpj,
-    bairro: cot_bairro || bairroCnpj,
-    numero: cot_numero || '',
-    cidade: cot_cidade || cidadeCnpj,
-    uf: cot_uf || ufCnpj,
-    cep: cot_cep || '',
-    rg: cot_rg || '',
-    docSelecao: cot_docSelecao,
-    cpf: cot_cpf || '',
-    cnpj: cot_cnpj || '',
-    telefone: telefoneCotitularEnvio || contato2Telefone_old,
-    email: emailCotitularEnvio || contato2Email_old,
-    socioAdmNome: cot_socio_nome,
-    socioAdmCpf: cot_cpf
-  })
-  : '';
+  // Contratante 3
+  const contratante3Texto = hasCotitular3
+    ? montarTextoContratante({
+      nome: cot3_nome || 'Cotitular 3',
+      nacionalidade: cot3_nacionalidade || '',
+      estadoCivil: cot3_estado_civil || '',
+      rua: cot3_rua || ruaCnpj,
+      bairro: cot3_bairro || bairroCnpj,
+      numero: cot3_numero || '',
+      cidade: cot3_cidade || cidadeCnpj,
+      uf: cot3_uf || ufCnpj,
+      cep: cot3_cep || '',
+      rg: cot3_rg || '',
+      docSelecao: cot3_docSelecao,
+      cpf: cot3_cpf || '',
+      cnpj: cot3_cnpj || '',
+      telefone: telefoneCotitular3Envio,
+      email: emailCotitular3Envio,
+      socioAdmNome: cot3_socio_nome,
+      socioAdmCpf: cot3_cpf
+    })
+    : '';
 
-// Detecta se há cotitular 3 (BASEADO NA SINALIZAÇÃO 'Sim')
-const hasCotitular3 = isCot3Ativo;
+  // Dados para contato 1 e 2
+  const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
+  const dadosContato2 = hasCotitular
+    ? [
+      (cot_nome || contato2Nome_old || 'Cotitular'),
+      (telefoneCotitularEnvio || contato2Telefone_old || ''),
+      (emailCotitularEnvio || contato2Email_old || '')
+    ].filter(Boolean).join(' | ')
+    : '';
 
-// Contratante 3
-const contratante3Texto = hasCotitular3
-  ? montarTextoContratante({
-    nome: cot3_nome || 'Cotitular 3',
-    nacionalidade: cot3_nacionalidade || '',
-    estadoCivil: cot3_estado_civil || '',
-    rua: cot3_rua || ruaCnpj,
-    bairro: cot3_bairro || bairroCnpj,
-    numero: cot3_numero || '',
-    cidade: cot3_cidade || cidadeCnpj,
-    uf: cot3_uf || ufCnpj,
-    cep: cot3_cep || '',
-    rg: cot3_rg || '',
-    docSelecao: cot3_docSelecao,
-    cpf: cot3_cpf || '',
-    cnpj: cot3_cnpj || '',
-    telefone: telefoneCotitular3Envio,
-    email: emailCotitular3Envio,
-    socioAdmNome: cot3_socio_nome,
-    socioAdmCpf: cot3_cpf
-  })
-  : '';
+  // Entradas consolidadas
+  const entries = [
+    { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1 },
+    { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2 },
+    { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3 },
+    { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4 },
+    { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5 },
+  ].filter(e => String(e.title || e.stmt || '').trim());
 
-// Dados para contato 1 e 2
-const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
-const dadosContato2 = hasCotitular
-  ? [
-    (cot_nome || contato2Nome_old || 'Cotitular'),
-    (telefoneCotitularEnvio || contato2Telefone_old || ''),
-    (emailCotitularEnvio || contato2Email_old || '')
-  ].filter(Boolean).join(' | ')
-  : '';
+  // Agrupamento por kind
+  const byKind = { 'MARCA': [], 'PATENTE': [], 'DESENHO INDUSTRIAL': [], 'COPYRIGHT/DIREITO AUTORAL': [], 'OUTROS': [] };
+  entries.forEach(e => byKind[e.kind].push(e));
 
-// Entradas consolidadas
-const entries = [
-  { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1 },
-  { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2 },
-  { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3 },
-  { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4 },
-  { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5 },
-].filter(e => String(e.title || e.stmt || '').trim());
+  // Linhas “quantidade + descrição” (sem normalizar o texto do serviço)
+  const makeQtdDescLine = (kind, arr) => {
+    if (!arr.length) return '';
+    const baseServico = String(arr[0].stmt || '').trim() || (kind === 'MARCA' ? 'Registro de Marca' : kind);
+    const qtd = arr.length;
+    return `${qtd} ${baseServico} JUNTO AO INPI`;
+  };
+  const qtdDesc = {
+    MARCA: makeQtdDescLine('MARCA', byKind['MARCA']),
+    PATENTE: makeQtdDescLine('PATENTE', byKind['PATENTE']),
+    'DESENHO INDUSTRIAL': makeQtdDescLine('DESENHO INDUSTRIAL', byKind['DESENHO INDUSTRIAL']),
+    'COPYRIGHT/DIREITO AUTORAL': makeQtdDescLine('COPYRIGHT/DIREITO AUTORAL', byKind['COPYRIGHT/DIREITO AUTORAL']),
+    OUTROS: makeQtdDescLine('OUTROS', byKind['OUTROS'])
+  };
 
-// Agrupamento por kind
-const byKind = { 'MARCA': [], 'PATENTE': [], 'DESENHO INDUSTRIAL': [], 'COPYRIGHT/DIREITO AUTORAL': [], 'OUTROS': [] };
-entries.forEach(e => byKind[e.kind].push(e));
+  // Detalhes por item até 5
+  const detalhes = {
+    MARCA: ['', '', '', '', ''],
+    PATENTE: ['', '', '', '', ''],
+    'DESENHO INDUSTRIAL': ['', '', '', '', ''],
+    'COPYRIGHT/DIREITO AUTORAL': ['', '', '', '', ''],
+    OUTROS: ['', '', '', '', '']
+  };
+  ['MARCA', 'PATENTE', 'DESENHO INDUSTRIAL', 'COPYRIGHT/DIREITO AUTORAL', 'OUTROS'].forEach(k => {
+    const arr = byKind[k];
+    for (let i = 0; i < 5; i++) {
+      const e = arr[i];
+      if (!e) { detalhes[k][i] = ''; continue; }
+      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes);
+      detalhes[k][i] = cab;
+    }
+  });
 
-// Linhas “quantidade + descrição” (sem normalizar o texto do serviço)
-const makeQtdDescLine = (kind, arr) => {
-  if (!arr.length) return '';
-  const baseServico = String(arr[0].stmt || '').trim() || (kind === 'MARCA' ? 'Registro de Marca' : kind);
-  const qtd = arr.length;
-  return `${qtd} ${baseServico} JUNTO AO INPI`;
-};
-const qtdDesc = {
-  MARCA: makeQtdDescLine('MARCA', byKind['MARCA']),
-  PATENTE: makeQtdDescLine('PATENTE', byKind['PATENTE']),
-  'DESENHO INDUSTRIAL': makeQtdDescLine('DESENHO INDUSTRIAL', byKind['DESENHO INDUSTRIAL']),
-  'COPYRIGHT/DIREITO AUTORAL': makeQtdDescLine('COPYRIGHT/DIREITO AUTORAL', byKind['COPYRIGHT/DIREITO AUTORAL']),
-  OUTROS: makeQtdDescLine('OUTROS', byKind['OUTROS'])
-};
+  // Cabeçalhos “SERVIÇOS” para classes
+  const headersServicos = {
+    h1: byKind['MARCA'][0] ? `MARCA: ${byKind['MARCA'][0].title || ''}` : '',
+    h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title || ''}` : ''
+  };
 
-// Detalhes por item até 5
-const detalhes = {
-  MARCA: ['', '', '', '', ''],
-  PATENTE: ['', '', '', '', ''],
-  'DESENHO INDUSTRIAL': ['', '', '', '', ''],
-  'COPYRIGHT/DIREITO AUTORAL': ['', '', '', '', ''],
-  OUTROS: ['', '', '', '', '']
-};
-['MARCA', 'PATENTE', 'DESENHO INDUSTRIAL', 'COPYRIGHT/DIREITO AUTORAL', 'OUTROS'].forEach(k => {
-  const arr = byKind[k];
-  for (let i = 0; i < 5; i++) {
-    const e = arr[i];
-    if (!e) { detalhes[k][i] = ''; continue; }
-    const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes);
-    detalhes[k][i] = cab;
-  }
-});
+  // Risco agregado formatado com nome do tipo e do item
+  const riscoAgregado = entries
+    .map(e => {
+      const tipo = e.kind || '';
+      const nm = e.title || '';
+      const r = String(e.risco || '').trim();
+      if (!tipo && !nm && !r) return '';
+      return `${tipo}: ${nm} - RISCO: ${r || 'Não informado'}`;
+    })
+    .filter(Boolean)
+    .join(', ');
 
-// Cabeçalhos “SERVIÇOS” para classes
-const headersServicos = {
-  h1: byKind['MARCA'][0] ? `MARCA: ${byKind['MARCA'][0].title || ''}` : '',
-  h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title || ''}` : ''
-};
+  console.log(`[MONTAR_DADOS] card.id: ${card.id}, tipo: ${typeof card.id}`);
+  const cardIdValue = card.id ? String(card.id) : '';
+  console.log(`[MONTAR_DADOS] cardIdValue: "${cardIdValue}"`);
 
-// Risco agregado formatado com nome do tipo e do item
-const riscoAgregado = entries
-  .map(e => {
-    const tipo = e.kind || '';
-    const nm = e.title || '';
-    const r = String(e.risco || '').trim();
-    if (!tipo && !nm && !r) return '';
-    return `${tipo}: ${nm} - RISCO: ${r || 'Não informado'}`;
-  })
-  .filter(Boolean)
-  .join(', ');
+  return {
+    cardId: cardIdValue,
+    templateToUse,
 
-console.log(`[MONTAR_DADOS] card.id: ${card.id}, tipo: ${typeof card.id}`);
-const cardIdValue = card.id ? String(card.id) : '';
-console.log(`[MONTAR_DADOS] cardIdValue: "${cardIdValue}"`);
+    // Identificação
+    titulo: tituloMarca1 || card.title || '',
+    nome: contatoNome || (by['r_social_ou_n_completo'] || ''),
+    cpf: cpfDoc,
+    cnpj: cnpjDoc,
+    rg: by['rg'] || '',
+    estado_civil: estadoCivil,
 
-return {
-  cardId: cardIdValue,
-  templateToUse,
+    // Doc específicos
+    cpf_campo: cpfCampo,
+    cnpj_campo: cnpjCampo,
+    selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
 
-  // Identificação
-  titulo: tituloMarca1 || card.title || '',
-  nome: contatoNome || (by['r_social_ou_n_completo'] || ''),
-  cpf: cpfDoc,
-  cnpj: cnpjDoc,
-  rg: by['rg'] || '',
-  estado_civil: estadoCivil,
+    // Contatos
+    email: contatoEmail || '',
+    telefone: contatoTelefone || '',
+    dados_contato_1: dadosContato1,
+    dados_contato_2: dadosContato2,
 
-  // Doc específicos
-  cpf_campo: cpfCampo,
-  cnpj_campo: cnpjCampo,
-  selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
+    // Textos completos dos contratantes
+    contratante_1_texto: contratante1Texto,
+    contratante_2_texto: contratante2Texto,
+    contratante_3_texto: contratante3Texto, // [NOVO]
 
-  // Contatos
-  email: contatoEmail || '',
-  telefone: contatoTelefone || '',
-  dados_contato_1: dadosContato1,
-  dados_contato_2: dadosContato2,
+    // Nomes dos contratantes para campos de assinatura
+    // Se for CNPJ (isSelecaoCnpj), usa o nome do sócio administrador
+    nome_contratante_1: ((isSelecaoCnpj && socioAdmNome) ? socioAdmNome : (by['r_social_ou_n_completo'] || contatoNome || '')).toUpperCase(),
+    nome_contratante_2: (hasCotitular ? (cot_nome || contato2Nome_old || '') : '').toUpperCase(),
+    nome_contratante_3: (hasCotitular3 ? (cot3_nome || '') : '').toUpperCase(),
 
-  // Textos completos dos contratantes
-  contratante_1_texto: contratante1Texto,
-  contratante_2_texto: contratante2Texto,
-  contratante_3_texto: contratante3Texto, // [NOVO]
+    // Email para assinatura
+    email_envio_contrato: emailEnvioContrato,
+    email_cotitular_envio: emailCotitularEnvio,
+    email_cotitular_3_envio: emailCotitular3Envio, // [NOVO]
 
-  // Nomes dos contratantes para campos de assinatura
-  // Se for CNPJ (isSelecaoCnpj), usa o nome do sócio administrador
-  nome_contratante_1: ((isSelecaoCnpj && socioAdmNome) ? socioAdmNome : (by['r_social_ou_n_completo'] || contatoNome || '')).toUpperCase(),
-  nome_contratante_2: (hasCotitular ? (cot_nome || contato2Nome_old || '') : '').toUpperCase(),
-  nome_contratante_3: (hasCotitular3 ? (cot3_nome || '') : '').toUpperCase(),
+    // Telefone para envio
+    telefone_envio_contrato: telefoneEnvioContrato,
+    telefone_cotitular_envio: telefoneCotitularEnvio,
+    telefone_cotitular_3_envio: telefoneCotitular3Envio, // [NOVO]
 
-  // Email para assinatura
-  email_envio_contrato: emailEnvioContrato,
-  email_cotitular_envio: emailCotitularEnvio,
-  email_cotitular_3_envio: emailCotitular3Envio, // [NOVO]
+    // MARCA 1..5: linhas e cabeçalhos do formulário
+    cabecalho_servicos_1: headersServicos.h1,
+    cabecalho_servicos_2: headersServicos.h2,
 
-  // Telefone para envio
-  telefone_envio_contrato: telefoneEnvioContrato,
-  telefone_cotitular_envio: telefoneCotitularEnvio,
-  telefone_cotitular_3_envio: telefoneCotitular3Envio, // [NOVO]
+    linhas_marcas_espec_1: linhasMarcasEspec1,
+    linhas_marcas_espec_2: linhasMarcasEspec2,
+    linhas_marcas_espec_3: linhasMarcasEspec3,
+    linhas_marcas_espec_4: linhasMarcasEspec4,
+    linhas_marcas_espec_5: linhasMarcasEspec5,
+    classes_agrupadas_1: classesAgrupadas1,
+    classes_agrupadas_2: classesAgrupadas2,
+    classes_agrupadas_3: classesAgrupadas3,
+    classes_agrupadas_4: classesAgrupadas4,
+    classes_agrupadas_5: classesAgrupadas5,
 
-  // MARCA 1..5: linhas e cabeçalhos do formulário
-  cabecalho_servicos_1: headersServicos.h1,
-  cabecalho_servicos_2: headersServicos.h2,
+    // Quantidades e descrições por categoria
+    qtd_desc: {
+      MARCA: qtdDesc['MARCA'],
+      PATENTE: qtdDesc['PATENTE'],
+      DI: qtdDesc['DESENHO INDUSTRIAL'],
+      COPY: qtdDesc['COPYRIGHT/DIREITO AUTORAL'],
+      OUTROS: qtdDesc['OUTROS']
+    },
 
-  linhas_marcas_espec_1: linhasMarcasEspec1,
-  linhas_marcas_espec_2: linhasMarcasEspec2,
-  linhas_marcas_espec_3: linhasMarcasEspec3,
-  linhas_marcas_espec_4: linhasMarcasEspec4,
-  linhas_marcas_espec_5: linhasMarcasEspec5,
-  classes_agrupadas_1: classesAgrupadas1,
-  classes_agrupadas_2: classesAgrupadas2,
-  classes_agrupadas_3: classesAgrupadas3,
-  classes_agrupadas_4: classesAgrupadas4,
-  classes_agrupadas_5: classesAgrupadas5,
+    // Detalhes por categoria até 5
+    det: detalhes,
 
-  // Quantidades e descrições por categoria
-  qtd_desc: {
-    MARCA: qtdDesc['MARCA'],
-    PATENTE: qtdDesc['PATENTE'],
-    DI: qtdDesc['DESENHO INDUSTRIAL'],
-    COPY: qtdDesc['COPYRIGHT/DIREITO AUTORAL'],
-    OUTROS: qtdDesc['OUTROS']
-  },
+    // Classes e tipos por marca
+    classe1: classeSomenteNumeros1, tipo1: tipoMarca1, nome1: tituloMarca1,
+    classe2: classeSomenteNumeros2, tipo2: tipoMarca2, nome2: tituloMarca2,
+    classe3: classeSomenteNumeros3, tipo3: tipoMarca3, nome3: tituloMarca3,
+    classe4: classeSomenteNumeros4, tipo4: tipoMarca4, nome4: tituloMarca4,
+    classe5: classeSomenteNumeros5, tipo5: tipoMarca5, nome5: tituloMarca5,
 
-  // Detalhes por categoria até 5
-  det: detalhes,
+    // Assessoria
+    parcelas: nParcelas,
+    valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
+    forma_pagto_assessoria: formaAss,
+    data_pagto_assessoria: dataPagtoAssessoria,
 
-  // Classes e tipos por marca
-  classe1: classeSomenteNumeros1, tipo1: tipoMarca1, nome1: tituloMarca1,
-  classe2: classeSomenteNumeros2, tipo2: tipoMarca2, nome2: tituloMarca2,
-  classe3: classeSomenteNumeros3, tipo3: tipoMarca3, nome3: tituloMarca3,
-  classe4: classeSomenteNumeros4, tipo4: tipoMarca4, nome4: tituloMarca4,
-  classe5: classeSomenteNumeros5, tipo5: tipoMarca5, nome5: tituloMarca5,
+    // Pesquisa
+    valor_pesquisa: pesquisaIsenta ? 'ISENTA' : 'R$ 98,00',
+    forma_pesquisa: formaPesquisa,
+    data_pesquisa: dataPesquisa,
 
-  // Assessoria
-  parcelas: nParcelas,
-  valor_total: valorAssessoria ? toBRL(valorAssessoria) : '',
-  forma_pagto_assessoria: formaAss,
-  data_pagto_assessoria: dataPagtoAssessoria,
+    // Taxa
+    taxa_faixa: taxaFaixaRaw || '',
+    valor_taxa_brl: valorTaxaBRL,
+    forma_pagto_taxa: formaPagtoTaxa,
+    data_pagto_taxa: dataPagtoTaxa,
 
-  // Pesquisa
-  valor_pesquisa: pesquisaIsenta ? 'ISENTA' : 'R$ 98,00',
-  forma_pesquisa: formaPesquisa,
-  data_pesquisa: dataPesquisa,
+    // Endereço
+    cep_cnpj: cepCnpj,
+    rua_cnpj: ruaCnpj,
+    bairro_cnpj: bairroCnpj,
+    cidade_cnpj: cidadeCnpj,
+    uf_cnpj: ufCnpj,
+    numero_cnpj: numeroCnpj,
 
-  // Taxa
-  taxa_faixa: taxaFaixaRaw || '',
-  valor_taxa_brl: valorTaxaBRL,
-  forma_pagto_taxa: formaPagtoTaxa,
-  data_pagto_taxa: dataPagtoTaxa,
+    // Vendedor
+    vendedor,
 
-  // Endereço
-  cep_cnpj: cepCnpj,
-  rua_cnpj: ruaCnpj,
-  bairro_cnpj: bairroCnpj,
-  cidade_cnpj: cidadeCnpj,
-  uf_cnpj: ufCnpj,
-  numero_cnpj: numeroCnpj,
+    // Risco agregado
+    risco_agregado: riscoAgregado,
 
-  // Vendedor
-  vendedor,
+    // Cláusula adicional
+    clausula_adicional: clausulaAdicional,
 
-  // Risco agregado
-  risco_agregado: riscoAgregado,
-
-  // Cláusula adicional
-  clausula_adicional: clausulaAdicional,
-
-  // Nomes para assinatura da procuração
-  nome_assinatura_1: contatoNome || '',
-  nome_assinatura_2: nomeContato2 || '',
-  nome_assinatura_3: nomeContato3 || ''
-};
+    // Nomes para assinatura da procuração
+    nome_assinatura_1: contatoNome || '',
+    nome_assinatura_2: nomeContato2 || '',
+    nome_assinatura_3: nomeContato3 || ''
+  };
 }
 
 // NOVA VERSÃO — Qualificação separada para CPF x CNPJ
