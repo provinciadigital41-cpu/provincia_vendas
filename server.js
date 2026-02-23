@@ -1419,6 +1419,9 @@ async function montarDados(card) {
   const valorAssessoria = pickValorAssessoria(card);
   const formaAss = by['copy_of_tipo_de_pagamento'] || getFirstByNames(card, ['tipo de pagamento assessoria']) || '';
 
+  // [NOVO] Campo de condições de pagamento livres
+  const descreva_condicoes = by['descreva_condi_es_de_pagamento'] || '';
+
   // TAXA
   // [MODIFICADO] Agora usa o campo 'valor_total_da_taxa' diretamente
   const valorTaxaRaw = by['valor_total_da_taxa'] || getFirstByNames(card, ['valor_total_da_taxa']) || '';
@@ -1872,7 +1875,10 @@ async function montarDados(card) {
     // Nomes para assinatura da procuração
     nome_assinatura_1: contatoNome || '',
     nome_assinatura_2: nomeContato2 || '',
-    nome_assinatura_3: nomeContato3 || ''
+    nome_assinatura_3: nomeContato3 || '',
+
+    // [NOVO] Campo descreva condições de pagamento (raw do Pipefy)
+    descreva_condicoes_de_pagamento: descreva_condicoes
   };
 }
 
@@ -2228,7 +2234,21 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     UF: d.uf_cnpj || '',
 
     // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || ''
+    'clausula-adicional': d.clausula_adicional || '',
+
+    // [NOVO] Condições de pagamento (campo condicional)
+    // Se o campo 'Descreva Condições de Pagamento' (descreva_condi_es_de_pagamento) vier preenchido,
+    // usa esse texto; caso contrário monta o texto padrão com Taxa + Parcelas de Assessoria.
+    'Condicoes de pagamento': (() => {
+      if (d.descreva_condicoes_de_pagamento && String(d.descreva_condicoes_de_pagamento).trim()) {
+        return String(d.descreva_condicoes_de_pagamento).trim();
+      }
+      const taxa = d.valor_taxa_brl || '';
+      const nParcelasStr = String(d.parcelas || '1');
+      const valorParcelaCalc = toBRL(parcelaNum > 0 ? valorTotalNum / parcelaNum : 0);
+      const formaPagto = d.forma_pagto_assessoria || '';
+      return `Entrada R$ ${taxa} referente a TAXA + ${nParcelasStr} X ${valorParcelaCalc} da assessoria no ${formaPagto}.`;
+    })()
   };
 
   // Preencher até 30 linhas por segurança
@@ -2380,7 +2400,21 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     UF: d.uf_cnpj || '',
 
     // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || ''
+    'clausula-adicional': d.clausula_adicional || '',
+
+    // [NOVO] Condições de pagamento (campo condicional)
+    // Se o campo 'Descreva Condições de Pagamento' (descreva_condi_es_de_pagamento) vier preenchido,
+    // usa esse texto; caso contrário monta o texto padrão com Taxa + Parcelas de Assessoria.
+    'Condicoes de pagamento': (() => {
+      if (d.descreva_condicoes_de_pagamento && String(d.descreva_condicoes_de_pagamento).trim()) {
+        return String(d.descreva_condicoes_de_pagamento).trim();
+      }
+      const taxa = d.valor_taxa_brl || '';
+      const nParcelas = String(d.parcelas || '1');
+      const valorParcela = toBRL(parcelaNum > 0 ? valorTotalNum / parcelaNum : 0);
+      const formaPagto = d.forma_pagto_assessoria || '';
+      return `Entrada R$ ${taxa} referente a TAXA + ${nParcelas} X ${valorParcela} da assessoria no ${formaPagto}.`;
+    })()
   };
 
   return base;
