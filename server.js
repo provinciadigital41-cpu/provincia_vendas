@@ -3272,35 +3272,54 @@ app.get('/lead/:token', async (req, res) => {
     const html = `
 <!doctype html><html lang="pt-BR"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Revisar contrato</title>
+<title>Província Marcas — Revisar Contrato</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;margin:0;background:#f7f7f7;color:#111}
-  .wrap{max-width:920px;margin:24px auto;padding:0 16px}
-  .card{background:#fff;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:24px;margin-bottom:16px}
-  h1{font-size:22px;margin:0 0 12px}
-  h2{font-size:16px;margin:24px 0 8px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:#f4f4f4;color:#111;min-height:100vh;display:flex;flex-direction:column}
+  .header{background:#000;padding:14px 24px;display:flex;align-items:center;justify-content:center}
+  .header img{height:44px;object-fit:contain}
+  .wrap{max-width:940px;margin:28px auto;padding:0 16px;flex:1}
+  .card{background:#fff;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.08);overflow:hidden;margin-bottom:20px}
+  .card-header{background:#000;padding:16px 24px}
+  .card-header h1,.card-header h2{font-family:'Oswald',sans-serif;color:#FFE200;text-transform:uppercase;letter-spacing:.5px}
+  .card-header h1{font-size:20px;font-weight:700}
+  .card-header h2{font-size:15px;font-weight:600;margin-top:0}
+  .card-body{padding:20px 24px}
+  h2{font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#FFE200;background:#000;padding:8px 12px;border-radius:6px;margin:20px 0 10px}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-  .btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600;cursor:pointer}
-  .muted{color:#666}
-  .label{font-weight:700}
-  .tag{display:inline-block;background:#111;color:#fff;border-radius:8px;padding:4px 8px;font-size:12px;margin-left:8px}
+  .field{background:#f8f8f8;border-left:3px solid #FFE200;padding:10px 12px;border-radius:6px}
+  .label{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
+  .value{font-size:14px;color:#111;line-height:1.5}
+  .btn{display:inline-block;padding:13px 24px;border-radius:8px;text-decoration:none;border:0;background:#FFE200;color:#000;font-family:'Oswald',sans-serif;font-size:15px;font-weight:700;letter-spacing:.5px;cursor:pointer;transition:filter .15s}
+  .btn:hover{filter:brightness(.9)}
+  .muted{color:#888;font-size:13px;margin-top:10px}
+  .tag{display:inline-block;background:#FFE200;color:#000;border-radius:6px;padding:3px 10px;font-size:12px;font-family:'Oswald',sans-serif;font-weight:700;margin-left:8px;vertical-align:middle}
+  .footer{background:#000;padding:12px 24px;text-align:center;font-size:12px;color:#888;font-family:'Oswald',sans-serif;letter-spacing:.5px}
+  .footer span{color:#FFE200}
 </style>
+<div class="header">
+  <img src="https://provinciamarcas.com.br/wp-content/uploads/2025/12/provincia-marcas-e-patentes-pensou-criou-registrou-logo.png" alt="Província Marcas" onerror="this.style.display='none'">
+</div>
 <div class="wrap">
   <div class="card">
-    <h1>Revisar dados do contrato <span class="tag">Card #${card.id}</span></h1>
+    <div class="card-header">
+      <h1>Revisar dados do contrato <span class="tag">Card #${card.id}</span></h1>
+    </div>
+    <div class="card-body">
 
     <h2>Informações Gerais</h2>
     <div class="grid">
-      <div><div class="label">N° de contrato</div><div>${card.id}</div></div>
-      <div><div class="label">Tipo de Unidade</div><div>${tipoUnidade}</div></div>
+      <div class="field"><div class="label">N° de contrato</div><div class="value">${card.id}</div></div>
+      <div class="field"><div class="label">Tipo de Unidade</div><div class="value">${tipoUnidade}</div></div>
     </div>
 
     <h2>Contratante(s)</h2>
     <div class="grid">
-      <div><div class="label">Contratante 1</div><div>${d.contratante_1_texto || '-'}</div></div>
-      <div><div class="label">Contratante 2</div><div>${d.contratante_2_texto || '-'}</div></div>
-      <div><div class="label">Contratante 3</div><div>${d.contratante_3_texto || '-'}</div></div>
+      <div class="field"><div class="label">Contratante 1</div><div class="value">${d.contratante_1_texto || '-'}</div></div>
+      <div class="field"><div class="label">Contratante 2</div><div class="value">${d.contratante_2_texto || '-'}</div></div>
+      <div class="field"><div class="label">Contratante 3</div><div class="value">${d.contratante_3_texto || '-'}</div></div>
     </div>
 
     <h2>Contato</h2>
@@ -3329,12 +3348,17 @@ app.get('/lead/:token', async (req, res) => {
       <div><div class="label">Valor Taxa</div><div>${d.valor_taxa_brl || '-'}</div></div>
     </div>
 
-    <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate" style="margin-top:24px">
-      <button class="btn" type="submit">Gerar contrato</button>
-    </form>
-    <p class="muted" style="margin-top:12px">Ao clicar, o documento será criado no D4Sign.</p>
+    </div>
+    <div style="margin-top:24px;padding-top:20px;border-top:2px solid #FFE200">
+      <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate">
+        <button class="btn" type="submit">📄 Gerar Contrato, Procuração e Termo de Risco</button>
+      </form>
+      <p class="muted">Ao clicar, os documentos serão criados no D4Sign.</p>
+    </div>
+    </div>
   </div>
 </div>
+<div class="footer">© Província Marcas e Patentes — <span>Pensou. Criou. Província Registrou!</span></div>
 `;
     res.setHeader('content-type', 'text/html; charset=utf-8');
     return res.status(200).send(html);
@@ -3626,71 +3650,97 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     const token = req.params.token;
     const html = `
-<!doctype html><meta charset="utf-8"><title>Contrato gerado</title>
+<!doctype html><meta charset="utf-8"><title>Província Marcas — Contrato</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;color:#111;margin:0}
-  .box{background:#fff;padding:24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:640px;width:92%}
-  h2{margin:0 0 12px}
-  h3{margin:24px 0 8px;font-size:16px}
-  .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
-  .btn{display:inline-block;padding:12px 16px;border-radius:10px;text-decoration:none;border:0;background:#111;color:#fff;font-weight:600;cursor:pointer}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:#f4f4f4;color:#111;min-height:100vh;display:flex;flex-direction:column}
+  .header{background:#000;padding:16px 24px;display:flex;align-items:center;justify-content:center}
+  .header img{height:48px;object-fit:contain}
+  .main{flex:1;display:grid;place-items:start center;padding:32px 16px}
+  .box{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.10);max-width:660px;width:100%;overflow:hidden}
+  .box-header{background:#000;padding:20px 24px;display:flex;align-items:center;gap:12px}
+  .box-header h2{font-family:'Oswald',sans-serif;font-size:20px;font-weight:700;color:#FFE200;letter-spacing:.5px;text-transform:uppercase}
+  .box-body{padding:24px}
+  h3{font-family:'Oswald',sans-serif;font-size:16px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#111;margin:0 0 8px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .btn{display:inline-block;padding:11px 16px;border-radius:8px;text-decoration:none;border:0;font-family:'Oswald',sans-serif;font-size:14px;font-weight:600;letter-spacing:.5px;cursor:pointer;transition:filter .15s}
+  .btn:hover{filter:brightness(.88)}
+  .btn-default{background:#000;color:#FFE200}
+  .btn-download{background:#FFE200;color:#000}
   .btn-whatsapp{background:#25D366;color:#fff}
-  .btn-whatsapp:hover{background:#128C7E}
   .btn-email{background:#1976d2;color:#fff}
-  .btn-email:hover{background:#1565c0}
-  .muted{color:#666}
-  .section{margin-top:24px;padding-top:24px;border-top:1px solid #eee}
+  .btn-reenviar{background:#555;color:#fff;display:none;margin-left:4px}
+  .section{margin-top:24px;padding-top:24px;border-top:2px solid #FFE200}
+  .info-box{background:#f8f8f8;border-radius:8px;padding:14px 16px;margin-bottom:4px;font-size:14px;line-height:1.7;border-left:3px solid #FFE200}
+  .info-box strong{color:#000}
+  .status-div{margin-top:8px;min-height:24px;font-size:13px}
+  .alert-yellow{margin:12px 0;padding:12px 14px;background:#fff9c4;border-left:4px solid #FFE200;border-radius:6px;color:#5a4a00;font-size:13px;line-height:1.5}
+  .footer{background:#000;padding:12px 24px;text-align:center;font-size:12px;color:#888;font-family:'Oswald',sans-serif;letter-spacing:.5px}
+  .footer span{color:#FFE200}
 </style>
+<div class="header">
+  <img src="https://provinciamarcas.com.br/wp-content/uploads/2025/12/provincia-marcas-e-patentes-pensou-criou-registrou-logo.png" alt="Província Marcas" onerror="this.style.display='none'">
+</div>
+<div class="main">
 <div class="box">
-  <h2>${uuidTermoDeRisco ? (uuidProcuracao ? 'Contrato, procuração e termo de risco gerados' : 'Contrato e termo de risco gerados com sucesso') : (uuidProcuracao ? 'Contrato e procuração gerados com sucesso' : 'Contrato gerado com sucesso')}</h2>
+  <div class="box-header">
+    <h2>📄 ${uuidTermoDeRisco ? (uuidProcuracao ? 'Contrato, Procuração e Termo de Risco Gerados' : 'Contrato e Termo de Risco Gerados') : (uuidProcuracao ? 'Contrato e Procuração Gerados' : 'Contrato Gerado com Sucesso')}</h2>
+  </div>
+  <div class="box-body">
+
   ${cofreUsadoPadrao ? `
   <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:12px;margin:16px 0;border-radius:4px">
     <strong>⚠️ Atenção:</strong> A equipe "${equipeContrato || 'não informada'}" não possui cofre configurado. 
     Documentos salvos no cofre padrão: <strong>${nomeCofreUsado}</strong>
   </div>
   ` : ''}
-  <div style="margin:16px 0;padding:12px;background:#f5f5f5;border-radius:8px">
-    <div style="margin-bottom:8px"><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
+  <div class="info-box">
+    <div><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
     ${d.email_cotitular_envio ? `<div><strong>Email do Cotitular:</strong> ${d.email_cotitular_envio}</div>` : ''}
   </div>
-  <div style="margin:12px 0;padding:12px;background:#fff3cd;border-left:4px solid #ffc107;border-radius:6px;color:#856404;font-size:13px;line-height:1.5">
+  <div class="alert-yellow">
     <strong>⚠️ Atenção:</strong> Em caso de envio por WhatsApp + Email, necessário remover no D4Sign um dos signatários para que o contrato e procuração fiquem com status finalizado; Baixar os arquivos e anexar documentos no card.
   </div>
   <div class="row">
-    <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
-    <button class="btn btn-email" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
-    <button class="btn btn-whatsapp" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">Enviar por WhatsApp</button>
-    <button class="btn" onclick="reenviarContrato('${token}', '${uuidDoc}')" id="btn-reenviar-contrato" style="display:none; margin-left:12px; background:#6c757d" disabled>Reenviar Link (60s)</button>
+    <a class="btn btn-download" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">⬇ Baixar PDF do Contrato</a>
+    <button class="btn btn-email" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">✉ Enviar por Email</button>
+    <button class="btn btn-whatsapp" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">💬 Enviar por WhatsApp</button>
+    <button class="btn btn-reenviar" onclick="reenviarContrato('${token}', '${uuidDoc}')" id="btn-reenviar-contrato" disabled>Reenviar Link (60s)</button>
   </div>
-  <div id="status-contrato" style="margin-top:8px;min-height:24px"></div>
+  <div id="status-contrato" class="status-div"></div>
   ${uuidProcuracao ? `
   <div class="section">
-    <h3>Procuração gerada com sucesso</h3>
+    <h3>📋 Procuração</h3>
     <div class="row">
-      <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">Baixar PDF da Procuração</a>
-      <button class="btn btn-email" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">Enviar por Email</button>
-      <button class="btn btn-whatsapp" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp">Enviar por WhatsApp</button>
-      <button class="btn" onclick="reenviarProcuracao('${token}', '${uuidProcuracao}')" id="btn-reenviar-procuracao" style="display:none; margin-left:12px; background:#6c757d" disabled>Reenviar Link (60s)</button>
+      <a class="btn btn-download" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidProcuracao)}/download" target="_blank" rel="noopener">⬇ Baixar PDF da Procuração</a>
+      <button class="btn btn-email" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'email')" id="btn-enviar-procuracao-email">✉ Enviar por Email</button>
+      <button class="btn btn-whatsapp" onclick="enviarProcuracao('${token}', '${uuidProcuracao}', 'whatsapp')" id="btn-enviar-procuracao-whatsapp">💬 Enviar por WhatsApp</button>
+      <button class="btn btn-reenviar" onclick="reenviarProcuracao('${token}', '${uuidProcuracao}')" id="btn-reenviar-procuracao" disabled>Reenviar Link (60s)</button>
     </div>
-    <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
+    <div id="status-procuracao" class="status-div"></div>
   </div>
   ` : ''}
   ${uuidTermoDeRisco ? `
   <div class="section">
-    <h3>⚠️ Termo de Risco gerado com sucesso</h3>
+    <h3>⚠️ Termo de Risco</h3>
     <div class="row">
-      <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidTermoDeRisco)}/download" target="_blank" rel="noopener">Baixar PDF do Termo de Risco</a>
-      <button class="btn btn-email" onclick="enviarTermoDeRisco('${token}', '${uuidTermoDeRisco}', 'email')" id="btn-enviar-termo-email">Enviar por Email</button>
-      <button class="btn btn-whatsapp" onclick="enviarTermoDeRisco('${token}', '${uuidTermoDeRisco}', 'whatsapp')" id="btn-enviar-termo-whatsapp">Enviar por WhatsApp</button>
-      <button class="btn" onclick="reenviarTermoDeRisco('${token}', '${uuidTermoDeRisco}')" id="btn-reenviar-termo" style="display:none; margin-left:12px; background:#6c757d" disabled>Reenviar Link (60s)</button>
+      <a class="btn btn-download" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidTermoDeRisco)}/download" target="_blank" rel="noopener">⬇ Baixar PDF do Termo de Risco</a>
+      <button class="btn btn-email" onclick="enviarTermoDeRisco('${token}', '${uuidTermoDeRisco}', 'email')" id="btn-enviar-termo-email">✉ Enviar por Email</button>
+      <button class="btn btn-whatsapp" onclick="enviarTermoDeRisco('${token}', '${uuidTermoDeRisco}', 'whatsapp')" id="btn-enviar-termo-whatsapp">💬 Enviar por WhatsApp</button>
+      <button class="btn btn-reenviar" onclick="reenviarTermoDeRisco('${token}', '${uuidTermoDeRisco}')" id="btn-reenviar-termo" disabled>Reenviar Link (60s)</button>
     </div>
-    <div id="status-termo" style="margin-top:8px;min-height:24px"></div>
+    <div id="status-termo" class="status-div"></div>
   </div>
   ` : ''}
   <div class="row" style="margin-top:24px">
-    <a class="btn" href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(token)}">Voltar</a>
+    <a class="btn btn-default" href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(token)}">← Voltar</a>
+  </div>
   </div>
 </div>
+</div>
+<div class="footer">© Província Marcas e Patentes — <span>Pensou. Criou. Província Registrou!</span></div>
 <script>
 async function enviarContrato(token, uuidDoc, canal) {
   const btnEmail = document.getElementById('btn-enviar-contrato-email');
@@ -4065,27 +4115,43 @@ async function reenviarTermoDeRisco(token, uuidDoc) {
     // Retornar mensagem de erro mais detalhada
     const errorMessage = e.message || 'Erro desconhecido ao gerar o contrato';
     return res.status(400).send(`
-<!doctype html><meta charset="utf-8"><title>Erro ao gerar contrato</title>
+<!doctype html><meta charset="utf-8"><title>Província Marcas — Erro</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  body{font-family:system-ui;display:grid;place-items:center;min-height:100vh;background:#f7f7f7;margin:0}
-  .box{background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);max-width:600px;width:92%}
-  h2{color:#d32f2f;margin:0 0 16px;font-size:24px}
-  .error-box{background:#ffebee;border-left:4px solid #d32f2f;padding:16px;border-radius:4px;margin:20px 0}
-  .error-box strong{display:block;margin-bottom:8px;color:#c62828}
-  .error-box p{margin:8px 0;color:#424242;line-height:1.6}
-  .btn{display:inline-block;padding:12px 24px;border-radius:8px;text-decoration:none;background:#1976d2;color:#fff;font-weight:600;margin-top:16px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',system-ui,sans-serif;background:#f4f4f4;min-height:100vh;display:flex;flex-direction:column}
+  .header{background:#000;padding:16px 24px;display:flex;align-items:center;justify-content:center}
+  .header img{height:48px;object-fit:contain}
+  .main{flex:1;display:grid;place-items:center;padding:32px 16px}
+  .box{background:#fff;border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.1);max-width:600px;width:100%;overflow:hidden}
+  .box-header{background:#000;padding:20px 24px}
+  .box-header h2{font-family:'Oswald',sans-serif;font-size:20px;font-weight:700;color:#FFE200;text-transform:uppercase;letter-spacing:.5px}
+  .box-body{padding:24px}
+  .error-box{background:#ffebee;border-left:4px solid #d32f2f;padding:16px;border-radius:8px;margin:16px 0}
+  .error-box strong{display:block;margin-bottom:8px;color:#c62828;font-family:'Oswald',sans-serif;font-size:15px}
+  .error-box p{color:#424242;line-height:1.6;font-size:14px}
+  .hint{color:#757575;font-size:13px;margin-top:16px;line-height:1.5}
+  .btn{display:inline-block;padding:12px 20px;border-radius:8px;text-decoration:none;background:#FFE200;color:#000;font-family:'Oswald',sans-serif;font-weight:700;letter-spacing:.5px;margin-top:20px}
+  .footer{background:#000;padding:12px 24px;text-align:center;font-size:12px;color:#888;font-family:'Oswald',sans-serif;letter-spacing:.5px}
+  .footer span{color:#FFE200}
 </style>
-<div class="box">
-  <h2>❌ Erro ao gerar contrato</h2>
-  <div class="error-box">
-    <strong>O que aconteceu?</strong>
-    <p>${errorMessage}</p>
+<div class="header">
+  <img src="https://provinciamarcas.com.br/wp-content/uploads/2025/12/provincia-marcas-e-patentes-pensou-criou-registrou-logo.png" alt="Província Marcas" onerror="this.style.display='none'">
+</div>
+<div class="main">
+  <div class="box">
+    <div class="box-header"><h2>❌ Erro ao gerar contrato</h2></div>
+    <div class="box-body">
+      <div class="error-box">
+        <strong>O que aconteceu?</strong>
+        <p>${errorMessage}</p>
+      </div>
+      <p class="hint">Verifique os logs do servidor para mais detalhes. Se o problema persistir, entre em contato com o suporte técnico.</p>
+      <a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}" class="btn">← Voltar e tentar novamente</a>
+    </div>
   </div>
-  <p style="color:#757575;font-size:14px;margin-top:20px">
-    Verifique os logs do servidor para mais detalhes. Se o problema persistir, entre em contato com o suporte técnico.
-  </p>
-  <a href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(req.params.token)}" class="btn">Voltar e tentar novamente</a>
-</div>`);
+</div>
+<div class="footer">© Província Marcas e Patentes — <span>Pensou. Criou. Província Registrou!</span></div>`);
   }
 });
 
