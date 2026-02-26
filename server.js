@@ -705,11 +705,13 @@ let {
   PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, // Campo ID para "Procuração Assinada D4"
   PIPEFY_FIELD_D4_UUID_CONTRATO,       // Campo ID para "D4 UUID Contrato"
   PIPEFY_FIELD_D4_UUID_PROCURACAO,      // Campo ID para "D4 UUID Procuracao"
+  PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO, // Campo ID para "D4 UUID Termo de Risco"
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
   PIPEFY_FIELD_EXTRA_CONTRATO = 'contrato',
   PIPEFY_FIELD_EXTRA_PROCURACAO = 'procura_o',
+  PIPEFY_FIELD_EXTRA_TERMO_DE_RISCO = 'contrato', // Anexo do termo assinado (mesmo campo do contrato conforme solicitado)
 
   // D4Sign
   D4SIGN_TOKEN,
@@ -718,6 +720,8 @@ let {
   TEMPLATE_UUID_CONTRATO,           // Modelo de Marca
   TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
   TEMPLATE_UUID_PROCURACAO,         // Modelo de Procuração
+  TEMPLATE_UUID_TERMO_DE_RISCO_CPF, // Modelo HTML Termo de Risco (Pessoa Física)
+  TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ,// Modelo HTML Termo de Risco (Pessoa Jurídica)
 
   // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
@@ -754,6 +758,7 @@ PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql
 PIPEFY_FIELD_LINK_CONTRATO = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 PIPEFY_FIELD_D4_UUID_CONTRATO = PIPEFY_FIELD_D4_UUID_CONTRATO || 'd4_uuid_contrato';
 PIPEFY_FIELD_D4_UUID_PROCURACAO = PIPEFY_FIELD_D4_UUID_PROCURACAO || 'copy_of_d4_uuid_contrato';
+PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO = PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO || '';
 PIPEFY_FIELD_CONTRATO_ASSINADO_D4 = PIPEFY_FIELD_CONTRATO_ASSINADO_D4 || 'contrato_assinado_d4';
 PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 = PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 || 'procura_o_assinada_d4';
 D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
@@ -768,6 +773,8 @@ if (!PIPEFY_FIELD_D4_UUID_PROCURACAO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
+if (!TEMPLATE_UUID_TERMO_DE_RISCO_CPF) console.warn('[AVISO] TEMPLATE_UUID_TERMO_DE_RISCO_CPF ausente - Termo de Risco CPF não será gerado');
+if (!TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ) console.warn('[AVISO] TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ ausente - Termo de Risco CNPJ não será gerado');
 
 // Cofres mapeados por EQUIPE (campo "Equipe contrato" no Pipefy)
 // ⚠️ ATENÇÃO: as chaves DEVEM ser exatamente os valores de "Equipe contrato"
@@ -1776,6 +1783,11 @@ async function montarDados(card) {
     cpf_campo: cpfCampo,
     cnpj_campo: cnpjCampo,
     selecao_cnpj_ou_cpf: selecaoCnpjOuCpf,
+    nacionalidade,
+
+    // Sócio administrador (para templates CNPJ — Termo de Risco CNPJ)
+    socio_adm_nome: socioAdmNome || '',
+    socio_adm_cpf: socioAdmCpf || '',
 
     // Contatos
     email: contatoEmail || '',
@@ -2643,6 +2655,128 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
 }
 
 // ===============================
+// NOVO — CRIAR DOCUMENTO A PARTIR DE TEMPLATE HTML NO D4SIGN
+// Usado para o Termo de Risco (templates HTML, não Word)
+// ===============================
+async function makeDocFromHtmlTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, fieldsObj) {
+  const base = 'https://secure.d4sign.com.br';
+  const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplateid`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+
+  const titleSanitized = String(title || 'Termo de Risco').replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+
+  const fieldsObjValidated = {};
+  for (const [key, value] of Object.entries(fieldsObj || {})) {
+    let v = value == null ? '' : String(value);
+    v = v.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
+    fieldsObjValidated[key] = v;
+  }
+
+  const body = {
+    name_document: titleSanitized,
+    id_template: templateId,
+    fields: fieldsObjValidated
+  };
+
+  console.log(`[D4SIGN HTML] Criando documento HTML. Template: ${templateId}, Cofre: ${uuidSafe}`);
+
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = null; }
+
+  if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
+    console.error('[ERRO D4SIGN HTML]', res.status, text.substring(0, 1000));
+    throw new Error(`Falha D4Sign(HTML): ${res.status} - ${text.substring(0, 200)}`);
+  }
+  return json.uuid || json.uuid_document;
+}
+
+// ===============================
+// Variáveis para o Termo de Risco (CPF e CNPJ)
+// ===============================
+function montarVarsParaTermoDeRisco(d, nowInfo) {
+  const dia = String(nowInfo.dia).padStart(2, '0');
+  const mesExtenso = monthNamePt(nowInfo.mes);
+  const ano = String(nowInfo.ano);
+  const dataFormatada = `${dia} de ${mesExtenso} de ${ano}`;
+
+  // Formata CPF
+  const cpfRaw = d.cpf_campo || d.cpf || '';
+  const cpfDigits = onlyDigits(cpfRaw);
+  const cpfFmt = cpfDigits.length === 11
+    ? cpfDigits.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+    : cpfRaw;
+
+  // Formata CNPJ
+  const cnpjRaw = d.cnpj_campo || d.cnpj || '';
+  const cnpjDigits = onlyDigits(cnpjRaw);
+  const cnpjFmt = cnpjDigits.length === 14
+    ? cnpjDigits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+    : cnpjRaw;
+
+  // Endereço completo montado
+  const enderecoPartes = [];
+  if (d.rua_cnpj) enderecoPartes.push(`${d.rua_cnpj}`);
+  if (d.numero_cnpj) enderecoPartes.push(`nº ${d.numero_cnpj}`);
+  if (d.bairro_cnpj) enderecoPartes.push(`Bairro ${d.bairro_cnpj}`);
+  if (d.cidade_cnpj && d.uf_cnpj) enderecoPartes.push(`${d.cidade_cnpj} - ${d.uf_cnpj}`);
+  else if (d.cidade_cnpj) enderecoPartes.push(d.cidade_cnpj);
+  else if (d.uf_cnpj) enderecoPartes.push(d.uf_cnpj);
+  if (d.cep_cnpj) enderecoPartes.push(`CEP: ${d.cep_cnpj}`);
+  const enderecoCompleto = enderecoPartes.join(', ');
+
+  const isSelecaoCpf = String(d.selecao_cnpj_ou_cpf || '').toUpperCase().trim() === 'CPF';
+
+  if (isSelecaoCpf) {
+    // Template CPF — campos conforme o modelo HTML
+    return {
+      nome_cliente: d.nome || '',
+      nacionalidade: d.nacionalidade || '',
+      estadocivil: d.estado_civil || '',
+      numero_cpf: cpfFmt,
+      endereco_completo: enderecoCompleto,
+      nome_da_marca: d.titulo || d.nome1 || '',
+      cidade: d.cidade_cnpj || '',
+      data: dataFormatada,
+      NOME: (d.nome || '').toUpperCase(),
+      N_CPF: cpfFmt
+    };
+  } else {
+    // Template CNPJ — campos conforme o modelo HTML
+    // Sócio administrador (representante da empresa)
+    const nomeResponsavel = d.socio_adm_nome || '';
+    const cpfResponsavel = d.socio_adm_cpf || '';
+    const cpfRespDigits = onlyDigits(cpfResponsavel);
+    const cpfRespFmt = cpfRespDigits.length === 11
+      ? cpfRespDigits.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+      : cpfResponsavel;
+
+    return {
+      nomedaempresa: d.nome || '',
+      enderecocompleto: enderecoCompleto,
+      numero_cnpj: cnpjFmt,
+      nome_responsavel_empresa: nomeResponsavel,
+      nacionalidade: d.nacionalidade || '',
+      estado_civil: d.estado_civil || '',
+      numero_cpf: cpfRespFmt,
+      endereco_completo: enderecoCompleto,
+      nome_da_marca: d.titulo || d.nome1 || '',
+      cidade: d.cidade_cnpj || '',
+      data: dataFormatada,
+      nome_da_empresa: d.nome || '',
+      numero_do_cnpj: cnpjFmt
+    };
+  }
+}
+
+// ===============================
 // NOVO — REGISTRAR WEBHOOK POR DOCUMENTO D4SIGN
 // ===============================
 async function registerWebhookForDocument(tokenAPI, cryptKey, uuidDocument, urlWebhook) {
@@ -3395,7 +3529,64 @@ app.post('/lead/:token/generate', async (req, res) => {
       }
     }
 
+    // ===============================
+    // NOVO — GERAR TERMO DE RISCO (HTML Template)
+    // ===============================
+    let uuidTermoDeRisco = null;
+    const templateIdTermo = String(d.selecao_cnpj_ou_cpf || '').toUpperCase().trim() === 'CPF'
+      ? TEMPLATE_UUID_TERMO_DE_RISCO_CPF
+      : TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ;
+
+    if (templateIdTermo) {
+      try {
+        const varsTermo = montarVarsParaTermoDeRisco(d, nowInfo);
+        console.log('[D4SIGN] Gerando Termo de Risco. Template:', templateIdTermo, '| Tipo:', d.selecao_cnpj_ou_cpf);
+        uuidTermoDeRisco = await makeDocFromHtmlTemplate(
+          D4SIGN_TOKEN,
+          D4SIGN_CRYPT_KEY,
+          uuidSafe,
+          templateIdTermo,
+          `Termo de Risco - ${d.titulo || card.title || 'Contrato'}`,
+          varsTermo
+        );
+        console.log(`[D4SIGN] Termo de Risco criado: ${uuidTermoDeRisco}`);
+
+        // Aguardar documento estar pronto
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidTermoDeRisco);
+          console.log('[D4SIGN] Status do Termo de Risco verificado.');
+        } catch (e) {
+          console.warn('[D4SIGN] Aviso ao verificar status do Termo de Risco:', e.message);
+        }
+
+        // Registrar webhook do Termo de Risco
+        try {
+          await registerWebhookForDocument(
+            D4SIGN_TOKEN,
+            D4SIGN_CRYPT_KEY,
+            uuidTermoDeRisco,
+            `${PUBLIC_BASE_URL}/d4sign/postback`
+          );
+          console.log('[D4SIGN] Webhook do Termo de Risco registrado.');
+          // Salvar UUID no card (se campo configurado)
+          if (PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO) {
+            await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO, uuidTermoDeRisco);
+            console.log(`[LEAD-GENERATE] UUID Termo de Risco salvo no card: ${uuidTermoDeRisco}`);
+          }
+        } catch (e) {
+          console.error('[ERRO] Falha ao registrar webhook do Termo de Risco:', e.message);
+        }
+
+        console.log('[D4SIGN] Termo de Risco criado. Signatários serão cadastrados em breve.');
+      } catch (e) {
+        console.error('[ERRO] Falha ao gerar Termo de Risco:', e.message);
+        // Não bloqueia o fluxo se o Termo de Risco falhar
+      }
+    }
+
     await new Promise(r => setTimeout(r, 3000));
+
     try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch { }
 
     // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
@@ -3442,7 +3633,7 @@ app.post('/lead/:token/generate', async (req, res) => {
   .section{margin-top:24px;padding-top:24px;border-top:1px solid #eee}
 </style>
 <div class="box">
-  <h2>${uuidProcuracao ? 'Contrato e procuração gerados com sucesso' : 'Contrato gerado com sucesso'}</h2>
+  <h2>${uuidTermoDeRisco ? (uuidProcuracao ? 'Contrato, procuração e termo de risco gerados' : 'Contrato e termo de risco gerados com sucesso') : (uuidProcuracao ? 'Contrato e procuração gerados com sucesso' : 'Contrato gerado com sucesso')}</h2>
   ${cofreUsadoPadrao ? `
   <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:12px;margin:16px 0;border-radius:4px">
     <strong>⚠️ Atenção:</strong> A equipe "${equipeContrato || 'não informada'}" não possui cofre configurado. 
@@ -3470,6 +3661,18 @@ app.post('/lead/:token/generate', async (req, res) => {
       <button class="btn" onclick="reenviarProcuracao('${token}', '${uuidProcuracao}')" id="btn-reenviar-procuracao" style="display:none; margin-left:12px; background:#6c757d" disabled>Reenviar Link (60s)</button>
     </div>
     <div id="status-procuracao" style="margin-top:8px;min-height:24px"></div>
+  </div>
+  ` : ''}
+  ${uuidTermoDeRisco ? `
+  <div class="section">
+    <h3>⚠️ Termo de Risco gerado com sucesso</h3>
+    <div class="row">
+      <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidTermoDeRisco)}/download" target="_blank" rel="noopener">Baixar PDF do Termo de Risco</a>
+      <button class="btn btn-email" onclick="enviarTermoDeRisco('${token}', '${uuidTermoDeRisco}', 'email')" id="btn-enviar-termo-email">Enviar por Email</button>
+      <button class="btn btn-whatsapp" onclick="enviarTermoDeRisco('${token}', '${uuidTermoDeRisco}', 'whatsapp')" id="btn-enviar-termo-whatsapp">Enviar por WhatsApp</button>
+      <button class="btn" onclick="reenviarTermoDeRisco('${token}', '${uuidTermoDeRisco}')" id="btn-reenviar-termo" style="display:none; margin-left:12px; background:#6c757d" disabled>Reenviar Link (60s)</button>
+    </div>
+    <div id="status-termo" style="margin-top:8px;min-height:24px"></div>
   </div>
   ` : ''}
   <div class="row" style="margin-top:24px">
@@ -3714,6 +3917,118 @@ async function reenviarProcuracao(token, uuidDoc) {
     btn.disabled = false;
   }
 }
+
+async function enviarTermoDeRisco(token, uuidTermo, canal) {
+  const btnEmail = document.getElementById('btn-enviar-termo-email');
+  const btnWhatsapp = document.getElementById('btn-enviar-termo-whatsapp');
+  const statusDiv = document.getElementById('status-termo');
+
+  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
+
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando Termo de Risco por ' + canal + '...</span>';
+
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidTermo) + '/send?canal=' + canal + '&tipo=termo_de_risco', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
+      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do D4 para reenviar ou alterar os signatarios:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
+
+      let destinoMsg = '';
+      if (canal === 'whatsapp' && data.telefones) {
+        destinoMsg = ' para: ' + data.telefones;
+      } else if (data.emails) {
+        destinoMsg = ' para: ' + data.emails;
+      } else if (data.email) {
+        destinoMsg = ' para ' + data.email;
+      }
+
+      const avisoMsg = '<br><br><div style="margin-top:12px;padding:12px;background:#fff3cd;border-radius:8px;border-left:4px solid #ffc107;color:#856404;font-size:14px;"><strong>⚠️ Importante:</strong> Caso o email ou whatsapp não cheguem para assinatura, é necessário abrir o D4Sign (link acima) e clicar em \"Enviar novamente\".</div>';
+
+      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Termo de Risco: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg + avisoMsg;
+      btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
+      btn.style.background = '#6c757d';
+      btn.disabled = true;
+
+      const btnReenviar = document.getElementById('btn-reenviar-termo');
+      if (btnReenviar) {
+        btnReenviar.style.display = 'inline-block';
+        let timeLeft = 60;
+        btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        btnReenviar.disabled = true;
+        const timerId = setInterval(() => {
+          timeLeft--;
+          if (timeLeft <= 0) {
+            clearInterval(timerId);
+            btnReenviar.textContent = 'Reenviar Link';
+            btnReenviar.disabled = false;
+            btnReenviar.style.background = '#111';
+          } else {
+            btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
+          }
+        }, 1000);
+      }
+    } else {
+      const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
+      statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Termo de Risco: ' + errorMsg + '</span>';
+      btn.disabled = false;
+      btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
+    }
+  } catch (error) {
+    statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Termo de Risco: Erro ao enviar - ' + error.message + '</span>';
+    btn.disabled = false;
+    btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
+  }
+}
+
+async function reenviarTermoDeRisco(token, uuidDoc) {
+  const btn = document.getElementById('btn-reenviar-termo');
+  const statusDiv = document.getElementById('status-termo');
+
+  btn.disabled = true;
+  btn.textContent = 'Reenviando...';
+
+  try {
+    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
+      let timeLeft = 60;
+      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+      btn.style.background = '#6c757d';
+      const timerId = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(timerId);
+          btn.textContent = 'Reenviar Link';
+          btn.disabled = false;
+          btn.style.background = '#111';
+        } else {
+          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
+        }
+      }, 1000);
+    } else {
+      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
+      btn.textContent = 'Reenviar Link';
+      btn.disabled = false;
+    }
+  } catch (error) {
+    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
+    btn.textContent = 'Reenviar Link';
+    btn.disabled = false;
+  }
+}
 </script>`;
     return res.status(200).send(html);
 
@@ -3797,6 +4112,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     let signers = null;
     let nomeCofre = 'Cofre não identificado';
     let isProcuracao = false;
+    let isTermo = false;
 
     try {
       card = await getCard(cardId);
@@ -3813,6 +4129,9 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       if (tipo === 'procuracao') {
         isProcuracao = true;
         console.log('[SEND] Tipo identificado como PROCURAÇÃO pelo parâmetro tipo');
+      } else if (tipo === 'termo_de_risco') {
+        isTermo = true;
+        console.log('[SEND] Tipo identificado como TERMO DE RISCO pelo parâmetro tipo');
       } else if (tipo === 'contrato') {
         isProcuracao = false;
         console.log('[SEND] Tipo identificado como CONTRATO pelo parâmetro tipo');
@@ -3879,7 +4198,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         signers = montarSigners(d, false);
       }
 
-      console.log(`[SEND] Enviando ${isProcuracao ? 'procuração' : 'contrato'} por ${canal}. Signatários preparados:`, signers.map(s => s.email).join(', '));
+      console.log(`[SEND] Enviando ${isTermo ? 'Termo de Risco' : (isProcuracao ? 'procuração' : 'contrato')} por ${canal}. Signatários preparados:`, signers.map(s => s.email).join(', '));
     } catch (e) {
       console.warn('[SEND] Erro ao buscar informações do card:', e.message);
       throw e;
@@ -3889,9 +4208,9 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     await new Promise(r => setTimeout(r, 2000));
     try {
       await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-      console.log(`[SEND] Status do ${isProcuracao ? 'procuração' : 'contrato'} verificado.`);
+      console.log(`[SEND] Status do ${isTermo ? 'Termo de Risco' : (isProcuracao ? 'procuração' : 'contrato')} verificado.`);
     } catch (e) {
-      console.warn(`[SEND] Aviso ao verificar status do ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
+      console.warn(`[SEND] Aviso ao verificar status do ${isTermo ? 'Termo de Risco' : (isProcuracao ? 'procuração' : 'contrato')}:`, e.message);
     }
 
     // Garantir que os signatários estão cadastrados antes de enviar
@@ -3962,11 +4281,11 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     // Aguardar um pouco antes de enviar
     await new Promise(r => setTimeout(r, 2000));
 
-    // Enviar documento (contrato ou procuração)
+    // Enviar documento (contrato, procuração ou termo de risco)
     try {
       const mensagem = isProcuracao
         ? 'Olá! Há uma procuração aguardando sua assinatura.'
-        : 'Olá! Há um documento aguardando sua assinatura.';
+        : (isTermo ? 'Olá! Há um Termo de Risco aguardando sua assinatura.' : 'Olá! Há um documento aguardando sua assinatura.');
 
       // Se for WhatsApp, não enviar email
       const skip_email = canal === 'whatsapp' ? '1' : '0';
@@ -3976,12 +4295,21 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         skip_email: skip_email,
         workflow: '0'
       });
-      console.log(`[SEND] ${isProcuracao ? 'Procuração' : 'Contrato'} enviado para assinatura por ${canal}:`, uuidDoc);
+      console.log(`[SEND] ${isTermo ? 'Termo de Risco' : (isProcuracao ? 'Procuração' : 'Contrato')} enviado para assinatura por ${canal}:`, uuidDoc);
 
       // Salvar UUID do documento no campo correto após enviar para assinatura
       try {
-        console.log(`[SEND] Tentando salvar UUID - isProcuracao: ${isProcuracao}, uuidDoc: ${uuidDoc}, cardId: ${cardId}`);
-        if (isProcuracao) {
+        console.log(`[SEND] Tentando salvar UUID - isProcuracao: ${isProcuracao}, isTermo: ${isTermo}, uuidDoc: ${uuidDoc}, cardId: ${cardId}`);
+        if (isTermo) {
+          if (PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO) {
+            const fieldId = PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO;
+            console.log(`[SEND] Salvando UUID do Termo de Risco no campo ${fieldId}...`);
+            await updateCardField(cardId, fieldId, uuidDoc);
+            console.log(`[SEND] ✓ UUID do Termo de Risco salvo com sucesso no campo ${fieldId}: ${uuidDoc}`);
+          } else {
+            console.log(`[SEND] Campo PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO não configurado, UUID não salvo.`);
+          }
+        } else if (isProcuracao) {
           // Salva UUID da procuração no campo D4 UUID Procuracao
           const fieldId = PIPEFY_FIELD_D4_UUID_PROCURACAO;
           console.log(`[SEND] Salvando UUID da procuração no campo ${fieldId}...`);
@@ -3995,12 +4323,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
           console.log(`[SEND] ✓ UUID do contrato salvo com sucesso no campo ${fieldId}: ${uuidDoc}`);
         }
       } catch (e) {
-        console.error(`[ERRO] Falha ao salvar UUID do ${isProcuracao ? 'procuração' : 'contrato'} no card:`, e.message);
+        console.error(`[ERRO] Falha ao salvar UUID do ${isTermo ? 'termo de risco' : (isProcuracao ? 'procuração' : 'contrato')} no card:`, e.message);
         console.error(`[ERRO] Stack trace:`, e.stack);
         // Não bloqueia o fluxo se falhar ao salvar UUID
       }
     } catch (e) {
-      console.error(`[ERRO] Falha ao enviar ${isProcuracao ? 'procuração' : 'contrato'}:`, e.message);
+      console.error(`[ERRO] Falha ao enviar ${isTermo ? 'termo de risco' : (isProcuracao ? 'procuração' : 'contrato')}:`, e.message);
       throw e; // Propaga o erro para que o usuário saiba
     }
 
@@ -4274,8 +4602,9 @@ async function findCardIdByD4Uuid(uuidDocument) {
         // Verifica se algum campo contém o UUID do documento
         for (const field of fields) {
           const fieldValue = String(field.value || '');
-          // Verifica se o UUID está nos campos D4 UUID Contrato ou D4 UUID Procuracao
-          if ((field.id === PIPEFY_FIELD_D4_UUID_CONTRATO || field.id === PIPEFY_FIELD_D4_UUID_PROCURACAO) &&
+          // Verifica se o UUID está nos campos D4 UUID Contrato, Procuração ou Termo de Risco
+          if ((field.id === PIPEFY_FIELD_D4_UUID_CONTRATO || field.id === PIPEFY_FIELD_D4_UUID_PROCURACAO ||
+            (PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO && field.id === PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO)) &&
             (fieldValue === uuidDocument || fieldValue.includes(uuidDocument))) {
             console.log(`[findCardIdByD4Uuid] Card encontrado através de busca alternativa no campo ${field.id}: ${card.id}`);
             return card.id;
@@ -4435,6 +4764,30 @@ async function processarContrato(cardId) {
     } catch (e) { console.error('Erro procuração:', e.message); }
   }
 
+  // Termo de Risco (HTML Template — opcional)
+  let uuidTermoDeRisco = null;
+  const templateIdTermo = String(d.selecao_cnpj_ou_cpf || '').toUpperCase().trim() === 'CPF'
+    ? TEMPLATE_UUID_TERMO_DE_RISCO_CPF
+    : TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ;
+  if (templateIdTermo) {
+    try {
+      const varsTermo = montarVarsParaTermoDeRisco(d, nowInfo);
+      uuidTermoDeRisco = await makeDocFromHtmlTemplate(
+        D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+        templateIdTermo,
+        `Termo de Risco - ${d.titulo || card.title}`,
+        varsTermo
+      );
+      if (uuidTermoDeRisco) {
+        await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidTermoDeRisco, `${PUBLIC_BASE_URL}/d4sign/postback`);
+        if (PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO) {
+          await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO, uuidTermoDeRisco);
+          console.log(`[PROCESSAR] UUID Termo de Risco salvo no card: ${uuidTermoDeRisco}`);
+        }
+      }
+    } catch (e) { console.error('Erro Termo de Risco:', e.message); }
+  }
+
   // [REMOVIDO] Cadastrar signatários automaticamente
   // O cadastro será feito apenas quando o usuário clicar em "Enviar por Email"
   /*
@@ -4459,7 +4812,7 @@ async function processarContrato(cardId) {
   }
   */
 
-  return { uuidDoc, uuidProcuracao };
+  return { uuidDoc, uuidProcuracao, uuidTermoDeRisco };
 }
 
 /* =========================
