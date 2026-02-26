@@ -3653,6 +3653,9 @@ app.post('/lead/:token/generate', async (req, res) => {
     <div style="margin-bottom:8px"><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
     ${d.email_cotitular_envio ? `<div><strong>Email do Cotitular:</strong> ${d.email_cotitular_envio}</div>` : ''}
   </div>
+  <div style="margin:12px 0;padding:12px;background:#fff3cd;border-left:4px solid #ffc107;border-radius:6px;color:#856404;font-size:13px;line-height:1.5">
+    <strong>⚠️ Atenção:</strong> Em caso de envio por WhatsApp + Email, necessário remover no D4Sign um dos signatários para que o contrato e procuração fiquem com status finalizado; Baixar os arquivos e anexar documentos no card.
+  </div>
   <div class="row">
     <a class="btn" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">Baixar PDF do Contrato</a>
     <button class="btn btn-email" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">Enviar por Email</button>
