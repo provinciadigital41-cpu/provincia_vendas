@@ -2655,8 +2655,10 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
 }
 
 // ===============================
-// NOVO — CRIAR DOCUMENTO A PARTIR DE TEMPLATE HTML NO D4SIGN
+// CRIAR DOCUMENTO A PARTIR DE TEMPLATE HTML NO D4SIGN
 // Endpoint: POST /api/v1/documents/{UUID-SAFE}/makedocumentbytemplate
+// Formato correto (doc oficial D4Sign):
+//   { "name_document": "...", "templates": { "<ID_TEMPLATE>": { "var": "val" } } }
 // ===============================
 async function makeDocFromHtmlTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, fieldsObj) {
   const base = 'https://secure.d4sign.com.br';
@@ -2670,57 +2672,43 @@ async function makeDocFromHtmlTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
     fieldsObjValidated[key] = v;
   }
 
-  console.log(`[D4SIGN HTML] Template: ${templateId} | Cofre: ${uuidSafe} | Título: ${titleSanitized}`);
-  console.log(`[D4SIGN HTML] Campos: ${JSON.stringify(fieldsObjValidated).substring(0, 500)}`);
-
-  // Variações a tentar — campo do template e campo dos dados
-  const tentativas = [
-    // 1. uuid_template + fields (mais comum na doc D4Sign)
-    { uuid_template: templateId, fields: fieldsObjValidated },
-    // 2. uuid_template + templates
-    { uuid_template: templateId, templates: fieldsObjValidated },
-    // 3. id_template + fields (nossa primeira tentativa)
-    { id_template: templateId, fields: fieldsObjValidated },
-    // 4. Campos direto na raiz (sem chave de agrupamento)
-    { uuid_template: templateId, ...fieldsObjValidated },
-  ];
-
-  for (let i = 0; i < tentativas.length; i++) {
-    const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplate`, base);
-    url.searchParams.set('tokenAPI', tokenAPI);
-    url.searchParams.set('cryptKey', cryptKey);
-
-    const payload = { name_document: titleSanitized, ...tentativas[i] };
-    const bodyStr = JSON.stringify(payload);
-    console.log(`[D4SIGN HTML] Tentativa ${i + 1}: ${bodyStr.substring(0, 300)}`);
-
-    try {
-      const res = await fetchWithRetry(url.toString(), {
-        method: 'POST',
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-        body: bodyStr
-      }, { attempts: 1, baseDelayMs: 500, timeoutMs: 20000 });
-
-      const text = await res.text();
-      console.log(`[D4SIGN HTML] Tentativa ${i + 1} → status: ${res.status} | body: ${text.substring(0, 500)}`);
-
-      let json; try { json = JSON.parse(text); } catch { json = null; }
-      const uuid = json && (json.uuid || json.uuid_document || json.document_uuid);
-      if (uuid) {
-        console.log(`[D4SIGN HTML] ✓ Documento criado (tentativa ${i + 1}): ${uuid}`);
-        return uuid;
-      }
-    } catch (e) {
-      console.warn(`[D4SIGN HTML] Tentativa ${i + 1} erro: ${e.message}`);
+  // Formato correto: templates = { "<id_template>": { var: val, ... } }
+  const payload = {
+    name_document: titleSanitized,
+    templates: {
+      [templateId]: fieldsObjValidated
     }
+  };
+
+  const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplate`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
+  url.searchParams.set('cryptKey', cryptKey);
+
+  console.log(`[D4SIGN HTML] Template: ${templateId} | Cofre: ${uuidSafe} | Título: ${titleSanitized}`);
+  console.log(`[D4SIGN HTML] Body: ${JSON.stringify(payload).substring(0, 600)}`);
+
+  const res = await fetchWithRetry(url.toString(), {
+    method: 'POST',
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }, { attempts: 3, baseDelayMs: 600, timeoutMs: 20000 });
+
+  const text = await res.text();
+  console.log(`[D4SIGN HTML] Resposta: status ${res.status} | body: ${text.substring(0, 500)}`);
+
+  let json; try { json = JSON.parse(text); } catch { json = null; }
+  const uuid = json && (json.uuid || json.uuid_document || json.document_uuid);
+
+  if (!uuid) {
+    throw new Error(`Falha D4Sign(HTML): status ${res.status} - ${text.substring(0, 200)}`);
   }
 
-  throw new Error(`Falha D4Sign(HTML): nenhuma das ${tentativas.length} tentativas retornou UUID. Verifique os logs.`);
+  console.log(`[D4SIGN HTML] ✓ Documento criado: ${uuid}`);
+  return uuid;
 }
 
-// ===============================
-
 // Variáveis para o Termo de Risco (CPF e CNPJ)
+
 // ===============================
 function montarVarsParaTermoDeRisco(d, nowInfo) {
   const dia = String(nowInfo.dia).padStart(2, '0');
