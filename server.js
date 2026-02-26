@@ -2660,11 +2660,8 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
 // ===============================
 async function makeDocFromHtmlTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, fieldsObj) {
   const base = 'https://secure.d4sign.com.br';
-  const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplateid`, base);
-  url.searchParams.set('tokenAPI', tokenAPI);
-  url.searchParams.set('cryptKey', cryptKey);
 
-  const titleSanitized = String(title || 'Termo de Risco').replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+  const titleSanitized = String(title || 'Termo de Risco').replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
 
   const fieldsObjValidated = {};
   for (const [key, value] of Object.entries(fieldsObj || {})) {
@@ -2673,29 +2670,104 @@ async function makeDocFromHtmlTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
     fieldsObjValidated[key] = v;
   }
 
-  const body = {
-    name_document: titleSanitized,
-    id_template: templateId,
-    fields: fieldsObjValidated
-  };
+  console.log(`[D4SIGN HTML] Iniciando criação. Template: ${templateId} | Cofre: ${uuidSafe} | Título: ${titleSanitized}`);
+  console.log(`[D4SIGN HTML] Campos enviados: ${JSON.stringify(fieldsObjValidated).substring(0, 500)}`);
 
-  console.log(`[D4SIGN HTML] Criando documento HTML. Template: ${templateId}, Cofre: ${uuidSafe}`);
+  // ─── Tentativa 1: JSON com "fields" (formato padrão) ───────────────────────
+  {
+    const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplate`, base);
+    url.searchParams.set('tokenAPI', tokenAPI);
+    url.searchParams.set('cryptKey', cryptKey);
 
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST',
-    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+    const body = JSON.stringify({
+      name_document: titleSanitized,
+      id_template: templateId,
+      fields: fieldsObjValidated
+    });
 
-  const text = await res.text();
-  let json;
-  try { json = JSON.parse(text); } catch { json = null; }
+    console.log(`[D4SIGN HTML] Tentativa 1 (JSON /makedocumentbytemplateid): ${url.pathname}`);
+    try {
+      const res = await fetchWithRetry(url.toString(), {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body
+      }, { attempts: 2, baseDelayMs: 600, timeoutMs: 20000 });
 
-  if (!res.ok || !(json && (json.uuid || json.uuid_document))) {
-    console.error('[ERRO D4SIGN HTML]', res.status, text.substring(0, 1000));
-    throw new Error(`Falha D4Sign(HTML): ${res.status} - ${text.substring(0, 200)}`);
+      const text = await res.text();
+      console.log(`[D4SIGN HTML] Tentativa 1 → status: ${res.status} | body (500 chars): ${text.substring(0, 500)}`);
+
+      let json; try { json = JSON.parse(text); } catch { json = null; }
+      const uuid = json && (json.uuid || json.uuid_document || json.document_uuid);
+      if (uuid) { console.log(`[D4SIGN HTML] ✓ Documento criado (tentativa 1): ${uuid}`); return uuid; }
+    } catch (e) {
+      console.warn(`[D4SIGN HTML] Tentativa 1 falhou: ${e.message}`);
+    }
   }
-  return json.uuid || json.uuid_document;
+
+  // ─── Tentativa 2: JSON com "templates" em vez de "fields" ──────────────────
+  {
+    const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplate`, base);
+    url.searchParams.set('tokenAPI', tokenAPI);
+    url.searchParams.set('cryptKey', cryptKey);
+
+    const body = JSON.stringify({
+      name_document: titleSanitized,
+      id_template: templateId,
+      templates: fieldsObjValidated
+    });
+
+    console.log(`[D4SIGN HTML] Tentativa 2 (JSON com "templates")`);
+    try {
+      const res = await fetchWithRetry(url.toString(), {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body
+      }, { attempts: 2, baseDelayMs: 600, timeoutMs: 20000 });
+
+      const text = await res.text();
+      console.log(`[D4SIGN HTML] Tentativa 2 → status: ${res.status} | body: ${text.substring(0, 500)}`);
+
+      let json; try { json = JSON.parse(text); } catch { json = null; }
+      const uuid = json && (json.uuid || json.uuid_document || json.document_uuid);
+      if (uuid) { console.log(`[D4SIGN HTML] ✓ Documento criado (tentativa 2): ${uuid}`); return uuid; }
+    } catch (e) {
+      console.warn(`[D4SIGN HTML] Tentativa 2 falhou: ${e.message}`);
+    }
+  }
+
+  // ─── Tentativa 3: application/x-www-form-urlencoded ──────────────────────
+  {
+    const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplate`, base);
+    url.searchParams.set('tokenAPI', tokenAPI);
+    url.searchParams.set('cryptKey', cryptKey);
+
+    const params = new URLSearchParams();
+    params.append('name_document', titleSanitized);
+    params.append('id_template', templateId);
+    for (const [k, v] of Object.entries(fieldsObjValidated)) {
+      params.append(`fields[${k}]`, v);
+    }
+
+    console.log(`[D4SIGN HTML] Tentativa 3 (application/x-www-form-urlencoded)`);
+    try {
+      const res = await fetchWithRetry(url.toString(), {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString()
+      }, { attempts: 2, baseDelayMs: 600, timeoutMs: 20000 });
+
+      const text = await res.text();
+      console.log(`[D4SIGN HTML] Tentativa 3 → status: ${res.status} | body: ${text.substring(0, 500)}`);
+
+      let json; try { json = JSON.parse(text); } catch { json = null; }
+      const uuid = json && (json.uuid || json.uuid_document || json.document_uuid);
+      if (uuid) { console.log(`[D4SIGN HTML] ✓ Documento criado (tentativa 3): ${uuid}`); return uuid; }
+    } catch (e) {
+      console.warn(`[D4SIGN HTML] Tentativa 3 falhou: ${e.message}`);
+    }
+  }
+
+  throw new Error(`Falha D4Sign(HTML): nenhuma das tentativas retornou UUID. Verifique os logs acima para o body completo da resposta.`);
 }
 
 // ===============================
