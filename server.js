@@ -3343,10 +3343,29 @@ app.get('/lead/:token', async (req, res) => {
 
     <h2>Valores</h2>
     <div class="grid3">
-      <div><div class="label">Valor Assessoria</div><div>${d.valor_total || '-'} (${d.parcelas || '1'}x)</div></div>
-      <div><div class="label">Valor Pesquisa</div><div>${d.valor_pesquisa || '-'}</div></div>
-      <div><div class="label">Valor Taxa</div><div>${d.valor_taxa_brl || '-'}</div></div>
+      <div class="field"><div class="label">Valor Assessoria</div><div class="value">${d.valor_total || '-'} (${d.parcelas || '1'}x)</div></div>
+      <div class="field"><div class="label">Valor Pesquisa</div><div class="value">${d.valor_pesquisa || '-'}</div></div>
+      <div class="field"><div class="label">Valor Taxa</div><div class="value">${d.valor_taxa_brl || '-'}</div></div>
     </div>
+
+    <h2>Classes e Especificações</h2>
+    ${[1, 2, 3, 4, 5].map(i => {
+      const nome = d[`nome${i}`];
+      const tipo = d[`tipo${i}`];
+      const classe = d[`classe${i}`];
+      const linhas = (d[`classes_agrupadas_${i}`] || []).filter(l => l && l.trim());
+      if (!nome && !classe && !linhas.length) return '';
+      return `
+      <div style="margin-bottom:14px;background:#f8f8f8;border-left:3px solid #FFE200;border-radius:6px;padding:12px 14px">
+        <div style="font-family:'Oswald',sans-serif;font-weight:700;font-size:14px;color:#000;margin-bottom:6px">
+          MARCA ${i}${nome ? ` — ${nome}` : ''}
+          ${tipo ? `<span style="font-size:12px;font-weight:400;color:#555;margin-left:8px">(${tipo})</span>` : ''}
+          ${classe ? `<span style="font-size:12px;font-weight:400;color:#555;margin-left:8px">Classe: ${classe}</span>` : ''}
+        </div>
+        ${linhas.length ? linhas.map(l => `<div style="font-size:13px;color:#333;line-height:1.6;padding:2px 0;border-top:1px solid #eee">${l}</div>`).join('') : '<div style="font-size:13px;color:#888">Sem especificações</div>'}
+      </div>`;
+    }).join('')}
+
 
     </div>
     <div style="margin-top:24px;padding-top:20px;border-top:2px solid #FFE200">
