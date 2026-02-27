@@ -3724,6 +3724,9 @@ app.post('/lead/:token/generate', async (req, res) => {
   ` : ''}
   ${uuidTermoDeRisco ? `
   <div class="section">
+    <div style="background:#000;color:#FFE200;font-family:'Oswald',sans-serif;font-weight:700;font-size:14px;letter-spacing:.8px;text-transform:uppercase;padding:10px 14px;border-radius:6px;margin-bottom:12px">
+      🚨 ATENÇÃO — Enviar o termo de risco para classe impedida (sem complementação)
+    </div>
     <h3>⚠️ Termo de Risco</h3>
     <div class="row">
       <a class="btn btn-download" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidTermoDeRisco)}/download" target="_blank" rel="noopener">⬇ Baixar PDF do Termo de Risco</a>
