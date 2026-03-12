@@ -4480,19 +4480,6 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       throw e; // Propaga o erro para que o usuário saiba
     }
 
-    // Buscar email/telefone usado para incluir na resposta
-    let emailUsado = null;
-    let telefoneUsado = null;
-    if (!card) {
-      card = await getCard(cardId);
-    }
-    const dFinal = await montarDados(card);
-    if (canal === 'whatsapp') {
-      telefoneUsado = dFinal.telefone_envio_contrato || dFinal.telefone || null;
-    } else {
-      emailUsado = dFinal.email_envio_contrato || dFinal.email || null;
-    }
-
     // Buscar UUID do cofre novamente para construir a URL
     const equipeContratoFinal = getEquipeContratoFromCard(card);
     let uuidCofreFinal = null;
@@ -4851,6 +4838,15 @@ app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
  * =======================*/
 async function processarContrato(cardId) {
   const card = await getCard(cardId);
+
+  // Proteção contra reprocessamento: se já existe UUID de contrato no card, ignora
+  const by = toById(card);
+  const uuidExistente = by[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
+  if (uuidExistente) {
+    console.log(`[PROCESSAR] Card ${cardId} já possui contrato gerado (${uuidExistente}). Ignorando.`);
+    return { uuidDoc: uuidExistente, uuidProcuracao: null, uuidTermoDeRisco: null };
+  }
+
   const d = await montarDados(card);
 
   const now = new Date();
@@ -4954,8 +4950,18 @@ app.post('/pipefy-webhook', async (req, res) => {
     const cardId = data.card.id;
     console.log(`[WEBHOOK] Recebido para card ${cardId}`);
 
-    // Chama a função centralizada
-    await processarContrato(cardId);
+    // Proteção contra webhooks duplicados do Pipefy (mesmo card disparado 2-3x)
+    const lockKey = `webhook:${cardId}`;
+    if (!acquireLock(lockKey)) {
+      console.log(`[WEBHOOK] Card ${cardId} já está sendo processado. Ignorando duplicata.`);
+      return res.json({ ok: true });
+    }
+
+    try {
+      await processarContrato(cardId);
+    } finally {
+      releaseLock(lockKey);
+    }
 
     res.json({ ok: true });
   } catch (e) {
