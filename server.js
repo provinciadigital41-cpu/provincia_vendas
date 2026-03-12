@@ -718,10 +718,9 @@ let {
   D4SIGN_CRYPT_KEY,
   D4SIGN_BASE_URL,                  // Base URL da API D4Sign
   TEMPLATE_UUID_CONTRATO,           // Modelo de Marca
+  TEMPLATE_UUID_CONTRATO_MARCA_RISCO, // Modelo de Marca com Risco (Médio/Alto) - Inclui Termo de Risco integrado
   TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
   TEMPLATE_UUID_PROCURACAO,         // Modelo de Procuração
-  TEMPLATE_UUID_TERMO_DE_RISCO_CPF, // Modelo HTML Termo de Risco (Pessoa Física)
-  TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ,// Modelo HTML Termo de Risco (Pessoa Jurídica)
 
   // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
@@ -1324,9 +1323,31 @@ async function montarDados(card) {
   const k4 = serviceKindFromText(serv4Stmt);
   const k5 = serviceKindFromText(serv5Stmt);
 
+  // Risco da marca - para rotear entre Template 1 (sem risco) e Template 2 (com risco)
+  const riscoRaw = by['risco_da_marca'] || '';
+  const risco = String(riscoRaw).trim();
+
+  // Equipe/Filial - vem do campo de seleção "equipe contrato"
+  const equipeName = getEquipeContratoFromCard(card);
+
+  // Representante - campo "nome_do_representante"
+  const representante = by['nome_do_representante'] || '';
+
   // Decide template
   const anyMarca = [k1, k2, k3, k4, k5].includes('MARCA');
-  const templateToUse = anyMarca ? TEMPLATE_UUID_CONTRATO : TEMPLATE_UUID_CONTRATO_OUTROS;
+  const riscoAlto = ['médio', 'alto'].includes(risco.toLowerCase());
+
+  let templateToUse;
+  if (!anyMarca) {
+    templateToUse = TEMPLATE_UUID_CONTRATO_OUTROS;        // Template 3: Outros Serviços
+  } else if (riscoAlto) {
+    templateToUse = TEMPLATE_UUID_CONTRATO_MARCA_RISCO;   // Template 2: Marca com Risco
+  } else {
+    templateToUse = TEMPLATE_UUID_CONTRATO;               // Template 1: Marca sem Risco
+  }
+
+  const isMarcaComRisco = anyMarca && riscoAlto;
+  const isMarca = anyMarca;
 
   // [Lógica CPF vs CNPJ] Apenas para controle de dados, não muda o template UUID
   const selecaoCnpjOuCpf = by['cnpj_ou_cpf'] || '';
@@ -1339,6 +1360,14 @@ async function montarDados(card) {
   const contatoTelefone = by['telefone_de_contato'] || getFirstByNames(card, ['telefone', 'celular', 'whatsapp', 'whats']) || '';
   const nomeContato2 = by['nome_contato_2'] || '';
   const nomeContato3 = by['nome_do_contato_3'] || '';
+
+  // Contato contratante 2 (campos de contato, distintos dos campos de envio)
+  const contatoEmail2 = by['copy_of_email_de_contato'] || '';
+  const contatoTelefone2 = by['copy_of_telefone_de_contato'] || '';
+
+  // Contato contratante 3 (campos de contato, distintos dos campos de envio)
+  const contatoEmail3 = by['email_do_contato_3'] || '';
+  const contatoTelefone3 = by['n_mero_de_telefone_3'] || '';
 
   // Campos de “contratante 2” antigos, se existirem
   const contato2Nome_old = by['nome_2'] || getFirstByNames(card, ['contratante 2', 'nome contratante 2']) || '';
@@ -1656,8 +1685,8 @@ async function montarDados(card) {
       docSelecao: cot_docSelecao,
       cpf: cot_cpf || '',
       cnpj: cot_cnpj || '',
-      telefone: telefoneCotitularEnvio || contato2Telefone_old,
-      email: emailCotitularEnvio || contato2Email_old,
+      telefone: contatoTelefone2 || telefoneCotitularEnvio || contato2Telefone_old,
+      email: contatoEmail2 || emailCotitularEnvio || contato2Email_old,
       socioAdmNome: cot_socio_nome,
       socioAdmCpf: cot_cpf
     })
@@ -1682,8 +1711,8 @@ async function montarDados(card) {
       docSelecao: cot3_docSelecao,
       cpf: cot3_cpf || '',
       cnpj: cot3_cnpj || '',
-      telefone: telefoneCotitular3Envio,
-      email: emailCotitular3Envio,
+      telefone: contatoTelefone3 || telefoneCotitular3Envio,
+      email: contatoEmail3 || emailCotitular3Envio,
       socioAdmNome: cot3_socio_nome,
       socioAdmCpf: cot3_cpf
     })
@@ -1890,7 +1919,18 @@ async function montarDados(card) {
     nome_assinatura_3: nomeContato3 || '',
 
     // [NOVO] Campo descreva condições de pagamento (raw do Pipefy)
-    descreva_condicoes_de_pagamento: descreva_condicoes
+    descreva_condicoes_de_pagamento: descreva_condicoes,
+
+    // [NOVO] Risco e flags de template
+    risco: risco,
+    isMarcaComRisco: isMarcaComRisco,
+    isMarca: isMarca,
+
+    // [NOVO] Filial (vem do campo "equipe contrato")
+    equipeName: equipeName,
+
+    // [NOVO] Representante (campo "nome_do_representante")
+    representante: representante
   };
 }
 
@@ -2005,7 +2045,7 @@ function montarTextoContratante(info = {}) {
         textoPJ += `, NESTE ATO REPRESENTADA POR SEUS SÓCIOS ADMINSTRADORES: SR(A). ${socioNomeUpper}`;
       } else {
         // Singular
-        textoPJ += `, NESTE ATO REPRESENTADO POR SEU SÓCIO ADMINISTRADOR SR. ${socioNomeUpper}`;
+        textoPJ += `, NESTE ATO REPRESENTADO(A) POR SEU SÓCIO(A) ADMINISTRADOR(A) SR(A). ${socioNomeUpper}`;
       }
 
       // Adicionar qualificação do sócio
@@ -2107,6 +2147,48 @@ function montarTextoContratante(info = {}) {
  * Variáveis para Templates
  * =======================*/
 
+// ===== Funções de Concatenação de Pagamento (Nova lógica) =====
+
+/**
+ * Monta a string do campo "contrato da Assessoria"
+ * Ex: "3 parcela(s) de R$ 500,00, valor que será pago via Boleto com a primeira parcela para o dia 10/04/2025"
+ */
+function montarTextoAssessoria({ parcelas, valorParcela, formaPagamento, dataPagamento }) {
+  const base = `${parcelas} parcela(s) de ${valorParcela}, valor que será pago via ${formaPagamento}`;
+  const formasComData = ['boleto', 'crédito programado'];
+  const incluiData = formasComData.includes(String(formaPagamento).toLowerCase().trim());
+  if (incluiData && dataPagamento) {
+    return `${base} com a primeira parcela para o dia ${dataPagamento}`;
+  }
+  return base;
+}
+
+/**
+ * Monta a string do campo "contrato da Pesquisa"
+ * Ex: "Isenta"  ou  "R$ 98,00 valor que será pago via Boleto 10/04/2025"
+ */
+function montarTextoPesquisa({ tipoPesquisa, valorPesquisa, formaPagamentoPesquisa, dataPagamentoPesquisa }) {
+  if (String(tipoPesquisa).toLowerCase().trim() === 'isenta') {
+    return 'Isenta';
+  }
+  // Caso "Paga"
+  return `${valorPesquisa} valor que será pago via ${formaPagamentoPesquisa} ${dataPagamentoPesquisa}`.trim();
+}
+
+/**
+ * Monta a string do campo "contrato financeiro" (Taxas e Encaminhamentos)
+ * Ex: "R$ 2.900,00 valor que será pago via Boleto dia 10/04/2025"
+ */
+function montarTextoTaxa({ valorTaxa, formaPagamentoTaxa, dataPagamentoTaxa }) {
+  const base = `${valorTaxa} valor que será pago via ${formaPagamentoTaxa}`;
+  const formasComData = ['boleto', 'crédito programado'];
+  const incluiData = formasComData.includes(String(formaPagamentoTaxa).toLowerCase().trim());
+  if (incluiData && dataPagamentoTaxa) {
+    return `${base} dia ${dataPagamentoTaxa}`;
+  }
+  return base;
+}
+
 // Marca
 function montarVarsParaTemplateMarca(d, nowInfo) {
   const valorTotalNum = onlyNumberBR(d.valor_total);
@@ -2152,10 +2234,18 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'Contrato Nº': cardIdStr,
     'Contrato nº': cardIdStr,
     'Contrato n°': cardIdStr,
-    // Campo específico do D4Sign
+    // Campo específico do D4Sign - [ATUALIZADO] Renomeado para NContrato
+    'NContrato': cardIdStr,
+    'NContrato*': cardIdStr,
+    // Manter compatibilidade com variáveis antigas (caso usadas em templates)
     'Número do contrato do bloco físico*': cardIdStr,
     'Número do contrato do bloco físico': cardIdStr,
     'Numero do contrato do bloco fisico': cardIdStr,
+
+    // [NOVO] Filial e Representante
+    'Filial': d.equipeName || '',  // Vem direto do campo "equipe contrato"
+    'Representante': d.representante || '',  // Campo "nome_do_representante" do Pipefy
+
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'Contratante 3': d.contratante_3_texto || '',
@@ -2207,6 +2297,8 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'tipo de marca 3': d.tipo3 || '',
     'tipo de marca 4': d.tipo4 || '',
     'tipo de marca 5': d.tipo5 || '',
+    // [NOVO] Nome da marca principal - campo "marca" do Pipefy
+    'nome_da_marca': d.nome1 || d.titulo || '',
     // Classes agrupadas por "Classe XX" / "NCL XX" com especificações separadas por vírgula
     'marcas-espec_1': d.classes_agrupadas_1[0] || '',
     'marcas-espec_2': d.classes_agrupadas_1[1] || '',
@@ -2221,21 +2313,44 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'marcas2-espec_4': d.linhas_marcas_espec_2[3] || '',
     'marcas2-espec_5': d.linhas_marcas_espec_2[4] || '',
 
-    // Assessoria
+    // Assessoria (campos individuais mantidos para compatibilidade)
     'Número de parcelas da Assessoria': String(d.parcelas || '1'),
     'Valor da parcela da Assessoria': toBRL(valorParcela),
     'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
     'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
+    // [NOVO] Campo consolidado gerado pela função
+    'contrato da Assessoria': montarTextoAssessoria({
+      parcelas: d.parcelas || '1',
+      valorParcela: toBRL(valorParcela),
+      formaPagamento: d.forma_pagto_assessoria || '',
+      dataPagamento: d.data_pagto_assessoria || ''
+    }),
 
-    // Pesquisa
+    // Pesquisa (campos individuais mantidos para compatibilidade)
     'Valor da Pesquisa': d.valor_pesquisa || 'R$ 00,00',
     'Forma de pagamento da Pesquisa': d.forma_pesquisa || '',
     'Data de pagamento da pesquisa': d.data_pesquisa || '00/00/00',
+    // [NOVO] Campo consolidado gerado pela função
+    // Pesquisa só se aplica a Marca, Patente ou Desenho Industrial
+    'contrato da Pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
+      ? montarTextoPesquisa({
+          tipoPesquisa: d.forma_pesquisa || '',
+          valorPesquisa: d.valor_pesquisa || 'R$ 98,00',
+          formaPagamentoPesquisa: d.forma_pesquisa || '',
+          dataPagamentoPesquisa: d.data_pesquisa || ''
+        })
+      : 'Não se aplica',
 
-    // Taxa
+    // Taxa (campos individuais mantidos para compatibilidade)
     'Valor da Taxa': d.valor_taxa_brl || '',
     'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
     'Data de pagamento da Taxa': d.data_pagto_taxa || '',
+    // [NOVO] Campo consolidado gerado pela função
+    'contrato financeiro': montarTextoTaxa({
+      valorTaxa: d.valor_taxa_brl || '',
+      formaPagamentoTaxa: d.forma_pagto_taxa || '',
+      dataPagamentoTaxa: d.data_pagto_taxa || ''
+    }),
 
     // Datas
     Dia: dia,
@@ -2315,10 +2430,18 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'Contrato Nº': cardIdStr,
     'Contrato nº': cardIdStr,
     'Contrato n°': cardIdStr,
-    // Campo específico do D4Sign
+    // Campo específico do D4Sign - [ATUALIZADO] Renomeado para NContrato
+    'NContrato': cardIdStr,
+    'NContrato*': cardIdStr,
+    // Manter compatibilidade com variáveis antigas (caso usadas em templates)
     'Número do contrato do bloco físico*': cardIdStr,
     'Número do contrato do bloco físico': cardIdStr,
     'Numero do contrato do bloco fisico': cardIdStr,
+
+    // [NOVO] Filial e Representante
+    'Filial': d.equipeName || '',  // Vem direto do campo "equipe contrato"
+    'Representante': d.representante || '',  // Campo "nome_do_representante" do Pipefy
+
     'Contratante 1': d.contratante_1_texto || d.nome || '',
     'Contratante 2': d.contratante_2_texto || '',
     'Contratante 3': d.contratante_3_texto || '',
@@ -2387,21 +2510,44 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'Detalhes do serviço - outros serviços 4': d.det['OUTROS'][3] || '',
     'Detalhes do serviço - outros serviços 5': d.det['OUTROS'][4] || '',
 
-    // Assessoria
+    // Assessoria (campos individuais mantidos para compatibilidade)
     'Número de parcelas da Assessoria': String(d.parcelas || '1'),
     'Valor da parcela da Assessoria': toBRL(valorParcela),
     'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
     'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
+    // [NOVO] Campo consolidado gerado pela função
+    'contrato da Assessoria': montarTextoAssessoria({
+      parcelas: d.parcelas || '1',
+      valorParcela: toBRL(valorParcela),
+      formaPagamento: d.forma_pagto_assessoria || '',
+      dataPagamento: d.data_pagto_assessoria || ''
+    }),
 
-    // Pesquisa
+    // Pesquisa (campos individuais mantidos para compatibilidade)
     'Valor da Pesquisa': d.valor_pesquisa || 'R$ 00,00',
     'Forma de pagamento da Pesquisa': d.forma_pesquisa || '',
     'Data de pagamento da pesquisa': d.data_pesquisa || '00/00/00',
+    // [NOVO] Campo consolidado gerado pela função
+    // Pesquisa só se aplica a Marca, Patente ou Desenho Industrial
+    'contrato da Pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
+      ? montarTextoPesquisa({
+          tipoPesquisa: d.forma_pesquisa || '',
+          valorPesquisa: d.valor_pesquisa || 'R$ 98,00',
+          formaPagamentoPesquisa: d.forma_pesquisa || '',
+          dataPagamentoPesquisa: d.data_pesquisa || ''
+        })
+      : 'Não se aplica',
 
-    // Taxa
+    // Taxa (campos individuais mantidos para compatibilidade)
     'Valor da Taxa': d.valor_taxa_brl || '',
     'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
     'Data de pagamento da Taxa': d.data_pagto_taxa || '',
+    // [NOVO] Campo consolidado gerado pela função
+    'contrato financeiro': montarTextoTaxa({
+      valorTaxa: d.valor_taxa_brl || '',
+      formaPagamentoTaxa: d.forma_pagto_taxa || '',
+      dataPagamentoTaxa: d.data_pagto_taxa || ''
+    }),
 
     // Datas
     Dia: dia,
@@ -3336,16 +3482,21 @@ app.get('/lead/:token', async (req, res) => {
 
     <h2>Serviços</h2>
     <div class="grid3">
-      <div><div class="label">Template escolhido</div><div>${d.templateToUse === process.env.TEMPLATE_UUID_CONTRATO ? 'Contrato de Marca' : 'Contrato de Outros Serviços'}</div></div>
-      <div><div class="label">Qtd Descrição MARCA</div><div>${d.qtd_desc.MARCA || '-'}</div></div>
-      <div><div class="label">Risco agregado</div><div>${d.risco_agregado || '-'}</div></div>
+      <div class="field"><div class="label">Template escolhido</div><div class="value">${
+        d.templateToUse === process.env.TEMPLATE_UUID_CONTRATO ? '📋 Marca (sem risco)' :
+        d.templateToUse === process.env.TEMPLATE_UUID_CONTRATO_MARCA_RISCO ? '⚠️ Marca + Termo de Risco' :
+        '📑 Outros Serviços'
+      }</div></div>
+      <div class="field"><div class="label">Risco da Marca</div><div class="value" style="font-weight:600;color:${d.risco && ['médio','alto'].includes(d.risco.toLowerCase()) ? '#d32f2f' : '#137333'}">${d.risco || '-'}</div></div>
+      <div class="field"><div class="label">Filial</div><div class="value">${d.equipeName || '-'}</div></div>
     </div>
 
-    <h2>Valores</h2>
-    <div class="grid3">
-      <div class="field"><div class="label">Valor Assessoria</div><div class="value">${d.valor_total || '-'} (${d.parcelas || '1'}x)</div></div>
-      <div class="field"><div class="label">Valor Pesquisa</div><div class="value">${d.valor_pesquisa || '-'}</div></div>
-      <div class="field"><div class="label">Valor Taxa</div><div class="value">${d.valor_taxa_brl || '-'}</div></div>
+    <h2>Pagamentos</h2>
+    <div class="grid">
+      <div class="field"><div class="label">Assessoria</div><div class="value">${d.valor_total || '-'} (${d.parcelas || '1'}x via ${d.forma_pagto_assessoria || '-'})</div></div>
+      <div class="field"><div class="label">Pesquisa</div><div class="value">${d.valor_pesquisa || '-'}</div></div>
+      <div class="field"><div class="label">Taxa</div><div class="value">${d.valor_taxa_brl || '-'} via ${d.forma_pagto_taxa || '-'}</div></div>
+      <div class="field"><div class="label">Texto Assessoria no Contrato</div><div class="value" style="font-size:13px">${d.forma_pagto_assessoria ? (d.parcelas || '1') + ' parcela(s) de ... via ' + d.forma_pagto_assessoria + (d.data_pagto_assessoria ? ' · ' + d.data_pagto_assessoria : '') : '-'}</div></div>
     </div>
 
     <h2>Classes e Especificações</h2>
@@ -3370,7 +3521,7 @@ app.get('/lead/:token', async (req, res) => {
     </div>
     <div style="margin-top:24px;padding-top:20px;border-top:2px solid #FFE200">
       <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate">
-        <button class="btn" type="submit">📄 Gerar Contrato, Procuração e Termo de Risco</button>
+        <button class="btn" type="submit">📄 Gerar Contrato e Procuração</button>
       </form>
       <p class="muted">Ao clicar, os documentos serão criados no D4Sign.</p>
     </div>
@@ -3705,7 +3856,7 @@ app.post('/lead/:token/generate', async (req, res) => {
 <div class="main">
 <div class="box">
   <div class="box-header">
-    <h2>📄 ${uuidTermoDeRisco ? (uuidProcuracao ? 'Contrato, Procuração e Termo de Risco Gerados' : 'Contrato e Termo de Risco Gerados') : (uuidProcuracao ? 'Contrato e Procuração Gerados' : 'Contrato Gerado com Sucesso')}</h2>
+    <h2>📄 ${uuidProcuracao ? 'Contrato e Procuração Gerados' : 'Contrato Gerado com Sucesso'}</h2>
   </div>
   <div class="box-body">
 
@@ -4002,117 +4153,7 @@ async function reenviarProcuracao(token, uuidDoc) {
   }
 }
 
-async function enviarTermoDeRisco(token, uuidTermo, canal) {
-  const btnEmail = document.getElementById('btn-enviar-termo-email');
-  const btnWhatsapp = document.getElementById('btn-enviar-termo-whatsapp');
-  const statusDiv = document.getElementById('status-termo');
 
-  const btn = canal === 'whatsapp' ? btnWhatsapp : btnEmail;
-
-  btn.disabled = true;
-  btn.textContent = 'Enviando...';
-  statusDiv.innerHTML = '<span style="color:#1976d2">⏳ Enviando Termo de Risco por ' + canal + '...</span>';
-
-  try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidTermo) + '/send?canal=' + canal + '&tipo=termo_de_risco', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-    const data = await response.json();
-
-    if (response.ok && data.success) {
-      const cofreMsg = data.cofre ? ' Salvo no cofre: ' + data.cofre : '';
-      const urlCofreMsg = data.urlCofre ? '<br><br><div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;border-left:4px solid #1976d2;"><strong style="color:#1976d2">Link do D4 para reenviar ou alterar os signatarios:</strong><br><a href="' + data.urlCofre + '" target="_blank" style="color:#1976d2;text-decoration:underline;word-break:break-all">' + data.urlCofre + '</a></div>' : '';
-
-      let destinoMsg = '';
-      if (canal === 'whatsapp' && data.telefones) {
-        destinoMsg = ' para: ' + data.telefones;
-      } else if (data.emails) {
-        destinoMsg = ' para: ' + data.emails;
-      } else if (data.email) {
-        destinoMsg = ' para ' + data.email;
-      }
-
-      const avisoMsg = '<br><br><div style="margin-top:12px;padding:12px;background:#fff3cd;border-radius:8px;border-left:4px solid #ffc107;color:#856404;font-size:14px;"><strong>⚠️ Importante:</strong> Caso o email ou whatsapp não cheguem para assinatura, é necessário abrir o D4Sign (link acima) e clicar em \"Enviar novamente\".</div>';
-
-      statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ Status de envio - Termo de Risco: Enviado com sucesso' + destinoMsg + '.' + cofreMsg + '</span>' + urlCofreMsg + avisoMsg;
-      btn.textContent = 'Enviado por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
-      btn.style.background = '#6c757d';
-      btn.disabled = true;
-
-      const btnReenviar = document.getElementById('btn-reenviar-termo');
-      if (btnReenviar) {
-        btnReenviar.style.display = 'inline-block';
-        let timeLeft = 60;
-        btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
-        btnReenviar.disabled = true;
-        const timerId = setInterval(() => {
-          timeLeft--;
-          if (timeLeft <= 0) {
-            clearInterval(timerId);
-            btnReenviar.textContent = 'Reenviar Link';
-            btnReenviar.disabled = false;
-            btnReenviar.style.background = '#111';
-          } else {
-            btnReenviar.textContent = 'Reenviar Link (' + timeLeft + 's)';
-          }
-        }, 1000);
-      }
-    } else {
-      const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
-      statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ Status de envio - Termo de Risco: ' + errorMsg + '</span>';
-      btn.disabled = false;
-      btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
-    }
-  } catch (error) {
-    statusDiv.innerHTML = '<span style="color:#d32f2f">✗ Status de envio - Termo de Risco: Erro ao enviar - ' + error.message + '</span>';
-    btn.disabled = false;
-    btn.textContent = 'Enviar por ' + (canal === 'whatsapp' ? 'WhatsApp' : 'Email');
-  }
-}
-
-async function reenviarTermoDeRisco(token, uuidDoc) {
-  const btn = document.getElementById('btn-reenviar-termo');
-  const statusDiv = document.getElementById('status-termo');
-
-  btn.disabled = true;
-  btn.textContent = 'Reenviando...';
-
-  try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuidDoc) + '/resend', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const data = await response.json();
-
-    if (response.ok && data.success) {
-      statusDiv.innerHTML += '<br><span style="color:#28a745;font-weight:600">✓ Reenvio solicitado com sucesso.</span>';
-      let timeLeft = 60;
-      btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
-      btn.style.background = '#6c757d';
-      const timerId = setInterval(() => {
-        timeLeft--;
-        if (timeLeft <= 0) {
-          clearInterval(timerId);
-          btn.textContent = 'Reenviar Link';
-          btn.disabled = false;
-          btn.style.background = '#111';
-        } else {
-          btn.textContent = 'Reenviar Link (' + timeLeft + 's)';
-        }
-      }, 1000);
-    } else {
-      statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + (data.message || 'Erro desconhecido') + '</span>';
-      btn.textContent = 'Reenviar Link';
-      btn.disabled = false;
-    }
-  } catch (error) {
-    statusDiv.innerHTML += '<br><span style="color:#d32f2f">✗ Erro ao reenviar: ' + error.message + '</span>';
-    btn.textContent = 'Reenviar Link';
-    btn.disabled = false;
-  }
-}
 </script>`;
     return res.status(200).send(html);
 
@@ -4864,29 +4905,9 @@ async function processarContrato(cardId) {
     } catch (e) { console.error('Erro procuração:', e.message); }
   }
 
-  // Termo de Risco (HTML Template — opcional)
-  let uuidTermoDeRisco = null;
-  const templateIdTermo = String(d.selecao_cnpj_ou_cpf || '').toUpperCase().trim() === 'CPF'
-    ? TEMPLATE_UUID_TERMO_DE_RISCO_CPF
-    : TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ;
-  if (templateIdTermo) {
-    try {
-      const varsTermo = montarVarsParaTermoDeRisco(d, nowInfo);
-      uuidTermoDeRisco = await makeDocFromHtmlTemplate(
-        D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-        templateIdTermo,
-        `Termo de Risco - ${d.titulo || card.title}`,
-        varsTermo
-      );
-      if (uuidTermoDeRisco) {
-        await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidTermoDeRisco, `${PUBLIC_BASE_URL}/d4sign/postback`);
-        if (PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO) {
-          await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO, uuidTermoDeRisco);
-          console.log(`[PROCESSAR] UUID Termo de Risco salvo no card: ${uuidTermoDeRisco}`);
-        }
-      }
-    } catch (e) { console.error('Erro Termo de Risco:', e.message); }
-  }
+  // Termo de Risco: Removido — agora integrado apenas no Template 2 (Marca com Risco)
+  // Nenhum documento separado de Termo de Risco será criado
+  const uuidTermoDeRisco = null;
 
   // [REMOVIDO] Cadastrar signatários automaticamente
   // O cadastro será feito apenas quando o usuário clicar em "Enviar por Email"
