@@ -1716,13 +1716,20 @@ async function montarDados(card) {
     })
     : '';
 
-  // Dados para contato 1 e 2
+  // Dados para contato 1, 2 e 3
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
   const dadosContato2 = hasCotitular
     ? [
       (cot_nome || contato2Nome_old || 'Cotitular'),
-      (telefoneCotitularEnvio || contato2Telefone_old || ''),
-      (emailCotitularEnvio || contato2Email_old || '')
+      (contatoTelefone2 || telefoneCotitularEnvio || contato2Telefone_old || ''),
+      (contatoEmail2 || emailCotitularEnvio || contato2Email_old || '')
+    ].filter(Boolean).join(' | ')
+    : '';
+  const dadosContato3 = hasCotitular3
+    ? [
+      (cot3_nome || 'Cotitular 3'),
+      (contatoTelefone3 || telefoneCotitular3Envio || ''),
+      (contatoEmail3 || emailCotitular3Envio || '')
     ].filter(Boolean).join(' | ')
     : '';
 
@@ -1821,6 +1828,7 @@ async function montarDados(card) {
     telefone: contatoTelefone || '',
     dados_contato_1: dadosContato1,
     dados_contato_2: dadosContato2,
+    dados_contato_3: dadosContato3,
 
     // Textos completos dos contratantes
     contratante_1_texto: contratante1Texto,
@@ -2272,6 +2280,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     telefone: d.telefone || '',
     'dados para contato 1': d.dados_contato_1 || '',
     'dados para contato 2': d.dados_contato_2 || '',
+    'dados para contato 3': d.dados_contato_3 || '',
 
     // Resultado da pesquisa prévia
     'Risco': d.risco_agregado || '',
@@ -2468,6 +2477,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     telefone: d.telefone || '',
     'dados para contato 1': d.dados_contato_1 || '',
     'dados para contato 2': d.dados_contato_2 || '',
+    'dados para contato 3': d.dados_contato_3 || '',
 
     // Resultado da pesquisa prévia
     'Risco': d.risco_agregado || '',
@@ -2629,6 +2639,7 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
     'Telefone': d.telefone || '',
     'dados para contato 1': d.dados_contato_1 || '',
     'dados para contato 2': d.dados_contato_2 || '',
+    'dados para contato 3': d.dados_contato_3 || '',
 
     // Datas
     'Dia': dia,
@@ -3572,7 +3583,7 @@ app.post('/lead/:token/generate', async (req, res) => {
       throw new Error('Template não identificado. Verifique os dados do card.');
     }
 
-    const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO;
+    const isMarcaTemplate = d.templateToUse === TEMPLATE_UUID_CONTRATO || d.templateToUse === TEMPLATE_UUID_CONTRATO_MARCA_RISCO;
     const add = isMarcaTemplate ? montarVarsParaTemplateMarca(d, nowInfo)
       : montarVarsParaTemplateOutros(d, nowInfo);
 
