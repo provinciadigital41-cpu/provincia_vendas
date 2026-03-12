@@ -772,8 +772,6 @@ if (!PIPEFY_FIELD_D4_UUID_PROCURACAO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
-if (!TEMPLATE_UUID_TERMO_DE_RISCO_CPF) console.warn('[AVISO] TEMPLATE_UUID_TERMO_DE_RISCO_CPF ausente - Termo de Risco CPF não será gerado');
-if (!TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ) console.warn('[AVISO] TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ ausente - Termo de Risco CNPJ não será gerado');
 
 // Cofres mapeados por EQUIPE (campo "Equipe contrato" no Pipefy)
 // ⚠️ ATENÇÃO: as chaves DEVEM ser exatamente os valores de "Equipe contrato"
@@ -3737,8 +3735,6 @@ app.post('/lead/:token/generate', async (req, res) => {
     // ===============================
     let uuidTermoDeRisco = null;
     const templateIdTermo = String(d.selecao_cnpj_ou_cpf || '').toUpperCase().trim() === 'CPF'
-      ? TEMPLATE_UUID_TERMO_DE_RISCO_CPF
-      : TEMPLATE_UUID_TERMO_DE_RISCO_CNPJ;
 
     if (templateIdTermo) {
       try {
