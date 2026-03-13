@@ -3192,8 +3192,9 @@ async function sendToSigner(tokenAPI, cryptKey, uuidDocument, {
 } = {}) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/sendtosigner`, base);
+  url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
-  const body = { message, skip_email, workflow, tokenAPI };
+  const body = { message, skip_email, workflow };
 
   console.log(`[SEND] Tentando enviar documento ${uuidDocument} para assinatura...`);
   console.log(`[SEND] Parâmetros: skip_email=${skip_email}, workflow=${workflow}`);
