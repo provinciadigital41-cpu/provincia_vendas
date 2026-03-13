@@ -3074,16 +3074,21 @@ async function listSigners(tokenAPI, cryptKey, uuidDocument) {
   return data; // Retorna array de signatários ou objeto com propriedade list/message
 }
 
-async function resendToSigner(tokenAPI, cryptKey, uuidDocument, email, keySigner) {
+async function resendToSigner(tokenAPI, cryptKey, uuidDocument, emailOrWhatsapp, keySigner) {
   const base = 'https://secure.d4sign.com.br';
   const url = new URL(`/api/v1/documents/${uuidDocument}/resend`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
 
+  // O campo "email" da API D4Sign aceita "e-mail ou whatsapp"
+  // Para signatários com embed_methodauth: 'whatse', deve-se enviar o número WhatsApp
   const body = {
-    email: email,
+    email: emailOrWhatsapp,
     key_signer: keySigner
   };
+
+  console.log(`[RESEND-API] Reenviando para ${emailOrWhatsapp} (key: ${keySigner}) doc: ${uuidDocument}`);
+  console.log(`[RESEND-API] Body:`, JSON.stringify(body));
 
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST',
@@ -3092,8 +3097,8 @@ async function resendToSigner(tokenAPI, cryptKey, uuidDocument, email, keySigner
   }, { attempts: 1 }); // Sem retry automático para evitar spam/bloqueio
 
   const text = await res.text();
+  console.log(`[RESEND-API] Resposta: ${res.status} - ${text.substring(0, 300)}`);
   if (!res.ok) {
-    // Se for erro de tempo (429 ou mensagem específica), vamos repassar
     throw new Error(`Falha ao reenviar: ${res.status} - ${text}`);
   }
   return text;
@@ -4473,18 +4478,28 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
             if (!s.key_signer) continue;
             // Verificar se o signatário tem WhatsApp configurado
             const emailLower = (s.email || '').toLowerCase();
-            const temWhatsapp = s.whatsapp || s.whatsapp_number ||
-              signers.find(orig => (orig.email || '').toLowerCase() === emailLower && orig.phone);
-            console.log(`[SEND-WA] Signatário ${s.email}: whatsapp=${s.whatsapp}, whatsapp_number=${s.whatsapp_number}, matchLocal=${!!signers.find(orig => (orig.email || '').toLowerCase() === emailLower && orig.phone)}`);
-            if (!temWhatsapp) {
+            const localSigner = signers.find(orig => (orig.email || '').toLowerCase() === emailLower && orig.phone);
+            // Obter o número WhatsApp: primeiro da resposta D4Sign, depois do array local
+            const whatsappNumber = s.whatsapp || s.whatsapp_number || (localSigner ? localSigner.phone : null);
+            console.log(`[SEND-WA] Signatário ${s.email}: d4sign_whatsapp=${s.whatsapp}, d4sign_whatsapp_number=${s.whatsapp_number}, local_phone=${localSigner?.phone}, whatsappNumber=${whatsappNumber}`);
+            if (!whatsappNumber) {
               console.log(`[SEND-WA] Pulando resend para ${s.email} (sem WhatsApp configurado)`);
               continue;
             }
             try {
-              await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, s.email, s.key_signer);
-              console.log(`[SEND-WA] ✓ Resend WhatsApp disparado para: ${s.email}`);
+              // D4Sign /resend aceita "e-mail ou whatsapp" no campo email
+              // Para WhatsApp, enviamos o número de telefone ao invés do email
+              await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, whatsappNumber, s.key_signer);
+              console.log(`[SEND-WA] ✓ Resend WhatsApp disparado para: ${whatsappNumber} (${s.email})`);
             } catch (resendErr) {
-              console.warn(`[SEND-WA] Aviso ao fazer resend para ${s.email}:`, resendErr.message);
+              // Se falhar com WhatsApp, tenta com email como fallback
+              console.warn(`[SEND-WA] Falha com WhatsApp (${whatsappNumber}), tentando com email (${s.email})...`, resendErr.message);
+              try {
+                await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, s.email, s.key_signer);
+                console.log(`[SEND-WA] ✓ Resend via email fallback disparado para: ${s.email}`);
+              } catch (resendErr2) {
+                console.warn(`[SEND-WA] Fallback email também falhou para ${s.email}:`, resendErr2.message);
+              }
             }
           }
         } catch (waErr) {
@@ -4668,16 +4683,32 @@ app.post('/lead/:token/doc/:uuid/resend', async (req, res) => {
     let errors = 0;
 
     // 2. Reenviar para cada signatário
+    // Para signatários com WhatsApp, o campo "email" do /resend aceita "e-mail ou whatsapp"
     for (const signer of signersList) {
-      // Ignorar signatários que já assinaram (status 2 = assinado, 1 = pendente?)
-      // Na dúvida, reenviamos para todos que têm key_signer
       if (!signer.key_signer) continue;
 
+      // Determinar se o signatário tem WhatsApp configurado
+      const whatsappNumber = signer.whatsapp || signer.whatsapp_number || '';
+      // Se tem WhatsApp, enviar o número; senão, enviar o email
+      const identificador = whatsappNumber || signer.email;
+      console.log(`[RESEND] Signatário: email=${signer.email}, whatsapp=${signer.whatsapp}, whatsapp_number=${signer.whatsapp_number}, usando=${identificador}`);
+
       try {
-        await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signer.email, signer.key_signer);
-        resultados.push({ email: signer.email, status: 'enviado' });
+        await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, identificador, signer.key_signer);
+        resultados.push({ email: signer.email, whatsapp: whatsappNumber || null, status: 'enviado' });
       } catch (e) {
-        console.error(`[RESEND] Erro ao reenviar para ${signer.email}:`, e.message);
+        console.error(`[RESEND] Erro ao reenviar para ${identificador}:`, e.message);
+        // Se falhou com WhatsApp, tenta com email como fallback
+        if (whatsappNumber && signer.email) {
+          try {
+            console.log(`[RESEND] Tentando fallback com email para ${signer.email}...`);
+            await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signer.email, signer.key_signer);
+            resultados.push({ email: signer.email, status: 'enviado (fallback email)' });
+            continue;
+          } catch (e2) {
+            console.error(`[RESEND] Fallback email também falhou para ${signer.email}:`, e2.message);
+          }
+        }
         resultados.push({ email: signer.email, status: 'erro', error: e.message });
         errors++;
       }
