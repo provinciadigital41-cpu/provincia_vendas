@@ -4446,6 +4446,38 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
       });
       console.log(`[SEND] ${isTermo ? 'Termo de Risco' : (isProcuracao ? 'Procuração' : 'Contrato')} enviado para assinatura por ${canal}:`, uuidDoc);
 
+      // Para WhatsApp: o sendtosigner apenas muda o status do documento para "Aguardando assinatura"
+      // mas NÃO dispara a notificação WhatsApp. O endpoint /resend é o que efetivamente
+      // envia via embed_methodauth: 'whatse'. Por isso chamamos resend para cada signatário com telefone.
+      if (canal === 'whatsapp') {
+        try {
+          await new Promise(r => setTimeout(r, 3000)); // aguardar D4Sign processar o sendtosigner
+          const signersData = await listSigners(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
+          const signersList = Array.isArray(signersData) ? signersData : (signersData.list || []);
+          console.log(`[SEND-WA] ${signersList.length} signatário(s) encontrado(s) para reenvio WhatsApp`);
+
+          for (const s of signersList) {
+            if (!s.key_signer) continue;
+            // Só reenviar para quem tem whatsapp configurado (tem whatsapp field preenchido)
+            // O campo 'whatsapp' na resposta do D4Sign indica que o signer tem WhatsApp
+            const temWhatsapp = s.whatsapp || s.whatsapp_number || signers.find(orig => orig.email === s.email && orig.phone);
+            if (!temWhatsapp) {
+              console.log(`[SEND-WA] Pulando resend para ${s.email} (sem WhatsApp configurado)`);
+              continue;
+            }
+            try {
+              await resendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, s.email, s.key_signer);
+              console.log(`[SEND-WA] ✓ Resend WhatsApp disparado para: ${s.email}`);
+            } catch (resendErr) {
+              console.warn(`[SEND-WA] Aviso ao fazer resend para ${s.email}:`, resendErr.message);
+            }
+          }
+        } catch (waErr) {
+          console.warn(`[SEND-WA] Aviso ao disparar notificações WhatsApp via resend:`, waErr.message);
+          // Não bloqueia o fluxo — o documento já está no estado correto
+        }
+      }
+
       // Salvar UUID do documento no campo correto após enviar para assinatura
       try {
         console.log(`[SEND] Tentando salvar UUID - isProcuracao: ${isProcuracao}, isTermo: ${isTermo}, uuidDoc: ${uuidDoc}, cardId: ${cardId}`);
