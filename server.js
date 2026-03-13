@@ -4453,14 +4453,29 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         try {
           await new Promise(r => setTimeout(r, 3000)); // aguardar D4Sign processar o sendtosigner
           const signersData = await listSigners(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-          const signersList = Array.isArray(signersData) ? signersData : (signersData.list || []);
+          console.log(`[SEND-WA] Resposta listSigners:`, JSON.stringify(signersData).substring(0, 500));
+          // D4Sign retorna [{ uuidDoc, nameDoc, ..., list: [...signatários] }]
+          let signersList = [];
+          if (Array.isArray(signersData) && signersData.length > 0 && signersData[0]?.list) {
+            // Formato padrão: array com objeto contendo propriedade "list"
+            const listData = signersData[0].list;
+            signersList = Array.isArray(listData) ? listData : [listData];
+          } else if (Array.isArray(signersData) && signersData.length > 0 && signersData[0]?.key_signer) {
+            // Formato alternativo: array plano de signatários
+            signersList = signersData;
+          } else if (signersData?.list) {
+            const listData = signersData.list;
+            signersList = Array.isArray(listData) ? listData : [listData];
+          }
           console.log(`[SEND-WA] ${signersList.length} signatário(s) encontrado(s) para reenvio WhatsApp`);
 
           for (const s of signersList) {
             if (!s.key_signer) continue;
-            // Só reenviar para quem tem whatsapp configurado (tem whatsapp field preenchido)
-            // O campo 'whatsapp' na resposta do D4Sign indica que o signer tem WhatsApp
-            const temWhatsapp = s.whatsapp || s.whatsapp_number || signers.find(orig => orig.email === s.email && orig.phone);
+            // Verificar se o signatário tem WhatsApp configurado
+            const emailLower = (s.email || '').toLowerCase();
+            const temWhatsapp = s.whatsapp || s.whatsapp_number ||
+              signers.find(orig => (orig.email || '').toLowerCase() === emailLower && orig.phone);
+            console.log(`[SEND-WA] Signatário ${s.email}: whatsapp=${s.whatsapp}, whatsapp_number=${s.whatsapp_number}, matchLocal=${!!signers.find(orig => (orig.email || '').toLowerCase() === emailLower && orig.phone)}`);
             if (!temWhatsapp) {
               console.log(`[SEND-WA] Pulando resend para ${s.email} (sem WhatsApp configurado)`);
               continue;
@@ -4631,8 +4646,19 @@ app.post('/lead/:token/doc/:uuid/resend', async (req, res) => {
   try {
     // 1. Listar signatários para obter key_signer
     const signersData = await listSigners(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-    // A resposta pode ser um array direto ou um objeto { message: '...', list: [...] }
-    const signersList = Array.isArray(signersData) ? signersData : (signersData.list || []);
+    console.log(`[RESEND] Resposta listSigners:`, JSON.stringify(signersData).substring(0, 500));
+    // D4Sign retorna [{ uuidDoc, nameDoc, ..., list: [...signatários] }]
+    let signersList = [];
+    if (Array.isArray(signersData) && signersData.length > 0 && signersData[0]?.list) {
+      const listData = signersData[0].list;
+      signersList = Array.isArray(listData) ? listData : [listData];
+    } else if (Array.isArray(signersData) && signersData.length > 0 && signersData[0]?.key_signer) {
+      signersList = signersData;
+    } else if (signersData?.list) {
+      const listData = signersData.list;
+      signersList = Array.isArray(listData) ? listData : [listData];
+    }
+    console.log(`[RESEND] ${signersList.length} signatário(s) encontrado(s)`);
 
     if (!signersList || signersList.length === 0) {
       return res.status(404).json({ success: false, message: 'Nenhum signatário encontrado para este documento.' });
