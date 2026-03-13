@@ -4479,9 +4479,12 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
             // Verificar se o signatário tem WhatsApp configurado
             const emailLower = (s.email || '').toLowerCase();
             const localSigner = signers.find(orig => (orig.email || '').toLowerCase() === emailLower && orig.phone);
-            // Obter o número WhatsApp: primeiro da resposta D4Sign, depois do array local
-            const whatsappNumber = s.whatsapp || s.whatsapp_number || (localSigner ? localSigner.phone : null);
-            console.log(`[SEND-WA] Signatário ${s.email}: d4sign_whatsapp=${s.whatsapp}, d4sign_whatsapp_number=${s.whatsapp_number}, local_phone=${localSigner?.phone}, whatsappNumber=${whatsappNumber}`);
+            // D4Sign armazena o telefone no campo "email" quando o signatário foi cadastrado via WhatsApp
+            // Detectar se s.email é na verdade um número de telefone (só dígitos, opcionalmente com +)
+            const emailIsPhone = /^\+?\d{10,15}$/.test((s.email || '').replace(/\s/g, ''));
+            // Obter o número WhatsApp: campo explícito, ou email que é telefone, ou do array local
+            const whatsappNumber = s.whatsapp || s.whatsapp_number || (emailIsPhone ? s.email : null) || (localSigner ? localSigner.phone : null);
+            console.log(`[SEND-WA] Signatário ${s.email}: d4sign_whatsapp=${s.whatsapp}, d4sign_whatsapp_number=${s.whatsapp_number}, emailIsPhone=${emailIsPhone}, local_phone=${localSigner?.phone}, whatsappNumber=${whatsappNumber}`);
             if (!whatsappNumber) {
               console.log(`[SEND-WA] Pulando resend para ${s.email} (sem WhatsApp configurado)`);
               continue;
