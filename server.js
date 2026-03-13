@@ -4435,8 +4435,9 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         ? 'Olá! Há uma procuração aguardando sua assinatura.'
         : (isTermo ? 'Olá! Há um Termo de Risco aguardando sua assinatura.' : 'Olá! Há um documento aguardando sua assinatura.');
 
-      // Se for WhatsApp, não enviar email
-      const skip_email = canal === 'whatsapp' ? '1' : '0';
+      // skip_email: '1' suprime TODAS as notificações externas (embed mode) — não usar para WhatsApp.
+      // A supressão do email para WhatsApp é feita via skipemail: '1' por signatário no createlist.
+      const skip_email = '0';
 
       await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
         message: mensagem,
