@@ -1944,6 +1944,9 @@ async function montarDados(card) {
       OUTROS: qtdDesc['OUTROS']
     },
 
+    // Contagem numérica de marcas (só o número, sem descrição)
+    qtd_marca_num: byKind['MARCA'].length || '',
+
     // Detalhes por categoria até 5
     det: detalhes,
 
@@ -2357,7 +2360,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'Risco': d.risco_agregado || '',
 
     // Quantidade e descrição de Marca
-    'Quantidade depósitos/processos de MARCA': d.qtd_desc.MARCA || '',
+    'Quantidade depósitos/processos de MARCA': d.qtd_marca_num || '',
     'Descrição do serviço - MARCA': d.desc_servico_marca || '',
 
     // Detalhes do serviço - Marca até 5
