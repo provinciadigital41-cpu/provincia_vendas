@@ -1185,6 +1185,60 @@ function buscarServicoN(card, n) {
   return v;
 }
 
+// Retorna TODOS os serviços selecionados para o slot N (conector servi_os_marca_N)
+function buscarTodosServicosN(card, n) {
+  const mapStmt = {
+    1: 'statement_9a115410_226d_43bc_9c1b_a28887e1f8a6',
+    2: 'statement_432366f2_fbbc_448d_82e4_fbd73c3fc52e',
+    3: 'statement_c5616541_5f30_41b9_bd74_e2bd2063f253',
+    4: 'statement_8d833401_2294_448b_a34f_07f86c52981c',
+    5: 'statement_ca0eb59e_a015_4628_8c56_28af6e23c8d9'
+  };
+  const mapConn = {
+    1: 'servi_os_marca_1',
+    2: 'servi_os_marca_2',
+    3: 'servi_os_marca_3',
+    4: 'servi_os_marca_4',
+    5: 'servi_os_marca_5'
+  };
+
+  // Statement tem valor único — retorna como array de 1 item
+  const stmtId = mapStmt[n];
+  if (stmtId) {
+    const f = getFieldObjById(card, stmtId);
+    const v = String(f?.value || '').replace(/<[^>]*>/g, ' ').trim();
+    if (v) return [v];
+  }
+
+  // Conector pode ter múltiplos valores selecionados
+  const connId = mapConn[n];
+  if (!connId) return [];
+  const f = getFieldObjById(card, connId);
+  if (!f) return [];
+
+  if (f.value) {
+    try {
+      const arr = JSON.parse(f.value);
+      if (Array.isArray(arr)) return arr.map(s => String(s).trim()).filter(Boolean);
+      return [String(f.value).trim()].filter(Boolean);
+    } catch {
+      return [String(f.value).trim()].filter(Boolean);
+    }
+  }
+  if (Array.isArray(f.array_value) && f.array_value.length) {
+    return f.array_value.map(s => String(s).trim()).filter(Boolean);
+  }
+  return [];
+}
+
+// Monta a descrição combinada dos serviços de marca
+// Ex: [“PEDIDO DE REGISTRO DE MARCA”, “CONTRA NOTIFICACAO”] → “PEDIDO DE REGISTRO DE MARCA E CONTRA NOTIFICACAO JUNTO AO INPI”
+function buildDescricaoServicosMarca(servicos) {
+  const partes = servicos.map(s => String(s).toUpperCase().trim()).filter(Boolean);
+  if (!partes.length) return '';
+  return partes.join(' E ') + ' JUNTO AO INPI';
+}
+
 // Normalização apenas para “Detalhes do serviço …”
 function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '') {
   const k = String(kind || '').toUpperCase();
@@ -1313,6 +1367,10 @@ async function montarDados(card) {
   const serv3Stmt = firstNonEmpty(buscarServicoN(card, 3));
   const serv4Stmt = firstNonEmpty(buscarServicoN(card, 4));
   const serv5Stmt = firstNonEmpty(buscarServicoN(card, 5));
+
+  // Descrição combinada de todos os serviços selecionados para a marca principal
+  // Ex: "PEDIDO DE REGISTRO DE MARCA E CONTRA NOTIFICACAO JUNTO AO INPI"
+  const descServicoPrincipal = buildDescricaoServicosMarca(buscarTodosServicosN(card, 1));
 
   // Kinds
   const k1 = serviceKindFromText(serv1Stmt);
@@ -1879,6 +1937,8 @@ async function montarDados(card) {
     det: detalhes,
 
     // Classes e tipos por marca
+    desc_servico_marca: descServicoPrincipal,
+
     classe1: classeSomenteNumeros1, tipo1: tipoMarca1, nome1: tituloMarca1,
     classe2: classeSomenteNumeros2, tipo2: tipoMarca2, nome2: tituloMarca2,
     classe3: classeSomenteNumeros3, tipo3: tipoMarca3, nome3: tituloMarca3,
@@ -2287,7 +2347,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Quantidade e descrição de Marca
     'Quantidade depósitos/processos de MARCA': d.qtd_desc.MARCA || '',
-    'Descrição do serviço - MARCA': d.qtd_desc.MARCA ? '' : '',
+    'Descrição do serviço - MARCA': d.desc_servico_marca || '',
 
     // Detalhes do serviço - Marca até 5
     'Detalhes do serviço - MARCA': d.det.MARCA[0] || '',
@@ -2300,10 +2360,10 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
     // Tipo de marca (token no template Word: ${"tipo de marca"})
     'tipo de marca': d.tipo1 || '',
-    'tipo de marca 2': d.tipo2 || '',
-    'tipo de marca 3': d.tipo3 || '',
-    'tipo de marca 4': d.tipo4 || '',
-    'tipo de marca 5': d.tipo5 || '',
+    'tipo de marca 2': d.nome2 ? (d.tipo2 || '') : '',
+    'tipo de marca 3': d.nome3 ? (d.tipo3 || '') : '',
+    'tipo de marca 4': d.nome4 ? (d.tipo4 || '') : '',
+    'tipo de marca 5': d.nome5 ? (d.tipo5 || '') : '',
     // [NOVO] Nome da marca principal - campo "marca" do Pipefy
     'nome_da_marca': d.nome1 || d.titulo || '',
     // Classes agrupadas por "Classe XX" / "NCL XX" com especificações separadas por vírgula
@@ -2314,11 +2374,11 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'marcas-espec_5': d.classes_agrupadas_1[4] || '',
 
     'Cabeçalho - SERVIÇOS 2': d.cabecalho_servicos_2 || '',
-    'marcas2-espec_1': d.linhas_marcas_espec_2[0] || '',
-    'marcas2-espec_2': d.linhas_marcas_espec_2[1] || '',
-    'marcas2-espec_3': d.linhas_marcas_espec_2[2] || '',
-    'marcas2-espec_4': d.linhas_marcas_espec_2[3] || '',
-    'marcas2-espec_5': d.linhas_marcas_espec_2[4] || '',
+    'marcas2-espec_1': d.nome2 ? (d.linhas_marcas_espec_2[0] || '') : '',
+    'marcas2-espec_2': d.nome2 ? (d.linhas_marcas_espec_2[1] || '') : '',
+    'marcas2-espec_3': d.nome2 ? (d.linhas_marcas_espec_2[2] || '') : '',
+    'marcas2-espec_4': d.nome2 ? (d.linhas_marcas_espec_2[3] || '') : '',
+    'marcas2-espec_5': d.nome2 ? (d.linhas_marcas_espec_2[4] || '') : '',
 
     // Assessoria (campos individuais mantidos para compatibilidade)
     'Número de parcelas da Assessoria': String(d.parcelas || '1'),
@@ -2388,7 +2448,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
   // Preencher até 30 linhas por segurança
   for (let i = 5; i < 30; i++) {
     base[`marcas-espec_${i + 1}`] = d.classes_agrupadas_1[i] || '';
-    base[`marcas2-espec_${i - 4}`] = d.linhas_marcas_espec_2[i - 5] || '';
+    base[`marcas2-espec_${i - 4}`] = d.nome2 ? (d.linhas_marcas_espec_2[i - 5] || '') : '';
   }
 
   return base;
