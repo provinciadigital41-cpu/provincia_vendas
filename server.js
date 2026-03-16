@@ -1239,6 +1239,17 @@ function buildDescricaoServicosMarca(servicos) {
   return partes.join(' E ') + ' JUNTO AO INPI';
 }
 
+// Garante que o nome da marca seja texto simples.
+// Campos conector do Pipefy retornam array ou string JSON no formato “[...]” — esses valores
+// não representam um nome de marca e devem ser descartados.
+function extractBrandName(v) {
+  if (!v) return '';
+  if (Array.isArray(v)) return '';
+  const s = String(v).trim();
+  if (s.startsWith('[') || s.startsWith('{')) return '';
+  return s;
+}
+
 // Normalização apenas para “Detalhes do serviço …”
 function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '') {
   const k = String(kind || '').toUpperCase();
@@ -1330,7 +1341,7 @@ async function montarDados(card) {
   const tipoMarca1 = checklistToText(by['checklist_vertical'] || getFirstByNames(card, ['tipo de marca']));
 
   // Marca 2
-  const tituloMarca2 = by['marca_2'] || getFirstByNames(card, ['marca ou patente - 2', 'marca - 2']) || '';
+  const tituloMarca2 = extractBrandName(by['marca_2']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 2', 'marca - 2'])) || '';
   const marcasEspecRaw2 = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
   const linhasMarcasEspec2 = parseListFromLongText(marcasEspecRaw2, 30);
   const classesAgrupadas2 = parseClassesFromText(marcasEspecRaw2, 30);
@@ -1338,7 +1349,7 @@ async function montarDados(card) {
   const tipoMarca2 = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
 
   // Marca 3
-  const tituloMarca3 = by['marca_3'] || getFirstByNames(card, ['marca ou patente - 3', 'marca - 3']) || '';
+  const tituloMarca3 = extractBrandName(by['marca_3']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 3', 'marca - 3'])) || '';
   const marcasEspecRaw3 = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
   const linhasMarcasEspec3 = parseListFromLongText(marcasEspecRaw3, 30);
   const classesAgrupadas3 = parseClassesFromText(marcasEspecRaw3, 30);
@@ -1346,7 +1357,7 @@ async function montarDados(card) {
   const tipoMarca3 = checklistToText(by['copy_of_copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 3']));
 
   // Marca 4
-  const tituloMarca4 = by['marca_ou_patente_4'] || '';
+  const tituloMarca4 = extractBrandName(by['marca_ou_patente_4']) || '';
   const marcasEspecRaw4 = by['classes_e_especifica_es_marca_4'] || '';
   const linhasMarcasEspec4 = parseListFromLongText(marcasEspecRaw4, 30);
   const classesAgrupadas4 = parseClassesFromText(marcasEspecRaw4, 30);
@@ -1354,7 +1365,7 @@ async function montarDados(card) {
   const tipoMarca4 = checklistToText(by['copy_of_tipo_de_marca_3'] || '');
 
   // Marca 5
-  const tituloMarca5 = by['marca_ou_patente_5'] || '';
+  const tituloMarca5 = extractBrandName(by['marca_ou_patente_5']) || '';
   const marcasEspecRaw5 = by['copy_of_classes_e_especifica_es_marca_4'] || '';
   const linhasMarcasEspec5 = parseListFromLongText(marcasEspecRaw5, 30);
   const classesAgrupadas5 = parseClassesFromText(marcasEspecRaw5, 30);
