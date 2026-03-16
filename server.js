@@ -2362,10 +2362,10 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Detalhes do serviço - Marca até 5
     'Detalhes do serviço - MARCA': d.det.MARCA[0] || '',
-    'Detalhes do serviço - MARCA 2': d.det.MARCA[1] || '',
-    'Detalhes do serviço - MARCA 3': d.det.MARCA[2] || '',
-    'Detalhes do serviço - MARCA 4': d.det.MARCA[3] || '',
-    'Detalhes do serviço - MARCA 5': d.det.MARCA[4] || '',
+    'Detalhes do serviço - MARCA 2': d.nome2 ? (d.det.MARCA[1] || '') : '',
+    'Detalhes do serviço - MARCA 3': d.nome3 ? (d.det.MARCA[2] || '') : '',
+    'Detalhes do serviço - MARCA 4': d.nome4 ? (d.det.MARCA[3] || '') : '',
+    'Detalhes do serviço - MARCA 5': d.nome5 ? (d.det.MARCA[4] || '') : '',
 
     // Formulário de Classes
     'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
@@ -2384,7 +2384,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'marcas-espec_4': d.classes_agrupadas_1[3] || '',
     'marcas-espec_5': d.classes_agrupadas_1[4] || '',
 
-    'Cabeçalho - SERVIÇOS 2': d.cabecalho_servicos_2 || '',
+    'Cabeçalho - SERVIÇOS 2': d.nome2 ? (d.cabecalho_servicos_2 || '') : '',
     'marcas2-espec_1': d.nome2 ? (d.linhas_marcas_espec_2[0] || '') : '',
     'marcas2-espec_2': d.nome2 ? (d.linhas_marcas_espec_2[1] || '') : '',
     'marcas2-espec_3': d.nome2 ? (d.linhas_marcas_espec_2[2] || '') : '',
@@ -3590,6 +3590,7 @@ app.get('/lead/:token', async (req, res) => {
       const tipo = d[`tipo${i}`];
       const classe = d[`classe${i}`];
       const linhas = (d[`classes_agrupadas_${i}`] || []).filter(l => l && l.trim());
+      if (i > 1 && !nome) return '';
       if (!nome && !classe && !linhas.length) return '';
       return `
       <div style="margin-bottom:14px;background:#f8f8f8;border-left:3px solid #FFE200;border-radius:6px;padding:12px 14px">
