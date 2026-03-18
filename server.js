@@ -7,6 +7,8 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs-extra');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -642,7 +644,8 @@ app.post('/manual-attach/:id', async (req, res) => {
         await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [pipefyUrl]);
         console.log(`[MANUAL ATTACH] ✓ Contrato anexado no campo ${PIPEFY_FIELD_EXTRA_CONTRATO}`);
 
-
+        const equipeContrato = getEquipeContratoFromCard(card);
+        await saveFileLocally(info.url, fileName, equipeContrato || 'Sem_Equipe');
 
         results.push({ type: 'Contrato', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
       } catch (e) {
@@ -669,7 +672,8 @@ app.post('/manual-attach/:id', async (req, res) => {
         await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [pipefyUrl]);
         console.log(`[MANUAL ATTACH] ✓ Procuração anexada no campo ${PIPEFY_FIELD_EXTRA_PROCURACAO}`);
 
-
+        const equipeProcuracao = getEquipeContratoFromCard(card);
+        await saveFileLocally(info.url, fileName, equipeProcuracao || 'Sem_Equipe');
 
         results.push({ type: 'Procuração', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
       } catch (e) {
@@ -3475,6 +3479,10 @@ app.post('/d4sign/postback', async (req, res) => {
           await updateCardField(cardId, extraFieldId, [pipefyUrl]);
           console.log(`[POSTBACK D4SIGN] ✓ ${docType} anexado com sucesso no campo ${extraFieldId}`);
 
+          // Salvar também na pasta de rede da empresa
+          const equipeContrato = getEquipeContratoFromCard(card);
+          await saveFileLocally(info.url, fileName, equipeContrato || 'Sem_Equipe');
+
           // Nota: não salvamos no campo de texto porque retornamos apenas o caminho relativo do S3
           // O arquivo está acessível pelo campo de anexo diretamente
         }
@@ -5247,6 +5255,31 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
   } catch (e) {
     console.error('[UPLOAD PIPEFY ERROR]', e.message);
     throw e;
+  }
+}
+
+async function saveFileLocally(downloadUrl, fileName, equipeNome) {
+  const localBase = process.env.LOCAL_FOLDER_PATH;
+  if (!localBase) {
+    console.warn('[SAVE LOCAL] LOCAL_FOLDER_PATH não configurado. Pulando salvamento local.');
+    return;
+  }
+
+  try {
+    const pastaSegura = String(equipeNome || 'Sem_Cofre').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Cofre';
+    const pastaDestino = path.join(localBase, pastaSegura);
+
+    await fs.ensureDir(pastaDestino);
+
+    const res = await fetchWithRetry(downloadUrl, { method: 'GET' }, { attempts: 3 });
+    if (!res.ok) throw new Error(`Falha ao baixar para salvar localmente: ${res.status}`);
+    const buffer = await res.arrayBuffer();
+
+    const caminhoArquivo = path.join(pastaDestino, fileName);
+    await fs.writeFile(caminhoArquivo, Buffer.from(buffer));
+    console.log(`[SAVE LOCAL] ✓ Arquivo salvo em: ${caminhoArquivo}`);
+  } catch (e) {
+    console.error('[SAVE LOCAL] Erro ao salvar localmente:', e.message);
   }
 }
 
