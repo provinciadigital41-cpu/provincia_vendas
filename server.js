@@ -5234,13 +5234,13 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
       // Tentar extrair o caminho da URL de upload
       const urlObj = new URL(uploadUrl);
       const pathname = urlObj.pathname; // Ex: /orgs/.../uploads/.../file.pdf
-      // Remover a barra inicial se houver
-      attachmentPath = pathname.startsWith('/') ? pathname.substring(1) : pathname;
+      // Remover a barra inicial se houver e decodificar encoding da URL
+      attachmentPath = decodeURIComponent(pathname.startsWith('/') ? pathname.substring(1) : pathname);
     } catch (parseErr) {
       // Fallback: tentar extrair usando regex
       const match = uploadUrl.match(/\/(orgs\/[^?]+)/);
       if (match) {
-        attachmentPath = match[1];
+        attachmentPath = decodeURIComponent(match[1]);
       }
     }
 
