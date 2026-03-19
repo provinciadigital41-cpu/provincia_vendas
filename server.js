@@ -626,8 +626,12 @@ app.post('/manual-attach/:id', async (req, res) => {
     const uuidProcuracao = byId[PIPEFY_FIELD_D4_UUID_PROCURACAO];
 
     const results = [];
+<<<<<<< HEAD
     const nomeMarcaRaw = byId['marca'] || card.title || 'Documento';
     const nomeMarca = String(nomeMarcaRaw).replace(/[<>:"/\\|?*]/g, '_').trim();
+=======
+    const dataAtual = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+>>>>>>> 0f153817dc7e1dcf7594eefac92007264de28e44
 
     // Processar Contrato
     if (uuidContrato) {
@@ -636,7 +640,11 @@ app.post('/manual-attach/:id', async (req, res) => {
         const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidContrato, { type: 'PDF', language: 'pt' });
 
         // Upload para Pipefy (anexo real, não link que expira)
+<<<<<<< HEAD
         const fileName = `${nomeMarca} - Contrato Assinado.pdf`;
+=======
+        const fileName = `Contrato_Assinado_${dataAtual}_${uuidContrato.slice(-8)}.pdf`;
+>>>>>>> 0f153817dc7e1dcf7594eefac92007264de28e44
         console.log(`[MANUAL ATTACH] Fazendo upload do Contrato: ${fileName}...`);
         const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
 
@@ -664,7 +672,11 @@ app.post('/manual-attach/:id', async (req, res) => {
         const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, { type: 'PDF', language: 'pt' });
 
         // Upload para Pipefy (anexo real, não link que expira)
+<<<<<<< HEAD
         const fileName = `${nomeMarca} - Procuração.pdf`;
+=======
+        const fileName = `Procuracao_Assinada_${dataAtual}_${uuidProcuracao.slice(-8)}.pdf`;
+>>>>>>> 0f153817dc7e1dcf7594eefac92007264de28e44
         console.log(`[MANUAL ATTACH] Fazendo upload da Procuração: ${fileName}...`);
         const pipefyUrl = await uploadFileToPipefy(info.url, fileName, orgId);
 
@@ -3462,12 +3474,20 @@ app.post('/d4sign/postback', async (req, res) => {
         } else {
           console.log(`[POSTBACK D4SIGN] Organization ID: ${orgId}`);
 
+<<<<<<< HEAD
           // Gerar nome do arquivo com o nome da marca
           const nomeMarcaRawPB = byId['marca'] || card.title || 'Documento';
           const nomeMarcaPB = String(nomeMarcaRawPB).replace(/[<>:"/\\|?*]/g, '_').trim();
           const fileName = isProcuracaoFinal
             ? `${nomeMarcaPB} - Procuração.pdf`
             : `${nomeMarcaPB} - Contrato Assinado.pdf`;
+=======
+          // Gerar nome do arquivo com data para evitar cache
+          const dataAtual = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          const fileName = isProcuracaoFinal
+            ? `Procuracao_Assinada_${dataAtual}_${uuid.slice(-8)}.pdf`
+            : `Contrato_Assinado_${dataAtual}_${uuid.slice(-8)}.pdf`;
+>>>>>>> 0f153817dc7e1dcf7594eefac92007264de28e44
 
           console.log(`[POSTBACK D4SIGN] Fazendo upload do arquivo: ${fileName}`);
           console.log(`[POSTBACK D4SIGN] URL origem D4Sign: ${info.url}`);
