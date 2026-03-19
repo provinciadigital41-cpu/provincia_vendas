@@ -3494,6 +3494,7 @@ app.post('/d4sign/postback', async (req, res) => {
       console.error('[POSTBACK D4SIGN] Stack trace:', e.stack);
     }
 
+   
     return res.status(200).json({ ok: true });
 
   } catch (e) {
@@ -3735,183 +3736,72 @@ app.post('/lead/:token/generate', async (req, res) => {
     }
 
     console.log(`[LEAD-GENERATE] Criando contrato no cofre: ${nomeCofreUsado} (${uuidSafe})`);
+    const tInicio = Date.now();
 
-    let uuidDoc = null;
-    try {
-      uuidDoc = await makeDocFromWordTemplate(
-        D4SIGN_TOKEN,
-        D4SIGN_CRYPT_KEY,
-        uuidSafe,
-        d.templateToUse,
-        d.titulo || card.title || 'Contrato',
-        add
-      );
+    // ===============================
+    // CRIAR DOCUMENTOS EM PARALELO (Contrato + Procuração)
+    // ===============================
+    const varsProcuracao = TEMPLATE_UUID_PROCURACAO ? montarVarsParaTemplateProcuracao(d, nowInfo) : null;
 
-      if (!uuidDoc) {
-        throw new Error('Falha ao criar documento no D4Sign. O documento não foi criado.');
-      }
+    const [resultContrato, resultProcuracao] = await Promise.allSettled([
+      // Contrato (obrigatório)
+      makeDocFromWordTemplate(
+        D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+        d.templateToUse, d.titulo || card.title || 'Contrato', add
+      ),
+      // Procuração (opcional)
+      TEMPLATE_UUID_PROCURACAO && varsProcuracao
+        ? makeDocFromWordTemplate(
+            D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+            TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title || 'Contrato'}`, varsProcuracao
+          )
+        : Promise.resolve(null),
+    ]);
 
-      console.log(`[D4SIGN] Contrato criado: ${uuidDoc}`);
-    } catch (e) {
-      console.error('[ERRO] Falha ao criar documento no D4Sign:', e.message);
-      throw new Error(`Erro ao criar documento no D4Sign: ${e.message}`);
+    // Contrato é obrigatório — se falhou, aborta
+    if (resultContrato.status === 'rejected') {
+      console.error('[ERRO] Falha ao criar documento no D4Sign:', resultContrato.reason?.message);
+      throw new Error(`Erro ao criar documento no D4Sign: ${resultContrato.reason?.message}`);
     }
+    let uuidDoc = resultContrato.value;
+    if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign. O documento não foi criado.');
+    console.log(`[D4SIGN] Contrato criado: ${uuidDoc}`);
 
-    // ===============================
-    // NOVO — Cadastrar webhook deste documento
-    // ===============================
-    try {
-      await registerWebhookForDocument(
-        D4SIGN_TOKEN,
-        D4SIGN_CRYPT_KEY,
-        uuidDoc,
-        `${PUBLIC_BASE_URL}/d4sign/postback`
-      );
-      console.log('[D4SIGN] Webhook registrado no documento.');
-      // [NOVO] Salvar UUID no card
-      await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc);
-      console.log(`[LEAD-GENERATE] UUID Contrato salvo no card: ${uuidDoc}`);
-    } catch (e) {
-      console.error('[ERRO] Falha ao registrar webhook:', e.message);
-    }
-
-    // ===============================
-    // UUID será salvo quando o documento for enviado para assinatura
-    // ===============================
-
-    // ===============================
-    // NOVO — GERAR PROCURAÇÃO
-    // ===============================
+    // Procuração é opcional — loga erro mas não bloqueia
     let uuidProcuracao = null;
-    if (TEMPLATE_UUID_PROCURACAO) {
-      try {
-        const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
-        uuidProcuracao = await makeDocFromWordTemplate(
-          D4SIGN_TOKEN,
-          D4SIGN_CRYPT_KEY,
-          uuidSafe,
-          TEMPLATE_UUID_PROCURACAO,
-          `Procuração - ${d.titulo || card.title || 'Contrato'}`,
-          varsProcuracao
-        );
-        console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao}`);
-
-        // UUID será salvo quando a procuração for enviada para assinatura
-
-        // Aguardar documento estar pronto
-        await new Promise(r => setTimeout(r, 3000));
-        try {
-          await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao);
-          console.log('[D4SIGN] Status da procuração verificado.');
-        } catch (e) {
-          console.warn('[D4SIGN] Aviso ao verificar status da procuração:', e.message);
-        }
-
-        // Registrar webhook da procuração (opcional - se quiser rastrear quando for assinada)
-        try {
-          await registerWebhookForDocument(
-            D4SIGN_TOKEN,
-            D4SIGN_CRYPT_KEY,
-            uuidProcuracao,
-            `${PUBLIC_BASE_URL}/d4sign/postback`
-          );
-          console.log('[D4SIGN] Webhook da procuração registrado.');
-          // [NOVO] Salvar UUID no card
-          await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao);
-          console.log(`[LEAD-GENERATE] UUID Procuração salvo no card: ${uuidProcuracao}`);
-        } catch (e) {
-          console.error('[ERRO] Falha ao registrar webhook da procuração:', e.message);
-        }
-
-        // Signatários serão cadastrados abaixo junto com o contrato
-        console.log('[D4SIGN] Procuração criada. Signatários serão cadastrados em breve.');
-      } catch (e) {
-        console.error('[ERRO] Falha ao gerar procuração:', e.message);
-        // Não bloqueia o fluxo se a procuração falhar
-      }
+    if (resultProcuracao.status === 'fulfilled' && resultProcuracao.value) {
+      uuidProcuracao = resultProcuracao.value;
+      console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao}`);
+    } else if (resultProcuracao.status === 'rejected') {
+      console.error('[ERRO] Falha ao gerar procuração:', resultProcuracao.reason?.message);
     }
+
+    // Termo de Risco não é mais documento separado — integrado no template do contrato
+    const uuidTermoDeRisco = null;
+
+    console.log(`[LEAD-GENERATE] Documentos criados em ${Date.now() - tInicio}ms`);
 
     // ===============================
-    // NOVO — GERAR TERMO DE RISCO (HTML Template)
+    // REGISTRAR WEBHOOKS + SALVAR UUIDs EM PARALELO
     // ===============================
-    let uuidTermoDeRisco = null;
-    const templateIdTermo = String(d.selecao_cnpj_ou_cpf || '').toUpperCase().trim() === 'CPF'
+    const webhookUrl = `${PUBLIC_BASE_URL}/d4sign/postback`;
+    const registerAndSave = async (uuid, pipefyField) => {
+      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuid, webhookUrl);
+      await updateCardField(cardId, pipefyField, uuid);
+      console.log(`[LEAD-GENERATE] Webhook + UUID salvo: ${uuid}`);
+    };
 
-    if (templateIdTermo) {
-      try {
-        const varsTermo = montarVarsParaTermoDeRisco(d, nowInfo);
-        console.log('[D4SIGN] Gerando Termo de Risco. Template:', templateIdTermo, '| Tipo:', d.selecao_cnpj_ou_cpf);
-        uuidTermoDeRisco = await makeDocFromHtmlTemplate(
-          D4SIGN_TOKEN,
-          D4SIGN_CRYPT_KEY,
-          uuidSafe,
-          templateIdTermo,
-          `Termo de Risco - ${d.titulo || card.title || 'Contrato'}`,
-          varsTermo
-        );
-        console.log(`[D4SIGN] Termo de Risco criado: ${uuidTermoDeRisco}`);
-
-        // Aguardar documento estar pronto
-        await new Promise(r => setTimeout(r, 3000));
-        try {
-          await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidTermoDeRisco);
-          console.log('[D4SIGN] Status do Termo de Risco verificado.');
-        } catch (e) {
-          console.warn('[D4SIGN] Aviso ao verificar status do Termo de Risco:', e.message);
-        }
-
-        // Registrar webhook do Termo de Risco
-        try {
-          await registerWebhookForDocument(
-            D4SIGN_TOKEN,
-            D4SIGN_CRYPT_KEY,
-            uuidTermoDeRisco,
-            `${PUBLIC_BASE_URL}/d4sign/postback`
-          );
-          console.log('[D4SIGN] Webhook do Termo de Risco registrado.');
-          // Salvar UUID no card (se campo configurado)
-          if (PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO) {
-            await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO, uuidTermoDeRisco);
-            console.log(`[LEAD-GENERATE] UUID Termo de Risco salvo no card: ${uuidTermoDeRisco}`);
-          }
-        } catch (e) {
-          console.error('[ERRO] Falha ao registrar webhook do Termo de Risco:', e.message);
-        }
-
-        console.log('[D4SIGN] Termo de Risco criado. Signatários serão cadastrados em breve.');
-      } catch (e) {
-        console.error('[ERRO] Falha ao gerar Termo de Risco:', e.message);
-        // Não bloqueia o fluxo se o Termo de Risco falhar
-      }
+    const postTasks = [
+      registerAndSave(uuidDoc, PIPEFY_FIELD_D4_UUID_CONTRATO).catch(e =>
+        console.error('[ERRO] Webhook/save contrato:', e.message)),
+    ];
+    if (uuidProcuracao) {
+      postTasks.push(registerAndSave(uuidProcuracao, PIPEFY_FIELD_D4_UUID_PROCURACAO).catch(e =>
+        console.error('[ERRO] Webhook/save procuração:', e.message)));
     }
+    await Promise.all(postTasks);
 
-    await new Promise(r => setTimeout(r, 3000));
-
-    try { await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc); } catch { }
-
-    // Signatários serão cadastrados apenas quando o documento for enviado para assinatura
-    // Isso evita duplicação de signatários e permite envio manual
-    console.log('[D4SIGN] Contrato criado. Aguardando envio manual...');
-
-    /*
-    try {
-      if (signers && signers.length > 0) {
-        console.log(`[LEAD-GENERATE] Cadastrando ${signers.length} signatários no contrato ${uuidDoc}...`);
-        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
-
-        if (uuidProcuracao) {
-          console.log(`[LEAD-GENERATE] Cadastrando ${signers.length} signatários na procuração ${uuidProcuracao}...`);
-          await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-        }
-      }
-    } catch (e) {
-      console.error('[LEAD-GENERATE] Erro ao cadastrar signatários:', e.message);
-      // Não falha o processo todo, mas loga o erro
-    }
-    */
-
-    await new Promise(r => setTimeout(r, 2000));
-    // Movimentação de card removida conforme solicitado
+    console.log(`[LEAD-GENERATE] Total: ${Date.now() - tInicio}ms. Aguardando envio manual...`);
 
     releaseLock(lockKey);
 
@@ -5046,74 +4936,58 @@ async function processarContrato(cardId) {
   if (!uuidSafe) throw new Error('Nenhum cofre disponível.');
 
   console.log(`[PROCESSAR] Criando contrato no cofre: ${uuidSafe}`);
+  const tInicio = Date.now();
 
-  const uuidDoc = await makeDocFromWordTemplate(
-    D4SIGN_TOKEN,
-    D4SIGN_CRYPT_KEY,
-    uuidSafe,
-    d.templateToUse,
-    d.titulo || card.title || 'Contrato',
-    add
-  );
+  // Criar Contrato + Procuração em paralelo
+  const varsProcuracao = TEMPLATE_UUID_PROCURACAO ? montarVarsParaTemplateProcuracao(d, nowInfo) : null;
 
+  const [resultContrato, resultProcuracao] = await Promise.allSettled([
+    makeDocFromWordTemplate(
+      D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+      d.templateToUse, d.titulo || card.title || 'Contrato', add
+    ),
+    TEMPLATE_UUID_PROCURACAO && varsProcuracao
+      ? makeDocFromWordTemplate(
+          D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+          TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title}`, varsProcuracao
+        )
+      : Promise.resolve(null),
+  ]);
+
+  if (resultContrato.status === 'rejected') throw new Error(`Falha D4Sign: ${resultContrato.reason?.message}`);
+  const uuidDoc = resultContrato.value;
   if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
 
-  // Webhook
-  try {
-    await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, `${PUBLIC_BASE_URL}/d4sign/postback`);
-    // [NOVO] Salvar UUID no card
-    await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc);
-    console.log(`[PROCESSAR] UUID Contrato salvo no card: ${uuidDoc}`);
-  } catch (e) { console.error('Erro webhook/salvar UUID:', e.message); }
-
-  // Procuração (Opcional)
   let uuidProcuracao = null;
-  if (TEMPLATE_UUID_PROCURACAO) {
-    try {
-      const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
-      uuidProcuracao = await makeDocFromWordTemplate(
-        D4SIGN_TOKEN,
-        D4SIGN_CRYPT_KEY,
-        uuidSafe,
-        TEMPLATE_UUID_PROCURACAO,
-        `Procuração - ${d.titulo || card.title}`,
-        varsProcuracao
-      );
-      // Webhook procuração...
-      // [NOVO] Salvar UUID no card
-      await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao);
-      console.log(`[PROCESSAR] UUID Procuração salvo no card: ${uuidProcuracao}`);
-    } catch (e) { console.error('Erro procuração:', e.message); }
+  if (resultProcuracao.status === 'fulfilled' && resultProcuracao.value) {
+    uuidProcuracao = resultProcuracao.value;
+  } else if (resultProcuracao.status === 'rejected') {
+    console.error('Erro procuração:', resultProcuracao.reason?.message);
   }
 
-  // Termo de Risco: Removido — agora integrado apenas no Template 2 (Marca com Risco)
-  // Nenhum documento separado de Termo de Risco será criado
   const uuidTermoDeRisco = null;
 
-  // [REMOVIDO] Cadastrar signatários automaticamente
-  // O cadastro será feito apenas quando o usuário clicar em "Enviar por Email"
-  /*
-  try {
-    // Aguardar um pouco para garantir que o documento foi processado pelo D4Sign
-    await new Promise(r => setTimeout(r, 3000));
-
-    const signers = montarSigners(d);
-    if (signers && signers.length > 0) {
-      console.log(`[PROCESSAR] Cadastrando ${signers.length} signatários no contrato ${uuidDoc}...`);
-      await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, signers);
-
-      if (uuidProcuracao) {
-        console.log(`[PROCESSAR] Cadastrando ${signers.length} signatários na procuração ${uuidProcuracao}...`);
-        await cadastrarSignatarios(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, signers);
-      }
-    } else {
-      console.warn('[PROCESSAR] Nenhum signatário encontrado para cadastrar.');
-    }
-  } catch (e) {
-    console.error('[PROCESSAR] Erro ao cadastrar signatários:', e.message);
+  // Webhooks + salvar UUIDs em paralelo
+  const webhookUrl = `${PUBLIC_BASE_URL}/d4sign/postback`;
+  const postTasks = [
+    (async () => {
+      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
+      await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc);
+      console.log(`[PROCESSAR] UUID Contrato salvo: ${uuidDoc}`);
+    })().catch(e => console.error('Erro webhook/save contrato:', e.message)),
+  ];
+  if (uuidProcuracao) {
+    postTasks.push(
+      (async () => {
+        await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, webhookUrl);
+        await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao);
+        console.log(`[PROCESSAR] UUID Procuração salvo: ${uuidProcuracao}`);
+      })().catch(e => console.error('Erro webhook/save procuração:', e.message))
+    );
   }
-  */
+  await Promise.all(postTasks);
 
+  console.log(`[PROCESSAR] Total: ${Date.now() - tInicio}ms`);
   return { uuidDoc, uuidProcuracao, uuidTermoDeRisco };
 }
 
