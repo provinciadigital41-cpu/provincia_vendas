@@ -3739,67 +3739,70 @@ app.post('/lead/:token/generate', async (req, res) => {
     const tInicio = Date.now();
 
     // ===============================
-    // CRIAR DOCUMENTOS EM PARALELO (Contrato + Procuração)
+    // CRIAR DOCUMENTOS SEQUENCIALMENTE (D4Sign tem rate limit por API key)
     // ===============================
-    const varsProcuracao = TEMPLATE_UUID_PROCURACAO ? montarVarsParaTemplateProcuracao(d, nowInfo) : null;
-
-    const [resultContrato, resultProcuracao] = await Promise.allSettled([
-      // Contrato (obrigatório)
-      makeDocFromWordTemplate(
+    let uuidDoc = null;
+    try {
+      uuidDoc = await makeDocFromWordTemplate(
         D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
         d.templateToUse, d.titulo || card.title || 'Contrato', add
-      ),
-      // Procuração (opcional)
-      TEMPLATE_UUID_PROCURACAO && varsProcuracao
-        ? makeDocFromWordTemplate(
-            D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-            TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title || 'Contrato'}`, varsProcuracao
-          )
-        : Promise.resolve(null),
-    ]);
-
-    // Contrato é obrigatório — se falhou, aborta
-    if (resultContrato.status === 'rejected') {
-      console.error('[ERRO] Falha ao criar documento no D4Sign:', resultContrato.reason?.message);
-      throw new Error(`Erro ao criar documento no D4Sign: ${resultContrato.reason?.message}`);
+      );
+      if (!uuidDoc) throw new Error('Documento não foi criado.');
+      console.log(`[D4SIGN] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
+    } catch (e) {
+      console.error('[ERRO] Falha ao criar documento no D4Sign:', e.message);
+      throw new Error(`Erro ao criar documento no D4Sign: ${e.message}`);
     }
-    let uuidDoc = resultContrato.value;
-    if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign. O documento não foi criado.');
-    console.log(`[D4SIGN] Contrato criado: ${uuidDoc}`);
 
-    // Procuração é opcional — loga erro mas não bloqueia
     let uuidProcuracao = null;
-    if (resultProcuracao.status === 'fulfilled' && resultProcuracao.value) {
-      uuidProcuracao = resultProcuracao.value;
-      console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao}`);
-    } else if (resultProcuracao.status === 'rejected') {
-      console.error('[ERRO] Falha ao gerar procuração:', resultProcuracao.reason?.message);
+    if (TEMPLATE_UUID_PROCURACAO) {
+      try {
+        const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+        uuidProcuracao = await makeDocFromWordTemplate(
+          D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+          TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title || 'Contrato'}`, varsProcuracao
+        );
+        console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao} (${Date.now() - tInicio}ms)`);
+      } catch (e) {
+        console.error('[ERRO] Falha ao gerar procuração:', e.message);
+      }
     }
 
-    // Termo de Risco não é mais documento separado — integrado no template do contrato
     const uuidTermoDeRisco = null;
-
     console.log(`[LEAD-GENERATE] Documentos criados em ${Date.now() - tInicio}ms`);
 
     // ===============================
-    // REGISTRAR WEBHOOKS + SALVAR UUIDs EM PARALELO
+    // REGISTRAR WEBHOOKS + SALVAR UUIDs (sequencial para D4Sign, Pipefy em paralelo)
     // ===============================
     const webhookUrl = `${PUBLIC_BASE_URL}/d4sign/postback`;
-    const registerAndSave = async (uuid, pipefyField) => {
-      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuid, webhookUrl);
-      await updateCardField(cardId, pipefyField, uuid);
-      console.log(`[LEAD-GENERATE] Webhook + UUID salvo: ${uuid}`);
-    };
 
-    const postTasks = [
-      registerAndSave(uuidDoc, PIPEFY_FIELD_D4_UUID_CONTRATO).catch(e =>
-        console.error('[ERRO] Webhook/save contrato:', e.message)),
+    // Webhooks no D4Sign precisam ser sequenciais (mesmo rate limit)
+    try {
+      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
+      console.log('[D4SIGN] Webhook contrato registrado.');
+    } catch (e) { console.error('[ERRO] Webhook contrato:', e.message); }
+
+    if (uuidProcuracao) {
+      try {
+        await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, webhookUrl);
+        console.log('[D4SIGN] Webhook procuração registrado.');
+      } catch (e) { console.error('[ERRO] Webhook procuração:', e.message); }
+    }
+
+    // Salvar UUIDs no Pipefy em paralelo (API diferente, sem rate limit)
+    const saveTasks = [
+      updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc)
+        .then(() => console.log(`[LEAD-GENERATE] UUID Contrato salvo: ${uuidDoc}`))
+        .catch(e => console.error('[ERRO] Save UUID contrato:', e.message)),
     ];
     if (uuidProcuracao) {
-      postTasks.push(registerAndSave(uuidProcuracao, PIPEFY_FIELD_D4_UUID_PROCURACAO).catch(e =>
-        console.error('[ERRO] Webhook/save procuração:', e.message)));
+      saveTasks.push(
+        updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao)
+          .then(() => console.log(`[LEAD-GENERATE] UUID Procuração salvo: ${uuidProcuracao}`))
+          .catch(e => console.error('[ERRO] Save UUID procuração:', e.message))
+      );
     }
-    await Promise.all(postTasks);
+    await Promise.all(saveTasks);
 
     console.log(`[LEAD-GENERATE] Total: ${Date.now() - tInicio}ms. Aguardando envio manual...`);
 
@@ -4938,54 +4941,53 @@ async function processarContrato(cardId) {
   console.log(`[PROCESSAR] Criando contrato no cofre: ${uuidSafe}`);
   const tInicio = Date.now();
 
-  // Criar Contrato + Procuração em paralelo
-  const varsProcuracao = TEMPLATE_UUID_PROCURACAO ? montarVarsParaTemplateProcuracao(d, nowInfo) : null;
-
-  const [resultContrato, resultProcuracao] = await Promise.allSettled([
-    makeDocFromWordTemplate(
-      D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-      d.templateToUse, d.titulo || card.title || 'Contrato', add
-    ),
-    TEMPLATE_UUID_PROCURACAO && varsProcuracao
-      ? makeDocFromWordTemplate(
-          D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-          TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title}`, varsProcuracao
-        )
-      : Promise.resolve(null),
-  ]);
-
-  if (resultContrato.status === 'rejected') throw new Error(`Falha D4Sign: ${resultContrato.reason?.message}`);
-  const uuidDoc = resultContrato.value;
+  // Criar Contrato + Procuração sequencialmente (D4Sign tem rate limit por API key)
+  const uuidDoc = await makeDocFromWordTemplate(
+    D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+    d.templateToUse, d.titulo || card.title || 'Contrato', add
+  );
   if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
+  console.log(`[PROCESSAR] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
 
   let uuidProcuracao = null;
-  if (resultProcuracao.status === 'fulfilled' && resultProcuracao.value) {
-    uuidProcuracao = resultProcuracao.value;
-  } else if (resultProcuracao.status === 'rejected') {
-    console.error('Erro procuração:', resultProcuracao.reason?.message);
+  if (TEMPLATE_UUID_PROCURACAO) {
+    try {
+      const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+      uuidProcuracao = await makeDocFromWordTemplate(
+        D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+        TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title}`, varsProcuracao
+      );
+      console.log(`[PROCESSAR] Procuração criada: ${uuidProcuracao} (${Date.now() - tInicio}ms)`);
+    } catch (e) { console.error('Erro procuração:', e.message); }
   }
 
   const uuidTermoDeRisco = null;
 
-  // Webhooks + salvar UUIDs em paralelo
+  // Webhooks sequenciais (D4Sign rate limit) + saves Pipefy em paralelo
   const webhookUrl = `${PUBLIC_BASE_URL}/d4sign/postback`;
-  const postTasks = [
-    (async () => {
-      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
-      await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc);
-      console.log(`[PROCESSAR] UUID Contrato salvo: ${uuidDoc}`);
-    })().catch(e => console.error('Erro webhook/save contrato:', e.message)),
+  try {
+    await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
+  } catch (e) { console.error('Erro webhook contrato:', e.message); }
+
+  if (uuidProcuracao) {
+    try {
+      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, webhookUrl);
+    } catch (e) { console.error('Erro webhook procuração:', e.message); }
+  }
+
+  const saveTasks = [
+    updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc)
+      .then(() => console.log(`[PROCESSAR] UUID Contrato salvo: ${uuidDoc}`))
+      .catch(e => console.error('Erro save UUID contrato:', e.message)),
   ];
   if (uuidProcuracao) {
-    postTasks.push(
-      (async () => {
-        await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, webhookUrl);
-        await updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao);
-        console.log(`[PROCESSAR] UUID Procuração salvo: ${uuidProcuracao}`);
-      })().catch(e => console.error('Erro webhook/save procuração:', e.message))
+    saveTasks.push(
+      updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao)
+        .then(() => console.log(`[PROCESSAR] UUID Procuração salvo: ${uuidProcuracao}`))
+        .catch(e => console.error('Erro save UUID procuração:', e.message))
     );
   }
-  await Promise.all(postTasks);
+  await Promise.all(saveTasks);
 
   console.log(`[PROCESSAR] Total: ${Date.now() - tInicio}ms`);
   return { uuidDoc, uuidProcuracao, uuidTermoDeRisco };
