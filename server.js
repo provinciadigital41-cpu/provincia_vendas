@@ -626,7 +626,7 @@ app.post('/manual-attach/:id', async (req, res) => {
     const uuidProcuracao = byId[PIPEFY_FIELD_D4_UUID_PROCURACAO];
 
     const results = [];
-    const nomeMarcaRaw = byId['marca'] || card.title || 'Documento';
+    const nomeMarcaRaw = byId['marca_ou_patente_1'] || card.title || 'Documento';
     const nomeMarca = String(nomeMarcaRaw).replace(/[<>:"/\\|?*]/g, '_').trim();
 
     // Processar Contrato
@@ -1337,7 +1337,7 @@ async function montarDados(card) {
   const by = toById(card);
 
   // Marca 1 dados base
-  const tituloMarca1 = by['marca'] || card.title || '';
+  const tituloMarca1 = by['marca_ou_patente_1'] || card.title || '';
   const marcasEspecRaw1 = by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '';
   console.log('[DEBUG CLASSES] marcasEspecRaw1 bruto:', JSON.stringify(marcasEspecRaw1));
   const linhasMarcasEspec1 = parseListFromLongText(marcasEspecRaw1, 30);
@@ -2383,7 +2383,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'tipo de marca 3': d.nome3 ? (d.tipo3 || '') : '',
     'tipo de marca 4': d.nome4 ? (d.tipo4 || '') : '',
     'tipo de marca 5': d.nome5 ? (d.tipo5 || '') : '',
-    // [NOVO] Nome da marca principal - campo "marca" do Pipefy
+    // [NOVO] Nome da marca principal - campo "marca_ou_patente_1" do Pipefy
     'nome_da_marca': d.nome1 || d.titulo || '',
     // Classes agrupadas por "Classe XX" / "NCL XX" com especificações separadas por vírgula
     'marcas-espec_1': d.classes_agrupadas_1[0] || '',
@@ -3463,7 +3463,7 @@ app.post('/d4sign/postback', async (req, res) => {
           console.log(`[POSTBACK D4SIGN] Organization ID: ${orgId}`);
 
           // Gerar nome do arquivo com o nome da marca
-          const nomeMarcaRawPB = byId['marca'] || card.title || 'Documento';
+          const nomeMarcaRawPB = byId['marca_ou_patente_1'] || card.title || 'Documento';
           const nomeMarcaPB = String(nomeMarcaRawPB).replace(/[<>:"/\\|?*]/g, '_').trim();
           const fileName = isProcuracaoFinal
             ? `${nomeMarcaPB} - Procuração.pdf`
