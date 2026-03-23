@@ -1794,14 +1794,14 @@ async function montarDados(card) {
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
   const dadosContato2 = hasCotitular
     ? [
-      (cot_nome || contato2Nome_old || 'Cotitular'),
+      (nomeContato2 || cot_nome || contato2Nome_old || 'Cotitular'),
       (contatoTelefone2 || telefoneCotitularEnvio || contato2Telefone_old || ''),
       (contatoEmail2 || emailCotitularEnvio || contato2Email_old || '')
     ].filter(Boolean).join(' | ')
     : '';
   const dadosContato3 = hasCotitular3
     ? [
-      (cot3_nome || 'Cotitular 3'),
+      (nomeContato3 || cot3_nome || 'Cotitular 3'),
       (contatoTelefone3 || telefoneCotitular3Envio || ''),
       (contatoEmail3 || emailCotitular3Envio || '')
     ].filter(Boolean).join(' | ')
@@ -3659,6 +3659,20 @@ app.post('/lead/:token/generate', async (req, res) => {
     const card = await getCard(cardId);
     if (!card) {
       throw new Error(`Card ${cardId} não encontrado no Pipefy`);
+    }
+
+    // Proteção contra reprocessamento: se já existe UUID de contrato no card, não gera novamente
+    const byCheck = toById(card);
+    const uuidExistente = byCheck[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
+    if (uuidExistente) {
+      console.log(`[LEAD-GENERATE] Card ${cardId} já possui contrato gerado (${uuidExistente}). Ignorando duplicata.`);
+      releaseLock(lockKey);
+      return res.status(200).send(`
+<!doctype html><meta charset="utf-8"><title>Província Marcas</title>
+<body style="font-family:sans-serif;text-align:center;padding:60px">
+<h2>Contrato já foi gerado anteriormente.</h2>
+<p>O contrato para este card já existe no D4Sign (UUID: ${uuidExistente}).</p>
+</body>`);
     }
 
     const d = await montarDados(card);
