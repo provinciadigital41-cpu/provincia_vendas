@@ -2777,24 +2777,21 @@ function montarSigners(d, incluirTelefone = false) {
     list.push(signer);
   }
 
-  if (d.email_cotitular_envio) {
+  // Cotitular: incluir se tem email OU se tem telefone (para WhatsApp)
+  if (d.email_cotitular_envio || (incluirTelefone && d.telefone_cotitular_envio)) {
     const signer = {
-      email: d.email_cotitular_envio,
+      email: d.email_cotitular_envio || d.telefone_cotitular_envio || '',
       name: 'Cotitular',
       act: '1',
       foreign: '0',
       send_email: '1'
     };
     if (incluirTelefone && d.telefone_cotitular_envio) {
-      // Formatar telefone para formato internacional (+55...)
       let phone = d.telefone_cotitular_envio.replace(/[^\d+]/g, '');
-      // Se não começar com +, adicionar +55 (Brasil)
       if (!phone.startsWith('+')) {
-        // Se começar com 0, remover
         if (phone.startsWith('0')) {
           phone = phone.substring(1);
         }
-        // Adicionar código do país Brasil (+55)
         phone = '+55' + phone;
       }
       signer.phone = phone;
@@ -2803,25 +2800,21 @@ function montarSigners(d, incluirTelefone = false) {
     list.push(signer);
   }
 
-  // [NOVO] Cotitular 3
-  if (d.email_cotitular_3_envio) {
+  // Cotitular 3: incluir se tem email OU se tem telefone (para WhatsApp)
+  if (d.email_cotitular_3_envio || (incluirTelefone && d.telefone_cotitular_3_envio)) {
     const signer = {
-      email: d.email_cotitular_3_envio,
+      email: d.email_cotitular_3_envio || d.telefone_cotitular_3_envio || '',
       name: 'Cotitular 3',
       act: '1',
       foreign: '0',
       send_email: '1'
     };
     if (incluirTelefone && d.telefone_cotitular_3_envio) {
-      // Formatar telefone para formato internacional (+55...)
       let phone = d.telefone_cotitular_3_envio.replace(/[^\d+]/g, '');
-      // Se não começar com +, adicionar +55 (Brasil)
       if (!phone.startsWith('+')) {
-        // Se começar com 0, remover
         if (phone.startsWith('0')) {
           phone = phone.substring(1);
         }
-        // Adicionar código do país Brasil (+55)
         phone = '+55' + phone;
       }
       signer.phone = phone;
@@ -2841,7 +2834,15 @@ function montarSigners(d, incluirTelefone = false) {
   }
 
   const seen = {};
-  return list.filter(s => (seen[s.email.toLowerCase()] ? false : (seen[s.email.toLowerCase()] = true)));
+  return list.filter(s => {
+    // Para WhatsApp, deduplicar por telefone (se disponível) para não remover signatários
+    // com mesmo email mas telefones diferentes
+    const key = (s.phone || s.email || '').toLowerCase();
+    if (!key) return false;
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
 }
 
 /* =========================
