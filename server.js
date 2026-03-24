@@ -1539,15 +1539,17 @@ async function montarDados(card) {
 
   // PESQUISA - Tipo de pagamento e data
   const tipoPagtoPesquisa = by['copy_of_tipo_de_pagamento_taxa'] || '';
+  const valorDaPesquisa = by['valor_da_pesquisa'] || '';
   const dataBoletoPesquisa = fmtDMY2(by['data_boleto'] || '');
 
   // Se tipo de pagamento não estiver preenchido, pesquisa é isenta
   const pesquisaIsenta = !tipoPagtoPesquisa || tipoPagtoPesquisa.trim() === '';
   const formaPesquisa = pesquisaIsenta ? 'ISENTA' : tipoPagtoPesquisa;
 
-  // Data de pagamento só aparece se o tipo de pagamento for "boleto"
-  const isBoleto = !pesquisaIsenta && String(tipoPagtoPesquisa).toLowerCase().includes('boleto');
-  const dataPesquisa = isBoleto ? dataBoletoPesquisa : (pesquisaIsenta ? 'N/A' : '');
+  // Data de pagamento aparece se o tipo for "boleto" ou "crédito programado"
+  const formasPesquisaComData = ['boleto', 'crédito programado'];
+  const pesquisaTemData = !pesquisaIsenta && formasPesquisaComData.includes(String(tipoPagtoPesquisa).toLowerCase().trim());
+  const dataPesquisa = pesquisaTemData ? dataBoletoPesquisa : (pesquisaIsenta ? 'N/A' : '');
 
   // Datas novas
   const dataPagtoAssessoria = fmtDMY2(by['copy_of_copy_of_data_do_boleto_pagamento_pesquisa'] || '');
@@ -1971,7 +1973,7 @@ async function montarDados(card) {
     data_pagto_assessoria: dataPagtoAssessoria,
 
     // Pesquisa
-    valor_pesquisa: pesquisaIsenta ? 'ISENTA' : 'R$ 98,00',
+    valor_pesquisa: pesquisaIsenta ? 'ISENTA' : (valorDaPesquisa ? toBRL(parseNumberBR(valorDaPesquisa)) : ''),
     forma_pesquisa: formaPesquisa,
     data_pesquisa: dataPesquisa,
 
@@ -2250,14 +2252,20 @@ function montarTextoAssessoria({ parcelas, valorParcela, formaPagamento, dataPag
 
 /**
  * Monta a string do campo "contrato da Pesquisa"
- * Ex: "Isenta"  ou  "R$ 98,00 valor que será pago via Boleto 10/04/2025"
+ * Ex: "Isenta"  ou  "R$ 500,00 valor que será pago via Boleto dia 10/04/2025"
  */
 function montarTextoPesquisa({ tipoPesquisa, valorPesquisa, formaPagamentoPesquisa, dataPagamentoPesquisa }) {
   if (String(tipoPesquisa).toLowerCase().trim() === 'isenta') {
     return 'Isenta';
   }
   // Caso "Paga"
-  return `${valorPesquisa} valor que será pago via ${formaPagamentoPesquisa} ${dataPagamentoPesquisa}`.trim();
+  const base = `${valorPesquisa} valor que será pago via ${formaPagamentoPesquisa}`;
+  const formasComData = ['boleto', 'crédito programado'];
+  const incluiData = formasComData.includes(String(formaPagamentoPesquisa).toLowerCase().trim());
+  if (incluiData && dataPagamentoPesquisa) {
+    return `${base} dia ${dataPagamentoPesquisa}`;
+  }
+  return base;
 }
 
 /**
