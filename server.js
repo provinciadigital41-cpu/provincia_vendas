@@ -1407,7 +1407,7 @@ async function montarDados(card) {
 
   // Decide template
   const anyMarca = [k1, k2, k3, k4, k5].includes('MARCA');
-  const riscoAlto = ['médio', 'alto'].includes(risco.toLowerCase());
+  const riscoAlto = ['médio com termo', 'alto'].includes(risco.toLowerCase());
 
   let templateToUse;
   if (!anyMarca) {
@@ -3595,7 +3595,7 @@ app.get('/lead/:token', async (req, res) => {
         d.templateToUse === process.env.TEMPLATE_UUID_CONTRATO_MARCA_RISCO ? '⚠️ Marca + Termo de Risco' :
         '📑 Outros Serviços'
       }</div></div>
-      <div class="field"><div class="label">Risco da Marca</div><div class="value" style="font-weight:600;color:${d.risco && ['médio','alto'].includes(d.risco.toLowerCase()) ? '#d32f2f' : '#137333'}">${d.risco || '-'}</div></div>
+      <div class="field"><div class="label">Risco da Marca</div><div class="value" style="font-weight:600;color:${d.risco && ['médio com termo','alto'].includes(d.risco.toLowerCase()) ? '#d32f2f' : '#137333'}">${d.risco || '-'}</div></div>
       <div class="field"><div class="label">Filial</div><div class="value">${d.equipeName || '-'}</div></div>
     </div>
 
