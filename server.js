@@ -1472,9 +1472,13 @@ async function montarDados(card) {
   // Telefone para envio do contrato (campo específico) - SEM FALLBACK
   const telefoneEnvioContrato = by['telefone_para_envio_do_contrato'] || '';
 
+  // Flag de COTITULAR 1 — se explicitamente "Não", bloqueia cotitular independente de outros campos
+  const cot1_ativo_str = String(by['co_titularidade'] || '').toLowerCase().trim();
+  const isCot1ExplicitamenteNao = cot1_ativo_str === 'não' || cot1_ativo_str === 'nao';
+
   // [NOVO] Campos de COTITULAR 3 (Novo Cotitular)
-  const cot3_ativo = by['cotitularidade_2'] || '';
-  const isCot3Ativo = String(cot3_ativo).toLowerCase().trim() === 'sim';
+  const cot3_ativo_str = String(by['cotitularidade_2'] || '').toLowerCase().trim();
+  const isCot3ExplicitamenteNao = cot3_ativo_str === 'não' || cot3_ativo_str === 'nao';
 
   const cot3_nome = by['raz_o_social_ou_nome_completo_do_cotitular_2'] || by['raz_o_social_ou_nome_completo_cotitular_2'] || '';
   const cot3_nacionalidade = by['nacionalidade_cotitular_2'] || '';
@@ -1737,7 +1741,7 @@ async function montarDados(card) {
   });
 
   // Detecta se há cotitular com base nos campos dedicados OU nos antigos campos 2
-  const hasCotitular = Boolean(
+  const hasCotitular = !isCot1ExplicitamenteNao && Boolean(
     cot_nome || cot_nacionalidade || cot_estado_civil || cot_rua || cot_bairro || cot_cidade || cot_uf ||
     cot_rg || cot_cpf || cot_cnpj || emailCotitularEnvio || telefoneCotitularEnvio ||
     contato2Nome_old || contato2Email_old || contato2Telefone_old
@@ -1766,8 +1770,11 @@ async function montarDados(card) {
     })
     : '';
 
-  // Detecta se há cotitular 3 (BASEADO NA SINALIZAÇÃO 'Sim')
-  const hasCotitular3 = isCot3Ativo;
+  // Detecta se há cotitular 3 — bloqueado se explicitamente "Não", caso contrário verifica dados
+  const hasCotitular3 = !isCot3ExplicitamenteNao && Boolean(
+    cot3_nome || cot3_nacionalidade || cot3_estado_civil || cot3_rua || cot3_bairro || cot3_cidade || cot3_uf ||
+    cot3_rg || cot3_cpf || cot3_cnpj || emailCotitular3Envio || telefoneCotitular3Envio
+  );
 
   // Contratante 3
   const contratante3Texto = hasCotitular3
