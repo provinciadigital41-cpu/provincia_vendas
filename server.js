@@ -2883,6 +2883,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   for (const [key, value] of Object.entries(varsObj || {})) {
     let v = value == null ? '' : String(value);
     v = v.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
+    v = v.replace(/'/g, '\u2019'); // D4Sign HTML-encodes apostrophe (') → &#039; no template Word; usar apóstrofo curvo Unicode como workaround
     varsObjValidated[key] = v;
   }
 
