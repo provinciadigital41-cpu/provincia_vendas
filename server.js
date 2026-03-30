@@ -5295,7 +5295,13 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome) {
 
   try {
     const pastaSegura = String(equipeNome || 'Sem_Cofre').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Cofre';
-    const pastaDestino = path.join(localBase, pastaSegura);
+
+    const agora = new Date();
+    const meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    const pastaMes = `${meses[agora.getMonth()]} - ${agora.getFullYear()}`;
+
+    const pastaDestino = path.join(localBase, pastaSegura, pastaMes);
 
     await fs.ensureDir(pastaDestino);
 
