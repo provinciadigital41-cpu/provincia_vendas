@@ -5093,30 +5093,43 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
       const nomeMarca = String(nomeMarcaRaw).replace(/[<>:"/\\|?*]/g, '_').trim();
       const equipe = getEquipeContratoFromCard(card);
 
-      // Helper: extrai a URL de um campo de anexo do Pipefy.
-      // O campo `value` pode ser:
-      //   - Uma string JSON de array: '["https://..."]'
-      //   - Uma URL direta: 'https://...'
-      //   - null / undefined
-      // O campo `array_value` é o array já parseado (preferível quando disponível).
+      // Helper: extrai a URL completa de download de um campo de anexo do Pipefy.
+      //
+      // No GraphQL do Pipefy, campos de attachment retornam:
+      //   value       → string JSON do array com a URL ASSINADA completa: '["https://app.pipefy.com/storage/..."]'
+      //   array_value → array com o CAMINHO RELATIVO do S3: ['uploads/uuid/arquivo.pdf']
+      //
+      // Para download precisamos da URL completa (value), não do caminho relativo (array_value).
       function extrairUrlAnexo(field) {
         if (!field) return null;
-        // Preferir array_value (já parseado pelo GraphQL)
-        if (Array.isArray(field.array_value) && field.array_value.length > 0) {
-          return String(field.array_value[0]).trim() || null;
-        }
-        // Fallback: value pode ser string JSON de array
+
+        // 1. Tentar extrair URL completa do campo `value` (string JSON de array)
         const raw = field.value;
-        if (!raw) return null;
-        const s = String(raw).trim();
-        if (s.startsWith('[')) {
-          try {
-            const arr = JSON.parse(s);
-            return Array.isArray(arr) && arr.length > 0 ? String(arr[0]).trim() : null;
-          } catch (_) { /* ignora erro de parse, tenta como URL direta */ }
+        if (raw) {
+          const s = String(raw).trim();
+          // Formato mais comum: '["https://..."]'
+          if (s.startsWith('[')) {
+            try {
+              const arr = JSON.parse(s);
+              if (Array.isArray(arr) && arr.length > 0) {
+                const url = String(arr[0]).trim();
+                if (url.startsWith('http')) return url;
+              }
+            } catch (_) { /* ignora, tenta outros formatos */ }
+          }
+          // Já é uma URL completa direta
+          if (s.startsWith('http')) return s;
         }
-        // Já é uma URL direta
-        return s.startsWith('http') ? s : null;
+
+        // 2. Fallback: array_value — mas só se for URL completa (não caminho relativo)
+        if (Array.isArray(field.array_value) && field.array_value.length > 0) {
+          const url = String(field.array_value[0]).trim();
+          if (url.startsWith('http')) return url;
+          // É caminho relativo (ex: uploads/uuid/arquivo.pdf) — não serve para download direto
+          console.log(`[WEBHOOK-ATTACH] array_value contém caminho relativo (${url}), não pode ser usado como URL de download.`);
+        }
+
+        return null;
       }
 
       // Verificar campo `procura_o` — Procuração (Assinado)
