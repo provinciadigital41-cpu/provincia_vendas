@@ -5143,8 +5143,8 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
       const tarefas = [];
 
       if (urlProcuracao) {
-        const fileName = `${nomeMarca} - Procuração.pdf`;
-        console.log(`[WEBHOOK-ATTACH] Salvando procuração localmente: ${fileName}`);
+        const fileName = `${nomeMarca} - Procura\u00e7\u00e3o.pdf`;
+        console.log(`[WEBHOOK-ATTACH] Salvando procura\u00e7\u00e3o localmente: ${fileName}`);
         tarefas.push(
           saveFileLocally(urlProcuracao, fileName, equipe || 'Sem_Equipe')
             .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar procuração localmente:', e.message))
@@ -5297,7 +5297,7 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome) {
     const pastaSegura = String(equipeNome || 'Sem_Cofre').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Cofre';
 
     const agora = new Date();
-    const meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+    const meses = ['Janeiro', 'Fevereiro', 'Mar\u00e7o', 'Abril', 'Maio', 'Junho',
                    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
     const pastaMes = `${meses[agora.getMonth()]} - ${agora.getFullYear()}`;
 
