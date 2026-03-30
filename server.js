@@ -645,9 +645,7 @@ app.post('/manual-attach/:id', async (req, res) => {
         await updateCardField(cardId, PIPEFY_FIELD_EXTRA_CONTRATO, [pipefyUrl]);
         console.log(`[MANUAL ATTACH] ✓ Contrato anexado no campo ${PIPEFY_FIELD_EXTRA_CONTRATO}`);
 
-        const equipeContrato = getEquipeContratoFromCard(card);
-        await saveFileLocally(info.url, fileName, equipeContrato || 'Sem_Equipe');
-
+        // Nota: salvamento local agora é feito via webhook Pipefy (/pipefy-webhook-attachment)
         results.push({ type: 'Contrato', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
       } catch (e) {
         console.error(`[MANUAL ATTACH] Erro Contrato: ${e.message}`);
@@ -673,9 +671,7 @@ app.post('/manual-attach/:id', async (req, res) => {
         await updateCardField(cardId, PIPEFY_FIELD_EXTRA_PROCURACAO, [pipefyUrl]);
         console.log(`[MANUAL ATTACH] ✓ Procuração anexada no campo ${PIPEFY_FIELD_EXTRA_PROCURACAO}`);
 
-        const equipeProcuracao = getEquipeContratoFromCard(card);
-        await saveFileLocally(info.url, fileName, equipeProcuracao || 'Sem_Equipe');
-
+        // Nota: salvamento local agora é feito via webhook Pipefy (/pipefy-webhook-attachment)
         results.push({ type: 'Procuração', status: 'Sucesso', details: 'Anexado como arquivo permanente' });
       } catch (e) {
         console.error(`[MANUAL ATTACH] Erro Procuração: ${e.message}`);
@@ -3498,11 +3494,8 @@ app.post('/d4sign/postback', async (req, res) => {
           await updateCardField(cardId, extraFieldId, [pipefyUrl]);
           console.log(`[POSTBACK D4SIGN] ✓ ${docType} anexado com sucesso no campo ${extraFieldId}`);
 
-          // Salvar também na pasta de rede da empresa
-          const equipeContrato = getEquipeContratoFromCard(card);
-          await saveFileLocally(info.url, fileName, equipeContrato || 'Sem_Equipe');
-
-          // Nota: não salvamos no campo de texto porque retornamos apenas o caminho relativo do S3
+          // Nota: o salvamento local na pasta de rede agora é feito pelo endpoint /pipefy-webhook-attachment,
+          // que é acionado pelo Pipefy quando o campo de anexo é atualizado (via automação ou manualmente).
           // O arquivo está acessível pelo campo de anexo diretamente
         }
       }
@@ -5056,6 +5049,95 @@ app.post('/pipefy-webhook', async (req, res) => {
 });
 
 /* =========================
+ * Webhook Pipefy — Salvamento Local por Campo de Anexo
+ * Escuta atualizações de campo no Pipefy e, quando os campos
+ * `procura_o` (Procuração Assinada) ou `contrato` (Contrato+NCL Assinado)
+ * recebem um anexo — independente de ser via automação ou manualmente —
+ * baixa o arquivo e salva na pasta de rede local.
+ * =======================*/
+app.post('/pipefy-webhook-attachment', async (req, res) => {
+  // Responde imediatamente para o Pipefy não dar timeout
+  res.status(200).json({ ok: true });
+
+  try {
+    const body = req.body || {};
+
+    // Suporta dois formatos de body:
+    // 1. Automação Pipefy (HTTP Request manual): { "card_id": "{{card.id}}" }
+    // 2. Webhook padrão do Pipefy:              { "data": { "card": { "id": "..." } } }
+    let cardId =
+      body.card_id ||          // formato automação (principal)
+      body.cardId ||            // alias alternativo
+      body.data?.card?.id ||   // formato webhook padrão
+      null;
+
+    if (!cardId) {
+      console.log('[WEBHOOK-ATTACH] Body sem card_id, ignorando. Body recebido:', JSON.stringify(body).substring(0, 200));
+      return;
+    }
+
+    cardId = String(cardId);
+    console.log(`[WEBHOOK-ATTACH] Recebido para card ${cardId}`);
+
+    // Proteção contra duplicatas
+    const lockKey = `attach-local:${cardId}`;
+    if (!acquireLock(lockKey)) {
+      console.log(`[WEBHOOK-ATTACH] Card ${cardId} já está sendo processado. Ignorando duplicata.`);
+      return;
+    }
+
+    try {
+      // Buscar card atualizado do Pipefy para ler os campos de anexo
+      const card = await getCard(cardId);
+      const nomeMarcaRaw = (card.fields || []).find(f => f?.field?.id === 'marca_ou_patente_1')?.value || card.title || 'Documento';
+      const nomeMarca = String(nomeMarcaRaw).replace(/[<>:"/\\|?*]/g, '_').trim();
+      const equipe = getEquipeContratoFromCard(card);
+
+      // Verificar campo `procura_o` — Procuração (Assinado)
+      const fieldProcuracao = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_PROCURACAO);
+      const urlProcuracao = fieldProcuracao?.value ||
+        (Array.isArray(fieldProcuracao?.array_value) && fieldProcuracao.array_value[0]) || null;
+
+      // Verificar campo `contrato` — Contrato + NCL (Assinado)
+      const fieldContrato = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_CONTRATO);
+      const urlContrato = fieldContrato?.value ||
+        (Array.isArray(fieldContrato?.array_value) && fieldContrato.array_value[0]) || null;
+
+      const tarefas = [];
+
+      if (urlProcuracao) {
+        const fileName = `${nomeMarca} - Procuração.pdf`;
+        console.log(`[WEBHOOK-ATTACH] Salvando procuração localmente: ${fileName}`);
+        tarefas.push(
+          saveFileLocally(urlProcuracao, fileName, equipe || 'Sem_Equipe')
+            .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar procuração localmente:', e.message))
+        );
+      } else {
+        console.log(`[WEBHOOK-ATTACH] Campo procura_o vazio ou sem URL, ignorando salvamento local.`);
+      }
+
+      if (urlContrato) {
+        const fileName = `${nomeMarca} - Contrato Assinado.pdf`;
+        console.log(`[WEBHOOK-ATTACH] Salvando contrato localmente: ${fileName}`);
+        tarefas.push(
+          saveFileLocally(urlContrato, fileName, equipe || 'Sem_Equipe')
+            .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar contrato localmente:', e.message))
+        );
+      } else {
+        console.log(`[WEBHOOK-ATTACH] Campo contrato vazio ou sem URL, ignorando salvamento local.`);
+      }
+
+      await Promise.all(tarefas);
+      console.log(`[WEBHOOK-ATTACH] ✓ Processamento do card ${cardId} concluído.`);
+    } finally {
+      releaseLock(lockKey);
+    }
+  } catch (e) {
+    console.error('[WEBHOOK-ATTACH] Erro geral:', e.message);
+  }
+});
+
+/* =========================
  * Debug / Health
  * =======================*/
 app.get('/_echo/*', (req, res) => {
@@ -5180,11 +5262,19 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome) {
 
     await fs.ensureDir(pastaDestino);
 
+    const caminhoArquivo = path.join(pastaDestino, fileName);
+
+    // Se o arquivo já existe localmente, não faz nada — evita re-salvar em cada atualização de campo
+    const jaExiste = await fs.pathExists(caminhoArquivo);
+    if (jaExiste) {
+      console.log(`[SAVE LOCAL] Arquivo já existe, ignorando: ${caminhoArquivo}`);
+      return;
+    }
+
     const res = await fetchWithRetry(downloadUrl, { method: 'GET' }, { attempts: 3 });
     if (!res.ok) throw new Error(`Falha ao baixar para salvar localmente: ${res.status}`);
     const buffer = await res.arrayBuffer();
 
-    const caminhoArquivo = path.join(pastaDestino, fileName);
     await fs.writeFile(caminhoArquivo, Buffer.from(buffer));
     console.log(`[SAVE LOCAL] ✓ Arquivo salvo em: ${caminhoArquivo}`);
   } catch (e) {
