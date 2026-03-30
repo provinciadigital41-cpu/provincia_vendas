@@ -1346,7 +1346,7 @@ async function montarDados(card) {
   const tipoMarca1 = checklistToText(by['checklist_vertical'] || getFirstByNames(card, ['tipo de marca']));
 
   // Marca 2
-  const tituloMarca2 = extractBrandName(by['marca_2']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 2', 'marca - 2'])) || '';
+  const tituloMarca2 = extractBrandName(by['marca_2']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 2'])) || '';
   const marcasEspecRaw2 = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
   const linhasMarcasEspec2 = parseListFromLongText(marcasEspecRaw2, 30);
   const classesAgrupadas2 = parseClassesFromText(marcasEspecRaw2, 30);
@@ -1354,7 +1354,7 @@ async function montarDados(card) {
   const tipoMarca2 = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
 
   // Marca 3
-  const tituloMarca3 = extractBrandName(by['marca_3']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 3', 'marca - 3'])) || '';
+  const tituloMarca3 = extractBrandName(by['marca_3']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 3'])) || '';
   const marcasEspecRaw3 = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
   const linhasMarcasEspec3 = parseListFromLongText(marcasEspecRaw3, 30);
   const classesAgrupadas3 = parseClassesFromText(marcasEspecRaw3, 30);
