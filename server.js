@@ -5093,15 +5093,39 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
       const nomeMarca = String(nomeMarcaRaw).replace(/[<>:"/\\|?*]/g, '_').trim();
       const equipe = getEquipeContratoFromCard(card);
 
+      // Helper: extrai a URL de um campo de anexo do Pipefy.
+      // O campo `value` pode ser:
+      //   - Uma string JSON de array: '["https://..."]'
+      //   - Uma URL direta: 'https://...'
+      //   - null / undefined
+      // O campo `array_value` é o array já parseado (preferível quando disponível).
+      function extrairUrlAnexo(field) {
+        if (!field) return null;
+        // Preferir array_value (já parseado pelo GraphQL)
+        if (Array.isArray(field.array_value) && field.array_value.length > 0) {
+          return String(field.array_value[0]).trim() || null;
+        }
+        // Fallback: value pode ser string JSON de array
+        const raw = field.value;
+        if (!raw) return null;
+        const s = String(raw).trim();
+        if (s.startsWith('[')) {
+          try {
+            const arr = JSON.parse(s);
+            return Array.isArray(arr) && arr.length > 0 ? String(arr[0]).trim() : null;
+          } catch (_) { /* ignora erro de parse, tenta como URL direta */ }
+        }
+        // Já é uma URL direta
+        return s.startsWith('http') ? s : null;
+      }
+
       // Verificar campo `procura_o` — Procuração (Assinado)
       const fieldProcuracao = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_PROCURACAO);
-      const urlProcuracao = fieldProcuracao?.value ||
-        (Array.isArray(fieldProcuracao?.array_value) && fieldProcuracao.array_value[0]) || null;
+      const urlProcuracao = extrairUrlAnexo(fieldProcuracao);
 
       // Verificar campo `contrato` — Contrato + NCL (Assinado)
       const fieldContrato = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_CONTRATO);
-      const urlContrato = fieldContrato?.value ||
-        (Array.isArray(fieldContrato?.array_value) && fieldContrato.array_value[0]) || null;
+      const urlContrato = extrairUrlAnexo(fieldContrato);
 
       const tarefas = [];
 
