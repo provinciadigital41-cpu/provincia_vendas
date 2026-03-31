@@ -5100,8 +5100,23 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
       //   array_value → array com o CAMINHO RELATIVO do S3: ['uploads/uuid/arquivo.pdf']
       //
       // Para download precisamos da URL completa (value), não do caminho relativo (array_value).
-      function extrairUrlAnexo(field) {
+      // Extrai URL completa e nome original do arquivo de um campo de anexo do Pipefy.
+      // Retorna { url, nomeOriginal } ou null se não houver URL válida.
+      function extrairInfoAnexo(field) {
         if (!field) return null;
+
+        // Helper para extrair o nome do arquivo de uma URL
+        function nomeDoArquivoDaUrl(url) {
+          try {
+            const u = new URL(url);
+            // O nome do arquivo geralmente é o último segmento do pathname, antes do query string
+            const segmentos = u.pathname.split('/');
+            const nomeEncoded = segmentos[segmentos.length - 1] || '';
+            const nome = decodeURIComponent(nomeEncoded);
+            // Se tiver extensão, é provavelmente o nome real; caso contrário fallback
+            return nome && nome.includes('.') ? nome : '';
+          } catch (_) { return ''; }
+        }
 
         // 1. Tentar extrair URL completa do campo `value` (string JSON de array)
         const raw = field.value;
@@ -5113,18 +5128,18 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
               const arr = JSON.parse(s);
               if (Array.isArray(arr) && arr.length > 0) {
                 const url = String(arr[0]).trim();
-                if (url.startsWith('http')) return url;
+                if (url.startsWith('http')) return { url, nomeOriginal: nomeDoArquivoDaUrl(url) };
               }
             } catch (_) { /* ignora, tenta outros formatos */ }
           }
           // Já é uma URL completa direta
-          if (s.startsWith('http')) return s;
+          if (s.startsWith('http')) return { url: s, nomeOriginal: nomeDoArquivoDaUrl(s) };
         }
 
         // 2. Fallback: array_value — mas só se for URL completa (não caminho relativo)
         if (Array.isArray(field.array_value) && field.array_value.length > 0) {
           const url = String(field.array_value[0]).trim();
-          if (url.startsWith('http')) return url;
+          if (url.startsWith('http')) return { url, nomeOriginal: nomeDoArquivoDaUrl(url) };
           // É caminho relativo (ex: uploads/uuid/arquivo.pdf) — não serve para download direto
           console.log(`[WEBHOOK-ATTACH] array_value contém caminho relativo (${url}), não pode ser usado como URL de download.`);
         }
@@ -5134,30 +5149,34 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
 
       // Verificar campo `procura_o` — Procuração (Assinado)
       const fieldProcuracao = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_PROCURACAO);
-      const urlProcuracao = extrairUrlAnexo(fieldProcuracao);
+      const infoProcuracao = extrairInfoAnexo(fieldProcuracao);
 
       // Verificar campo `contrato` — Contrato + NCL (Assinado)
       const fieldContrato = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_CONTRATO);
-      const urlContrato = extrairUrlAnexo(fieldContrato);
+      const infoContrato = extrairInfoAnexo(fieldContrato);
 
       const tarefas = [];
 
-      if (urlProcuracao) {
-        const fileName = `${nomeMarca} - Procuracao.pdf`;
-        console.log(`[WEBHOOK-ATTACH] Salvando procura\u00e7\u00e3o localmente: ${fileName}`);
+      if (infoProcuracao) {
+        const { url: urlProcuracao, nomeOriginal: nomeOriginalProc } = infoProcuracao;
+        // Usa o nome original do arquivo que vem do Pipefy; se não consegui extrair, usa fallback
+        const fileName = nomeOriginalProc || `${nomeMarca} - Procuracao.pdf`;
+        console.log(`[WEBHOOK-ATTACH] Salvando procuração localmente: ${fileName} (subpasta: ${nomeMarca})`);
         tarefas.push(
-          saveFileLocally(urlProcuracao, fileName, equipe || 'Sem_Equipe')
+          saveFileLocally(urlProcuracao, fileName, equipe || 'Sem_Equipe', nomeMarca)
             .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar procuração localmente:', e.message))
         );
       } else {
         console.log(`[WEBHOOK-ATTACH] Campo procura_o vazio ou sem URL, ignorando salvamento local.`);
       }
 
-      if (urlContrato) {
-        const fileName = `${nomeMarca} - Contrato Assinado.pdf`;
-        console.log(`[WEBHOOK-ATTACH] Salvando contrato localmente: ${fileName}`);
+      if (infoContrato) {
+        const { url: urlContrato, nomeOriginal: nomeOriginalContr } = infoContrato;
+        // Usa o nome original do arquivo que vem do Pipefy; se não consegui extrair, usa fallback
+        const fileName = nomeOriginalContr || `${nomeMarca} - Contrato Assinado.pdf`;
+        console.log(`[WEBHOOK-ATTACH] Salvando contrato localmente: ${fileName} (subpasta: ${nomeMarca})`);
         tarefas.push(
-          saveFileLocally(urlContrato, fileName, equipe || 'Sem_Equipe')
+          saveFileLocally(urlContrato, fileName, equipe || 'Sem_Equipe', nomeMarca)
             .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar contrato localmente:', e.message))
         );
       } else {
@@ -5286,7 +5305,8 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
   }
 }
 
-async function saveFileLocally(downloadUrl, fileName, equipeNome) {
+// nomeMarca: nome da marca/patente do card — usado como subpasta dentro da pasta de mês/ano
+async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca) {
   const localBase = process.env.LOCAL_FOLDER_PATH;
   if (!localBase) {
     console.warn('[SAVE LOCAL] LOCAL_FOLDER_PATH não configurado. Pulando salvamento local.');
@@ -5301,7 +5321,11 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome) {
                    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
     const pastaMes = `${meses[agora.getMonth()]} - ${agora.getFullYear()}`;
 
-    const pastaDestino = path.join(localBase, pastaSegura, pastaMes);
+    // Subpasta com o nome da marca (nova camada na hierarquia)
+    const pastaMarcaSegura = String(nomeMarca || 'Sem_Marca').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Marca';
+
+    // Estrutura: localBase / equipe / Mês - Ano / NomeMarca / arquivo.pdf
+    const pastaDestino = path.join(localBase, pastaSegura, pastaMes, pastaMarcaSegura);
 
     await fs.ensureDir(pastaDestino);
 
