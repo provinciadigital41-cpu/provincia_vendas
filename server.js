@@ -5319,13 +5319,14 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca) {
     const agora = new Date();
     const meses = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
                    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const pastaMes = `${meses[agora.getMonth()]} - ${agora.getFullYear()}`;
+    const pastaAno = String(agora.getFullYear());
+    const pastaMes = meses[agora.getMonth()];
 
-    // Subpasta com o nome da marca (nova camada na hierarquia)
+    // Subpasta com o nome da marca
     const pastaMarcaSegura = String(nomeMarca || 'Sem_Marca').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Marca';
 
-    // Estrutura: localBase / equipe / Mês - Ano / NomeMarca / arquivo.pdf
-    const pastaDestino = path.join(localBase, pastaSegura, pastaMes, pastaMarcaSegura);
+    // Estrutura: localBase / equipe / Ano / Mês / NomeMarca / arquivo.pdf
+    const pastaDestino = path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura);
 
     await fs.ensureDir(pastaDestino);
 
