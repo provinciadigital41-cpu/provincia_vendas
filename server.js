@@ -756,7 +756,6 @@ PIPE_GRAPHQL_ENDPOINT = PIPE_GRAPHQL_ENDPOINT || 'https://api.pipefy.com/graphql
 PIPEFY_FIELD_LINK_CONTRATO = PIPEFY_FIELD_LINK_CONTRATO || 'd4_contrato';
 PIPEFY_FIELD_D4_UUID_CONTRATO = PIPEFY_FIELD_D4_UUID_CONTRATO || 'd4_uuid_contrato';
 PIPEFY_FIELD_D4_UUID_PROCURACAO = PIPEFY_FIELD_D4_UUID_PROCURACAO || 'copy_of_d4_uuid_contrato';
-PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO = PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO || '';
 PIPEFY_FIELD_CONTRATO_ASSINADO_D4 = PIPEFY_FIELD_CONTRATO_ASSINADO_D4 || 'contrato_assinado_d4';
 PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 = PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 || 'procura_o_assinada_d4';
 D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
@@ -4835,8 +4834,7 @@ async function findCardIdByD4Uuid(uuidDocument) {
         for (const field of fields) {
           const fieldValue = String(field.value || '');
           // Verifica se o UUID está nos campos D4 UUID Contrato, Procuração ou Termo de Risco
-          if ((field.id === PIPEFY_FIELD_D4_UUID_CONTRATO || field.id === PIPEFY_FIELD_D4_UUID_PROCURACAO ||
-            (PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO && field.id === PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO)) &&
+          if (field.id === PIPEFY_FIELD_D4_UUID_CONTRATO || field.id === PIPEFY_FIELD_D4_UUID_PROCURACAO &&
             (fieldValue === uuidDocument || fieldValue.includes(uuidDocument))) {
             console.log(`[findCardIdByD4Uuid] Card encontrado através de busca alternativa no campo ${field.id}: ${card.id}`);
             return card.id;
