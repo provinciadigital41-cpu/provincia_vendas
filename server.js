@@ -706,13 +706,11 @@ let {
   PIPEFY_FIELD_PROCURACAO_ASSINADA_D4, // Campo ID para "Procuração Assinada D4"
   PIPEFY_FIELD_D4_UUID_CONTRATO,       // Campo ID para "D4 UUID Contrato"
   PIPEFY_FIELD_D4_UUID_PROCURACAO,      // Campo ID para "D4 UUID Procuracao"
-  PIPEFY_FIELD_D4_UUID_TERMO_DE_RISCO, // Campo ID para "D4 UUID Termo de Risco"
   NOVO_PIPE_ID,
   FASE_VISITA_ID,
   PHASE_ID_CONTRATO_ENVIADO,
   PIPEFY_FIELD_EXTRA_CONTRATO = 'contrato',
   PIPEFY_FIELD_EXTRA_PROCURACAO = 'procura_o',
-  PIPEFY_FIELD_EXTRA_TERMO_DE_RISCO = 'contrato', // Anexo do termo assinado (mesmo campo do contrato conforme solicitado)
 
   // D4Sign
   D4SIGN_TOKEN,
@@ -1252,12 +1250,16 @@ function extractBrandName(v) {
 }
 
 // Normalização apenas para “Detalhes do serviço …”
-function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '') {
+function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '', risco = '') {
   const k = String(kind || '').toUpperCase();
   if (k === 'MARCA') {
     const tipo = tipoMarca ? `, Apresentação: ${tipoMarca}` : '';
     const classe = classeNums ? `, CLASSE: nº ${classeNums}` : '';
-    return `MARCA: ${nome || ''}${tipo}${classe}`.trim();
+    // Normaliza risco: "Médio com Termo" → "Médio"
+    let riscoNorm = String(risco || '').trim();
+    if (riscoNorm.toLowerCase() === 'médio com termo') riscoNorm = 'Médio';
+    const riscoStr = riscoNorm ? ` e Risco: ${riscoNorm}` : '';
+    return `MARCA: ${nome || ''}${tipo}${classe}${riscoStr}`.trim();
   }
   if (k === 'PATENTE') return `PATENTE: ${nome || ''}`.trim();
   if (k === 'DESENHO INDUSTRIAL') return `DESENHO INDUSTRIAL: ${nome || ''}`.trim();
@@ -1853,7 +1855,7 @@ async function montarDados(card) {
     for (let i = 0; i < 5; i++) {
       const e = arr[i];
       if (!e) { detalhes[k][i] = ''; continue; }
-      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes);
+      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes, e.risco);
       detalhes[k][i] = cab;
     }
   });
