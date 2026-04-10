@@ -2891,9 +2891,26 @@ function montarSigners(d, incluirTelefone = false) {
 /* =========================
  * Locks e preflight
  * =======================*/
-const locks = new Set();
-function acquireLock(key) { if (locks.has(key)) return false; locks.add(key); return true; }
+// Lock com TTL de 10 minutos: evita que um lock fique preso se o servidor
+// reiniciar no meio de uma geração. Após expirar, a verificação dupla do campo
+// UUID no Pipefy (feita logo após adquirir o lock) garante que não haja duplicata.
+const LOCK_TTL_MS = 10 * 60 * 1000; // 10 minutos
+const locks = new Map(); // key -> timestamp de expiração
+function acquireLock(key) {
+  const now = Date.now();
+  const exp = locks.get(key);
+  if (exp && exp > now) return false; // lock ativo e não expirado
+  locks.set(key, now + LOCK_TTL_MS);
+  return true;
+}
 function releaseLock(key) { locks.delete(key); }
+// Limpeza periódica para evitar memory leak
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, exp] of locks.entries()) {
+    if (exp <= now) locks.delete(key);
+  }
+}, 5 * 60 * 1000).unref();
 async function preflightDNS() { }
 
 /* =========================
@@ -3662,9 +3679,39 @@ app.get('/lead/:token', async (req, res) => {
 
     </div>
     <div style="margin-top:24px;padding-top:20px;border-top:2px solid #FFE200">
-      <form method="POST" action="/lead/${encodeURIComponent(req.params.token)}/generate">
-        <button class="btn" type="submit">📄 Gerar Contrato e Procuração</button>
+      <form method="POST" id="form-gerar" action="/lead/${encodeURIComponent(req.params.token)}/generate"
+            onsubmit="return confirmarGerar(this)">
+        <button class="btn" type="submit" id="btn-gerar">📄 Gerar Contrato e Procuração</button>
       </form>
+      <script>
+        // FIX: bloqueia duplo clique e resubmit por F5
+        (function() {
+          var KEY = 'pm_gerado_${card.id}';
+          if (sessionStorage.getItem(KEY)) {
+            var btn = document.getElementById('btn-gerar');
+            if (btn) {
+              btn.disabled = true;
+              btn.textContent = '✅ Documentos sendo gerados...';
+              btn.style.background = '#aaa';
+            }
+          }
+        })();
+        function confirmarGerar(form) {
+          var KEY = 'pm_gerado_${card.id}';
+          if (sessionStorage.getItem(KEY)) {
+            alert('Os documentos já estão sendo gerados. Aguarde e verifique o Pipefy.');
+            return false;
+          }
+          sessionStorage.setItem(KEY, '1');
+          var btn = document.getElementById('btn-gerar');
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Gerando documentos...';
+            btn.style.background = '#aaa';
+          }
+          return true;
+        }
+      </script>
       <p class="muted">Ao clicar, os documentos serão criados no D4Sign.</p>
     </div>
     </div>
@@ -3693,24 +3740,37 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     lockKey = `lead:${cardId}`;
     if (!acquireLock(lockKey)) {
-      return res.status(200).send('Processando, tente novamente em instantes.');
+      // Lock ativo: outra requisição desta sessão já está gerando o contrato
+      console.log(`[LEAD-GENERATE] Lock ativo para card ${cardId} — requisição duplicada rejeitada.`);
+      return res.status(200).send(`<!doctype html><meta charset="utf-8"><title>Província Marcas</title>
+<body style="font-family:sans-serif;text-align:center;padding:60px">
+<h2>Gerando seus documentos...</h2>
+<p>Já existe uma geração em andamento para este card. Aguarde alguns instantes e verifique o Pipefy.</p>
+</body>`);
     }
 
     preflightDNS().catch(() => { });
 
+    // =================================================================
+    // DOUBLE-CHECK: busca o card DENTRO do lock para pegar o estado mais
+    // recente do Pipefy. Isso protege contra race condition onde duas
+    // requisições quase-simultâneas passaram pela verificação inicial
+    // antes de qualquer uma adquirir o lock — a segunda a entrar aqui
+    // vai encontrar o UUID já gravado pela primeira e vai abortar.
+    // =================================================================
     const card = await getCard(cardId);
     if (!card) {
       throw new Error(`Card ${cardId} não encontrado no Pipefy`);
     }
 
-    // Proteção contra reprocessamento: se já existe UUID de contrato no card, não gera novamente
     const byCheck = toById(card);
     const uuidExistente = byCheck[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
+    const uuidProcExistente = byCheck[PIPEFY_FIELD_D4_UUID_PROCURACAO] || '';
+
     if (uuidExistente) {
-      console.log(`[LEAD-GENERATE] Card ${cardId} já possui contrato gerado (${uuidExistente}). Ignorando duplicata.`);
+      console.log(`[LEAD-GENERATE] Double-check: Card ${cardId} já tem contrato (${uuidExistente}). Abortando para evitar duplicata.`);
       releaseLock(lockKey);
-      return res.status(200).send(`
-<!doctype html><meta charset="utf-8"><title>Província Marcas</title>
+      return res.status(200).send(`<!doctype html><meta charset="utf-8"><title>Província Marcas</title>
 <body style="font-family:sans-serif;text-align:center;padding:60px">
 <h2>Contrato já foi gerado anteriormente.</h2>
 <p>O contrato para este card já existe no D4Sign (UUID: ${uuidExistente}).</p>
