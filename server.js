@@ -1249,11 +1249,13 @@ function extractBrandName(v) {
 }
 
 // Normalização apenas para “Detalhes do serviço …”
-function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '', risco = '', stmt = '', processo = '') {
+// [ATUALIZADO] O 6º parâmetro pode ser boolean (temAcomp) ou string (stmt) — detecta acompanhamento em ambos os casos
+function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '', risco = '', stmtOrFlag = '', processo = '') {
   const k = String(kind || '').toUpperCase();
 
   // [NOVO] Detecta se o servico e de acompanhamento (marca, patente ou desenho industrial)
-  const isAcompanhamento = /acompanhamento/i.test(String(stmt || ''));
+  // Aceita boolean (temAcomp) ou string (stmt) — no caso boolean, usa diretamente
+  const isAcompanhamento = typeof stmtOrFlag === 'boolean' ? stmtOrFlag : /acompanhamento/i.test(String(stmtOrFlag || ''));
   const processoStr = (isAcompanhamento && processo) ? ` e Processo: nº ${processo}` : '';
 
   if (k === 'MARCA') {
@@ -1385,6 +1387,20 @@ async function montarDados(card) {
   const serv3Stmt = firstNonEmpty(buscarServicoN(card, 3));
   const serv4Stmt = firstNonEmpty(buscarServicoN(card, 4));
   const serv5Stmt = firstNonEmpty(buscarServicoN(card, 5));
+
+  // [NOVO] Todos os serviços de cada slot (para detectar acompanhamento em qualquer serviço selecionado)
+  const todosServs1 = buscarTodosServicosN(card, 1);
+  const todosServs2 = buscarTodosServicosN(card, 2);
+  const todosServs3 = buscarTodosServicosN(card, 3);
+  const todosServs4 = buscarTodosServicosN(card, 4);
+  const todosServs5 = buscarTodosServicosN(card, 5);
+
+  // Flag: verdadeiro se QUALQUER serviço do slot contém "acompanhamento"
+  const temAcomp1 = todosServs1.some(s => /acompanhamento/i.test(s));
+  const temAcomp2 = todosServs2.some(s => /acompanhamento/i.test(s));
+  const temAcomp3 = todosServs3.some(s => /acompanhamento/i.test(s));
+  const temAcomp4 = todosServs4.some(s => /acompanhamento/i.test(s));
+  const temAcomp5 = todosServs5.some(s => /acompanhamento/i.test(s));
 
   // [NOVO] Números de processo para serviços de acompanhamento (marca, patente, desenho industrial)
   const processoAcomp1 = by['n_mero_do_processo_para_acompanhamento'] || '';
@@ -1828,11 +1844,11 @@ async function montarDados(card) {
 
   // Entradas consolidadas
   const entries = [
-    { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1 },
-    { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2 },
-    { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3 },
-    { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4 },
-    { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5 },
+    { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1, temAcomp: temAcomp1 },
+    { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2, temAcomp: temAcomp2 },
+    { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3, temAcomp: temAcomp3 },
+    { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4, temAcomp: temAcomp4 },
+    { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5, temAcomp: temAcomp5 },
   ].filter(e => String(e.title || e.stmt || '').trim());
 
   // Agrupamento por kind
@@ -1868,7 +1884,8 @@ async function montarDados(card) {
       const e = arr[i];
       if (!e) { detalhes[k][i] = ''; continue; }
       // [ATUALIZADO] Passa stmt e processo para normalizarCabecalhoDetalhe
-      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes, e.risco, e.stmt, e.processo);
+      // [ATUALIZADO] Passa e.temAcomp (bool) para detecção correta quando há múltiplos serviços
+      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes, e.risco, e.temAcomp, e.processo);
       detalhes[k][i] = cab;
     }
   });
