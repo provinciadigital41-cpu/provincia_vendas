@@ -2937,7 +2937,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 5, baseDelayMs: 600, timeoutMs: 20000 });
+  }, { attempts: 2, baseDelayMs: 2000, timeoutMs: 25000 }); // attempts reduzido: D4Sign não é idempotente, retry pode criar documento duplicado
 
   const text = await res.text();
   let json;
@@ -3767,13 +3767,16 @@ app.post('/lead/:token/generate', async (req, res) => {
     const uuidExistente = byCheck[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
     const uuidProcExistente = byCheck[PIPEFY_FIELD_D4_UUID_PROCURACAO] || '';
 
-    if (uuidExistente) {
-      console.log(`[LEAD-GENERATE] Double-check: Card ${cardId} já tem contrato (${uuidExistente}). Abortando para evitar duplicata.`);
+    if (uuidExistente || uuidProcExistente) {
+      const uuidInfo = uuidExistente
+        ? `Contrato: ${uuidExistente}${uuidProcExistente ? `, Procuração: ${uuidProcExistente}` : ''}`
+        : `Procuração: ${uuidProcExistente}`;
+      console.log(`[LEAD-GENERATE] Double-check: Card ${cardId} já tem documentos (${uuidInfo}). Abortando para evitar duplicata.`);
       releaseLock(lockKey);
       return res.status(200).send(`<!doctype html><meta charset="utf-8"><title>Província Marcas</title>
 <body style="font-family:sans-serif;text-align:center;padding:60px">
-<h2>Contrato já foi gerado anteriormente.</h2>
-<p>O contrato para este card já existe no D4Sign (UUID: ${uuidExistente}).</p>
+<h2>Documentos já foram gerados anteriormente.</h2>
+<p>Os documentos para este card já existem no D4Sign (${uuidInfo}).</p>
 </body>`);
     }
 
