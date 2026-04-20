@@ -1134,7 +1134,7 @@ function extractClasseNumbersFromText(s) {
 // Identifica o tipo base do serviço a partir do texto do statement ou connector
 function serviceKindFromText(s) {
   const t = String(s || '').toUpperCase();
-  if (t.includes('MARCA')) return 'MARCA';
+  if (t.includes('MARCA') || t.includes('PRORROG')) return 'MARCA';
   if (t.includes('PATENTE')) return 'PATENTE';
   if (t.includes('DESENHO')) return 'DESENHO INDUSTRIAL';
   if (t.includes('COPYRIGHT') || t.includes('DIREITO AUTORAL')) return 'COPYRIGHT/DIREITO AUTORAL';
