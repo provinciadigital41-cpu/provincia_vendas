@@ -1134,7 +1134,7 @@ function extractClasseNumbersFromText(s) {
 // Identifica o tipo base do serviço a partir do texto do statement ou connector
 function serviceKindFromText(s) {
   const t = String(s || '').toUpperCase();
-  if (t.includes('MARCA') || t.includes('PRORROG')) return 'MARCA';
+  if (t.includes('MARCA') || t.includes('PRORROG') || t.includes('RENOVA') || t.includes('DECEN')) return 'MARCA';
   if (t.includes('PATENTE')) return 'PATENTE';
   if (t.includes('DESENHO')) return 'DESENHO INDUSTRIAL';
   if (t.includes('COPYRIGHT') || t.includes('DIREITO AUTORAL')) return 'COPYRIGHT/DIREITO AUTORAL';
@@ -1397,18 +1397,18 @@ async function montarDados(card) {
 
   // Flag: verdadeiro se QUALQUER serviço do slot contém "acompanhamento" OU "prorrog"
   // (ambos reutilizam os campos de número do processo e incluem "Processo: nº X" nos detalhes)
-  const temAcomp1 = todosServs1.some(s => /acompanhamento|prorrog/i.test(s));
-  const temAcomp2 = todosServs2.some(s => /acompanhamento|prorrog/i.test(s));
-  const temAcomp3 = todosServs3.some(s => /acompanhamento|prorrog/i.test(s));
-  const temAcomp4 = todosServs4.some(s => /acompanhamento|prorrog/i.test(s));
-  const temAcomp5 = todosServs5.some(s => /acompanhamento|prorrog/i.test(s));
+  const temAcomp1 = todosServs1.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
+  const temAcomp2 = todosServs2.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
+  const temAcomp3 = todosServs3.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
+  const temAcomp4 = todosServs4.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
+  const temAcomp5 = todosServs5.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
 
   // Flag específica: verdadeiro se QUALQUER serviço do slot é prorrogação de marca
-  const temProrrogacao1 = todosServs1.some(s => /prorrog/i.test(s));
-  const temProrrogacao2 = todosServs2.some(s => /prorrog/i.test(s));
-  const temProrrogacao3 = todosServs3.some(s => /prorrog/i.test(s));
-  const temProrrogacao4 = todosServs4.some(s => /prorrog/i.test(s));
-  const temProrrogacao5 = todosServs5.some(s => /prorrog/i.test(s));
+  const temProrrogacao1 = todosServs1.some(s => /prorrog|renova|decen/i.test(s));
+  const temProrrogacao2 = todosServs2.some(s => /prorrog|renova|decen/i.test(s));
+  const temProrrogacao3 = todosServs3.some(s => /prorrog|renova|decen/i.test(s));
+  const temProrrogacao4 = todosServs4.some(s => /prorrog|renova|decen/i.test(s));
+  const temProrrogacao5 = todosServs5.some(s => /prorrog|renova|decen/i.test(s));
 
   // [NOVO] Números de processo para serviços de acompanhamento (marca, patente, desenho industrial)
   const processoAcomp1 = by['n_mero_do_processo_para_acompanhamento'] || '';
