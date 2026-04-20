@@ -1395,12 +1395,20 @@ async function montarDados(card) {
   const todosServs4 = buscarTodosServicosN(card, 4);
   const todosServs5 = buscarTodosServicosN(card, 5);
 
-  // Flag: verdadeiro se QUALQUER serviço do slot contém "acompanhamento"
-  const temAcomp1 = todosServs1.some(s => /acompanhamento/i.test(s));
-  const temAcomp2 = todosServs2.some(s => /acompanhamento/i.test(s));
-  const temAcomp3 = todosServs3.some(s => /acompanhamento/i.test(s));
-  const temAcomp4 = todosServs4.some(s => /acompanhamento/i.test(s));
-  const temAcomp5 = todosServs5.some(s => /acompanhamento/i.test(s));
+  // Flag: verdadeiro se QUALQUER serviço do slot contém "acompanhamento" OU "prorrog"
+  // (ambos reutilizam os campos de número do processo e incluem "Processo: nº X" nos detalhes)
+  const temAcomp1 = todosServs1.some(s => /acompanhamento|prorrog/i.test(s));
+  const temAcomp2 = todosServs2.some(s => /acompanhamento|prorrog/i.test(s));
+  const temAcomp3 = todosServs3.some(s => /acompanhamento|prorrog/i.test(s));
+  const temAcomp4 = todosServs4.some(s => /acompanhamento|prorrog/i.test(s));
+  const temAcomp5 = todosServs5.some(s => /acompanhamento|prorrog/i.test(s));
+
+  // Flag específica: verdadeiro se QUALQUER serviço do slot é prorrogação de marca
+  const temProrrogacao1 = todosServs1.some(s => /prorrog/i.test(s));
+  const temProrrogacao2 = todosServs2.some(s => /prorrog/i.test(s));
+  const temProrrogacao3 = todosServs3.some(s => /prorrog/i.test(s));
+  const temProrrogacao4 = todosServs4.some(s => /prorrog/i.test(s));
+  const temProrrogacao5 = todosServs5.some(s => /prorrog/i.test(s));
 
   // [NOVO] Números de processo para serviços de acompanhamento (marca, patente, desenho industrial)
   const processoAcomp1 = by['n_mero_do_processo_para_acompanhamento'] || '';
@@ -1844,11 +1852,11 @@ async function montarDados(card) {
 
   // Entradas consolidadas
   const entries = [
-    { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1, temAcomp: temAcomp1 },
-    { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2, temAcomp: temAcomp2 },
-    { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3, temAcomp: temAcomp3 },
-    { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4, temAcomp: temAcomp4 },
-    { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5, temAcomp: temAcomp5 },
+    { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1, temAcomp: temAcomp1, temProrrogacao: temProrrogacao1 },
+    { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2, temAcomp: temAcomp2, temProrrogacao: temProrrogacao2 },
+    { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3, temAcomp: temAcomp3, temProrrogacao: temProrrogacao3 },
+    { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4, temAcomp: temAcomp4, temProrrogacao: temProrrogacao4 },
+    { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5, temAcomp: temAcomp5, temProrrogacao: temProrrogacao5 },
   ].filter(e => String(e.title || e.stmt || '').trim());
 
   // Agrupamento por kind
@@ -1858,7 +1866,14 @@ async function montarDados(card) {
   // Linhas “quantidade + descrição” (sem normalizar o texto do serviço)
   const makeQtdDescLine = (kind, arr) => {
     if (!arr.length) return '';
-    const baseServico = String(arr[0].stmt || '').trim() || (kind === 'MARCA' ? 'Registro de Marca' : kind);
+    // Se QUALQUER item do slot for prorrogação de marca, usa texto padronizado
+    const slotTemProrrogacao = kind === 'MARCA' && arr.some(e => e.temProrrogacao);
+    let baseServico;
+    if (slotTemProrrogacao) {
+      baseServico = 'PEDIDO DE PRORROGAÇÃO DE MARCA';
+    } else {
+      baseServico = String(arr[0].stmt || '').trim() || (kind === 'MARCA' ? 'Registro de Marca' : kind);
+    }
     const qtd = arr.length;
     return `${qtd} ${baseServico} JUNTO AO INPI`;
   };
