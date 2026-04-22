@@ -1262,9 +1262,10 @@ function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '',
     const tipo = tipoMarca ? `, Apresentação: ${tipoMarca}` : '';
     const classe = classeNums ? `, CLASSE: nº ${classeNums}` : '';
     // Normaliza risco: "Médio com Termo" → "Médio"
+    // [CONDICIONAL] Quando o serviço é de acompanhamento de marca, o risco NÃO é exibido nos detalhes
     let riscoNorm = String(risco || '').trim();
     if (riscoNorm.toLowerCase() === 'médio com termo') riscoNorm = 'Médio';
-    const riscoStr = riscoNorm ? `, Risco: ${riscoNorm}` : '';
+    const riscoStr = (!isAcompanhamento && riscoNorm) ? `, Risco: ${riscoNorm}` : '';
     return `MARCA: ${nome || ''}${tipo}${classe}${riscoStr}${processoStr}`.trim();
   }
   if (k === 'PATENTE') return `PATENTE: ${nome || ''}${processoStr}`.trim();
