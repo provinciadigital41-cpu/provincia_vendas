@@ -1422,20 +1422,12 @@ async function montarDados(card) {
   // Ex: "PEDIDO DE REGISTRO DE MARCA E CONTRA NOTIFICACAO JUNTO AO INPI"
   const descServicoPrincipal = buildDescricaoServicosMarca(buscarTodosServicosN(card, 1));
 
-  // [DEBUG TEMPORÁRIO] Ver texto exato dos serviços vindo do Pipefy
-  console.log('[DEBUG_SERVICOS] serv1Stmt:', JSON.stringify(serv1Stmt));
-  console.log('[DEBUG_SERVICOS] serv2Stmt:', JSON.stringify(serv2Stmt));
-  console.log('[DEBUG_SERVICOS] serv3Stmt:', JSON.stringify(serv3Stmt));
-  console.log('[DEBUG_SERVICOS] todosServs1:', JSON.stringify(todosServs1));
-  console.log('[DEBUG_SERVICOS] todosServs2:', JSON.stringify(todosServs2));
-
   // Kinds
   const k1 = serviceKindFromText(serv1Stmt);
   const k2 = serviceKindFromText(serv2Stmt);
   const k3 = serviceKindFromText(serv3Stmt);
   const k4 = serviceKindFromText(serv4Stmt);
   const k5 = serviceKindFromText(serv5Stmt);
-  console.log('[DEBUG_SERVICOS] kinds:', JSON.stringify({ k1, k2, k3, k4, k5 }));
 
   // Risco da marca - para rotear entre Template 1 (sem risco) e Template 2 (com risco)
   const riscoRaw = by['risco_da_marca'] || '';
@@ -1874,8 +1866,10 @@ async function montarDados(card) {
   // Linhas “quantidade + descrição” (sem normalizar o texto do serviço)
   const makeQtdDescLine = (kind, arr) => {
     if (!arr.length) return '';
-    // Se QUALQUER item do slot for prorrogação de marca, usa texto padronizado
-    const slotTemProrrogacao = kind === 'MARCA' && arr.some(e => e.temProrrogacao);
+    // Se QUALQUER item do slot for prorrogação de marca (via flag ou texto), usa texto padronizado
+    const slotTemProrrogacao = kind === 'MARCA' && arr.some(e =>
+      e.temProrrogacao || /prorrog|renova|decen/i.test(String(e.stmt || ''))
+    );
     let baseServico;
     if (slotTemProrrogacao) {
       baseServico = 'PEDIDO DE PRORROGAÇÃO DE MARCA';
