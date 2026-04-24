@@ -1237,6 +1237,13 @@ function buildDescricaoServicosMarca(servicos) {
   return partes.join(' E ') + ' JUNTO AO INPI';
 }
 
+// Monta descrição isolada por marca: “1 {SERVIÇO} JUNTO AO INPI”
+function buildDescServicoPorMarca(servicos) {
+  const partes = servicos.map(s => String(s).toUpperCase().trim()).filter(Boolean);
+  if (!partes.length) return '';
+  return '1 ' + partes.join(' E ') + ' JUNTO AO INPI';
+}
+
 // Garante que o nome da marca seja texto simples.
 // Campos conector do Pipefy retornam array ou string JSON no formato “[...]” — esses valores
 // não representam um nome de marca e devem ser descartados.
@@ -2012,6 +2019,11 @@ async function montarDados(card) {
 
     // Classes e tipos por marca
     desc_servico_marca: descServicoPrincipal,
+    desc_servico_marca_1: buildDescServicoPorMarca(todosServs1),
+    desc_servico_marca_2: buildDescServicoPorMarca(todosServs2),
+    desc_servico_marca_3: buildDescServicoPorMarca(todosServs3),
+    desc_servico_marca_4: buildDescServicoPorMarca(todosServs4),
+    desc_servico_marca_5: buildDescServicoPorMarca(todosServs5),
 
     classe1: classeSomenteNumeros1, tipo1: tipoMarca1, nome1: tituloMarca1,
     classe2: classeSomenteNumeros2, tipo2: tipoMarca2, nome2: tituloMarca2,
@@ -2425,15 +2437,20 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     // Resultado da pesquisa prévia
     'Risco': d.risco_agregado || '',
 
-    // Quantidade e descrição de Marca
-    'Quantidade depósitos/processos de MARCA': d.qtd_marca_num || '',
-    'Descrição do serviço - MARCA': d.desc_servico_marca || '',
-
-    // Detalhes do serviço - Marca até 5
+    // Descrição e detalhes por marca (isolados por slot)
+    'Descrição do serviço - MARCA': d.desc_servico_marca_1 || '',
     'Detalhes do serviço - MARCA': d.det.MARCA[0] || '',
+
+    'Descrição do serviço – MARCA 2': d.nome2 ? (d.desc_servico_marca_2 || '') : '',
     'Detalhes do serviço - MARCA 2': d.nome2 ? (d.det.MARCA[1] || '') : '',
+
+    'Descrição do serviço – MARCA 3': d.nome3 ? (d.desc_servico_marca_3 || '') : '',
     'Detalhes do serviço - MARCA 3': d.nome3 ? (d.det.MARCA[2] || '') : '',
+
+    'Descrição do serviço – MARCA 4': d.nome4 ? (d.desc_servico_marca_4 || '') : '',
     'Detalhes do serviço - MARCA 4': d.nome4 ? (d.det.MARCA[3] || '') : '',
+
+    'Descrição do serviço – MARCA 5': d.nome5 ? (d.desc_servico_marca_5 || '') : '',
     'Detalhes do serviço - MARCA 5': d.nome5 ? (d.det.MARCA[4] || '') : '',
 
     // Formulário de Classes
