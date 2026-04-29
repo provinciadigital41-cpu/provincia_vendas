@@ -2972,7 +2972,7 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-  }, { attempts: 2, baseDelayMs: 2000, timeoutMs: 25000 }); // attempts reduzido: D4Sign não é idempotente, retry pode criar documento duplicado
+  }, { attempts: 1, baseDelayMs: 2000, timeoutMs: 60000 }); // attempts: 1 — D4Sign NÃO é idempotente, retry cria documento duplicado; timeout: 60s para templates Word complexos
 
   const text = await res.text();
   let json;
@@ -3284,7 +3284,7 @@ async function getDownloadUrl(tokenAPI, cryptKey, uuidDocument, { type = 'PDF', 
   const url = new URL(`/api/v1/documents/${uuidDocument}/download`, base);
   url.searchParams.set('tokenAPI', tokenAPI);
   url.searchParams.set('cryptKey', cryptKey);
-  const body = { type, language, document: 'false' };
+  const body = { type, language, document: 'true' }; // 'true' = inclui documento original unificado ao certificado (equivale a "Download no mesmo arquivo" na plataforma)
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST',
     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
