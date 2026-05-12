@@ -10,6 +10,41 @@ const crypto = require('crypto');
 const fs = require('fs-extra');
 const path = require('path');
 
+const INVALID_WINDOWS_PATH_CHARS = /[<>:"/\\|?*\x00-\x1F]/g;
+const COMBINING_MARKS = /[\u0300-\u036f]/g;
+const UTF8_MOJIBAKE_CHUNK = /(?:[ÃÂ][\u0080-\u00bf])+/g;
+
+function decodeUtf8Mojibake(value) {
+  const text = String(value || '');
+
+  return text.replace(UTF8_MOJIBAKE_CHUNK, (chunk) => {
+    const decoded = Buffer.from(chunk, 'latin1').toString('utf8');
+    return decoded.includes('\uFFFD') ? chunk : decoded;
+  });
+}
+
+function stripDiacritics(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(COMBINING_MARKS, '');
+}
+
+function normalizeLocalName(value, fallback) {
+  const normalized = stripDiacritics(decodeUtf8Mojibake(value))
+    .replace(INVALID_WINDOWS_PATH_CHARS, '_')
+    .trim();
+
+  return normalized || fallback;
+}
+
+function normalizeLocalPathSegment(value, fallback = 'Sem_Marca') {
+  return normalizeLocalName(value, fallback);
+}
+
+function normalizeLocalFileName(value, fallback = 'Documento.pdf') {
+  return normalizeLocalName(value, fallback);
+}
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -5228,7 +5263,7 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
       // Buscar card atualizado do Pipefy para ler os campos de anexo
       const card = await getCard(cardId);
       const nomeMarcaRaw = (card.fields || []).find(f => f?.field?.id === 'marca_ou_patente_1')?.value || card.title || 'Documento';
-      const nomeMarca = String(nomeMarcaRaw).replace(/[<>:"/\\|?*]/g, '_').trim();
+      const nomeMarca = normalizeLocalPathSegment(nomeMarcaRaw, 'Documento');
       const equipe = getEquipeContratoFromCard(card);
 
       // Helper: extrai a URL completa de download de um campo de anexo do Pipefy.
@@ -5461,14 +5496,15 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca) {
     const pastaMes = meses[agora.getMonth()];
 
     // Subpasta com o nome da marca
-    const pastaMarcaSegura = String(nomeMarca || 'Sem_Marca').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Marca';
+    const pastaMarcaSegura = normalizeLocalPathSegment(nomeMarca, 'Sem_Marca');
 
     // Estrutura: localBase / equipe / Ano / Mês / NomeMarca / arquivo.pdf
     const pastaDestino = path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura);
 
     await fs.ensureDir(pastaDestino);
 
-    const caminhoArquivo = path.join(pastaDestino, fileName);
+    const arquivoSeguro = normalizeLocalFileName(fileName, 'Documento.pdf');
+    const caminhoArquivo = path.join(pastaDestino, arquivoSeguro);
 
     // Se o arquivo já existe localmente, não faz nada — evita re-salvar em cada atualização de campo
     const jaExiste = await fs.pathExists(caminhoArquivo);
