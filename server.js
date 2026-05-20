@@ -2437,7 +2437,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'representante': d.representante || '',
 
     // Contratantes
-    'contratante_1': d.contratante_1_texto || d.nome || '',
+    'contratante1': d.contratante_1_texto || d.nome || '',
     'contratante_2': d.contratante_2_texto || '',
     'contratante_3': d.contratante_3_texto || '',
 
