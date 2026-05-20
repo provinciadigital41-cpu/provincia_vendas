@@ -1082,14 +1082,25 @@ function getFirstByNames(card, arr) {
   return '';
 }
 
-// NOVO: ler campo "Equipe contrato"
+// NOVO: ler campo "Equipe contrato" (suporta IDs: "equipe", "equipe_contrato", "equipes_1")
 function getEquipeContratoFromCard(card) {
   if (!card || !Array.isArray(card.fields)) return '';
-  const f = (card.fields || []).find(ff =>
-    String(ff.name || '').toLowerCase() === 'equipe contrato'
+
+  // 1. Tenta por ID direto (mais confiável, não depende do nome)
+  const idsValidos = ['equipe', 'equipe_contrato', 'equipes_1'];
+  const byId = (card.fields || []).find(ff =>
+    idsValidos.includes(String(ff?.field?.id || ''))
   );
-  if (!f || !f.value) return '';
-  return String(f.value).trim();
+  if (byId?.value) return String(byId.value).trim();
+
+  // 2. Fallback por nome (aceita variações)
+  const nomesCandidatos = ['equipe contrato', 'equipes', 'equipe', 'filial'];
+  const byName = (card.fields || []).find(ff =>
+    nomesCandidatos.includes(String(ff.name || '').toLowerCase().trim())
+  );
+  if (byName?.value) return String(byName.value).trim();
+
+  return '';
 }
 
 function checklistToText(v) {
@@ -3948,6 +3959,33 @@ app.post('/lead/:token/generate', async (req, res) => {
     // ===============================
     // CRIAR DOCUMENTOS SEQUENCIALMENTE (D4Sign tem rate limit por API key)
     // ===============================
+    // Log das variáveis críticas sendo enviadas ao D4Sign (diagnóstico de campos em branco)
+    console.log(`[LEAD-GENERATE] ========== PAYLOAD COMPLETO PARA D4SIGN ==========`);
+    console.log(`[LEAD-GENERATE] Template UUID: ${d.templateToUse}`);
+    console.log(`[LEAD-GENERATE] Cofre UUID: ${uuidSafe}`);
+    console.log(`[LEAD-GENERATE] Vars críticas:`, {
+      'Contratante 1': add['Contratante 1']?.substring(0, 120) || '(VAZIO)',
+      'contratante_1': add['contratante_1']?.substring(0, 120) || '(VAZIO)',
+      'dados para contato 1': add['dados para contato 1'] || '(VAZIO)',
+      'Descrição do serviço - MARCA': add['Descrição do serviço - MARCA'] || '(VAZIO)',
+      'Detalhes do serviço - MARCA': add['Detalhes do serviço - MARCA'] || '(VAZIO)',
+      'Filial': add['Filial'] || '(VAZIO)',
+      'Representante': add['Representante'] || '(VAZIO)',
+      'nome_da_marca': add['nome_da_marca'] || '(VAZIO)',
+      'Valor da Taxa': add['Valor da Taxa'] || '(VAZIO)',
+      'Número de parcelas da Assessoria': add['Número de parcelas da Assessoria'] || '(VAZIO)',
+      'Cidade': add['Cidade'] || '(VAZIO)',
+      'UF': add['UF'] || '(VAZIO)',
+      'NContrato': add['NContrato'] || '(VAZIO)',
+      'clausula-adicional': add['clausula-adicional']?.substring(0, 80) || '(VAZIO)',
+      'contrato da Assessoria': add['contrato da Assessoria']?.substring(0, 80) || '(VAZIO)',
+      'total de chaves no payload': Object.keys(add).length
+    });
+    // Log de TODAS as chaves enviadas (para comparar com o template Word)
+    console.log(`[LEAD-GENERATE] Todas as chaves enviadas ao D4Sign:`, Object.keys(add).join(' | '));
+    console.log(`[LEAD-GENERATE] ==================================================`);
+
+
     let uuidDoc = null;
     try {
       uuidDoc = await makeDocFromWordTemplate(
@@ -3956,6 +3994,11 @@ app.post('/lead/:token/generate', async (req, res) => {
       );
       if (!uuidDoc) throw new Error('Documento não foi criado.');
       console.log(`[D4SIGN] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
+      try {
+        const statusDoc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
+        console.log(`[D4SIGN] Status contrato logo após criação: ${JSON.stringify(statusDoc)?.substring(0, 200)}`);
+        if (String(statusDoc?.statusId) === '5') console.error(`[D4SIGN] ALERTA: Contrato ${uuidDoc} arquivado pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
+      } catch (e) { console.warn('[D4SIGN] Não foi possível verificar status do contrato:', e.message); }
     } catch (e) {
       console.error('[ERRO] Falha ao criar documento no D4Sign:', e.message);
       throw new Error(`Erro ao criar documento no D4Sign: ${e.message}`);
@@ -3964,12 +4007,34 @@ app.post('/lead/:token/generate', async (req, res) => {
     let uuidProcuracao = null;
     if (TEMPLATE_UUID_PROCURACAO) {
       try {
-        const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+        // Validar contratante_1_texto antes de gerar procuração
+        // Se vazio, retenta buscar o card (race condition: Pipefy pode não ter propagado o campo ainda)
+        let dProc = d;
+        console.log(`[LEAD-GENERATE] contratante_1_texto (${dProc.contratante_1_texto?.length || 0} chars): "${dProc.contratante_1_texto?.substring(0, 80) || ''}"`);
+        if (!dProc.contratante_1_texto) {
+          for (let tentativa = 1; tentativa <= 3; tentativa++) {
+            console.warn(`[LEAD-GENERATE] contratante_1_texto vazio — tentativa ${tentativa}/3 re-buscando card do Pipefy em 2s...`);
+            await new Promise(r => setTimeout(r, 2000));
+            const cardFresh = await getCard(cardId);
+            dProc = await montarDados(cardFresh);
+            console.log(`[LEAD-GENERATE] Re-tentativa ${tentativa}: contratante_1_texto (${dProc.contratante_1_texto?.length || 0} chars): "${dProc.contratante_1_texto?.substring(0, 80) || ''}"`);
+            if (dProc.contratante_1_texto) break;
+          }
+        }
+        if (!dProc.contratante_1_texto) {
+          throw new Error('contratante_1_texto permanece vazio após 3 re-tentativas — geração de procuração abortada para evitar documento com campo vazio');
+        }
+        const varsProcuracao = montarVarsParaTemplateProcuracao(dProc, nowInfo);
         uuidProcuracao = await makeDocFromWordTemplate(
           D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-          TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title || 'Contrato'}`, varsProcuracao
+          TEMPLATE_UUID_PROCURACAO, `Procuração - ${dProc.titulo || card.title || 'Contrato'}`, varsProcuracao
         );
         console.log(`[D4SIGN] Procuração criada: ${uuidProcuracao} (${Date.now() - tInicio}ms)`);
+        try {
+          const statusProc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao);
+          console.log(`[D4SIGN] Status procuração logo após criação: ${JSON.stringify(statusProc)?.substring(0, 200)}`);
+          if (String(statusProc?.statusId) === '5') console.error(`[D4SIGN] ALERTA: Procuração ${uuidProcuracao} arquivada pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
+        } catch (e) { console.warn('[D4SIGN] Não foi possível verificar status da procuração:', e.message); }
       } catch (e) {
         console.error('[ERRO] Falha ao gerar procuração:', e.message);
       }
@@ -4066,6 +4131,9 @@ app.post('/lead/:token/generate', async (req, res) => {
   <div class="info-box">
     <div><strong>Email do Titular:</strong> ${d.email_envio_contrato || d.email || 'Não informado'}</div>
     ${d.email_cotitular_envio ? `<div><strong>Email do Cotitular:</strong> ${d.email_cotitular_envio}</div>` : ''}
+  </div>
+  <div class="alert-yellow">
+    <strong>⏳ Aguarde 1–2 minutos antes de baixar ou enviar.</strong> O D4Sign processa o template Word de forma assíncrona. Se você baixar o documento imediatamente após gerar, pode receber o arquivo com campos em branco ou em formato .docx (não processado ainda). Aguarde cerca de 1 minuto e então baixe ou envie.
   </div>
   <div class="alert-yellow">
     <strong>⚠️ Atenção:</strong> Em caso de envio por WhatsApp + Email, necessário remover no D4Sign um dos signatários para que o contrato e procuração fiquem com status finalizado; Baixar os arquivos e anexar documentos no card.
