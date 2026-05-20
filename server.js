@@ -1082,23 +1082,25 @@ function getFirstByNames(card, arr) {
   return '';
 }
 
-// NOVO: ler campo "Equipe contrato" (suporta IDs: "equipe", "equipe_contrato", "equipes_1")
+// Ler campo "Equipe contrato" — prioridade: ID 'equipe' > nome exato > IDs alternativos
 function getEquipeContratoFromCard(card) {
   if (!card || !Array.isArray(card.fields)) return '';
 
-  // 1. Tenta por ID direto (mais confiável, não depende do nome)
-  const idsValidos = ['equipe', 'equipe_contrato', 'equipes_1'];
-  const byId = (card.fields || []).find(ff =>
-    idsValidos.includes(String(ff?.field?.id || ''))
-  );
-  if (byId?.value) return String(byId.value).trim();
+  // 1. ID 'equipe' — campo confirmado "Equipe contrato" (id: equipe, select)
+  const byIdEquipe = (card.fields || []).find(ff => ff?.field?.id === 'equipe');
+  if (byIdEquipe?.value) return String(byIdEquipe.value).trim();
 
-  // 2. Fallback por nome (aceita variações)
-  const nomesCandidatos = ['equipe contrato', 'equipes', 'equipe', 'filial'];
-  const byName = (card.fields || []).find(ff =>
-    nomesCandidatos.includes(String(ff.name || '').toLowerCase().trim())
+  // 2. Fallback por nome exato (caso o ID mude no futuro)
+  const byNomeExato = (card.fields || []).find(ff =>
+    String(ff.name || '').toLowerCase().trim() === 'equipe contrato'
   );
-  if (byName?.value) return String(byName.value).trim();
+  if (byNomeExato?.value) return String(byNomeExato.value).trim();
+
+  // 3. IDs alternativos conhecidos (outros pipes / configurações futuras)
+  const byIdAlt = (card.fields || []).find(ff =>
+    ff?.field?.id === 'equipe_contrato'
+  );
+  if (byIdAlt?.value) return String(byIdAlt.value).trim();
 
   return '';
 }
