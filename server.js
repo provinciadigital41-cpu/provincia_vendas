@@ -2875,6 +2875,9 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   }
 
   const body = { name_document: titleSanitized, templates: { [templateId]: varsObjValidated } };
+  
+  // LOG CRÍTICO para depuração: mostra exatamente quais chaves e valores estão indo pro D4Sign
+  console.log(`[D4SIGN PAYLOAD WORD] Enviando para template ${templateId}:`, JSON.stringify(body.templates, null, 2));
 
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
