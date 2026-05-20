@@ -2438,39 +2438,39 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Contratantes
     'contratante1': d.contratante_1_texto || d.nome || '',
-    'contratante_2': d.contratante_2_texto || '',
-    'contratante_3': d.contratante_3_texto || '',
+    'contratante2': d.contratante_2_texto || '',
+    'contratante3': d.contratante_3_texto || '',
 
     // Contato
-    'dados_para_contato_1': d.dados_contato_1 || '',
-    'dados_para_contato_2': d.dados_contato_2 || '',
-    'dados_para_contato_3': d.dados_contato_3 || '',
+    'dadosparacontato1': d.dados_contato_1 || '',
+    'dadosparacontato2': d.dados_contato_2 || '',
+    'dadosparacontato3': d.dados_contato_3 || '',
 
     // Descrição dos serviços por marca
-    'descricao_do_servico_marca':   d.desc_servico_marca_1 || '',
-    'detalhes_do_servico_marca':    d.det.MARCA[0] || '',
+    'descricaodoservicomarca':   d.desc_servico_marca_1 || '',
+    'detalhesdoservicomarca':    d.det.MARCA[0] || '',
 
-    'descricao_do_servico_marca_2': d.nome2 ? (d.desc_servico_marca_2 || '') : '',
-    'detalhes_do_servico_marca_2':  d.nome2 ? (d.det.MARCA[1] || '') : '',
+    'descricaodoservicomarca2': d.nome2 ? (d.desc_servico_marca_2 || '') : '',
+    'detalhesdoservicomarca2':  d.nome2 ? (d.det.MARCA[1] || '') : '',
 
-    'descricao_do_servico_marca_3': d.nome3 ? (d.desc_servico_marca_3 || '') : '',
-    'detalhes_do_servico_marca_3':  d.nome3 ? (d.det.MARCA[2] || '') : '',
+    'descricaodoservicomarca3': d.nome3 ? (d.desc_servico_marca_3 || '') : '',
+    'detalhesdoservicomarca3':  d.nome3 ? (d.det.MARCA[2] || '') : '',
 
-    'descricao_do_servico_marca_4': d.nome4 ? (d.desc_servico_marca_4 || '') : '',
-    'detalhes_do_servico_marca_4':  d.nome4 ? (d.det.MARCA[3] || '') : '',
+    'descricaodoservicomarca4': d.nome4 ? (d.desc_servico_marca_4 || '') : '',
+    'detalhesdoservicomarca4':  d.nome4 ? (d.det.MARCA[3] || '') : '',
 
-    'descricao_do_servico_marca_5': d.nome5 ? (d.desc_servico_marca_5 || '') : '',
-    'detalhes_do_servico_marca_5':  d.nome5 ? (d.det.MARCA[4] || '') : '',
+    'descricaodoservicomarca5': d.nome5 ? (d.desc_servico_marca_5 || '') : '',
+    'detalhesdoservicomarca5':  d.nome5 ? (d.det.MARCA[4] || '') : '',
 
     // Pagamentos — campos consolidados
-    'contrato_da_assessoria': montarTextoAssessoria({
+    'contratodaassessoria': montarTextoAssessoria({
       parcelas: d.parcelas || '1',
       valorParcela: toBRL(valorParcela),
       formaPagamento: d.forma_pagto_assessoria || '',
       dataPagamento: d.data_pagto_assessoria || ''
     }),
 
-    'contrato_da_pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
+    'contratodapesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
       ? montarTextoPesquisa({
           tipoPesquisa: d.forma_pesquisa || '',
           valorPesquisa: d.valor_pesquisa || 'R$ 98,00',
@@ -2479,13 +2479,13 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
         })
       : 'Não se aplica',
 
-    'contrato_financeiro': montarTextoTaxa({
+    'contratofinanceiro': montarTextoTaxa({
       valorTaxa: d.valor_taxa_brl || '',
       formaPagamentoTaxa: d.forma_pagto_taxa || '',
       dataPagamentoTaxa: d.data_pagto_taxa || ''
     }),
 
-    'condicoes_de_pagamento': (() => {
+    'condicoesdepagamento': (() => {
       if (d.descreva_condicoes_de_pagamento && String(d.descreva_condicoes_de_pagamento).trim()) {
         return String(d.descreva_condicoes_de_pagamento).trim();
       }
@@ -2497,7 +2497,7 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     })(),
 
     // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || '',
+    'clausulaadicional': d.clausula_adicional || '',
 
     // Local e data
     'cidade': d.cidade_cnpj || '',
@@ -2507,32 +2507,32 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'ano':    ano,
 
     // Formulário de classes
-    'tipo_de_marca':      d.tipo1 || '',
-    'cabecalho_servicos': d.cabecalho_servicos_1 || '',
-    'nome_da_marca':      d.nome1 || d.titulo || '',
+    'tipodemarca':      d.tipo1 || '',
+    'cabecalhoservicos': d.cabecalho_servicos_1 || '',
+    'nomedamarca':      d.nome1 || d.titulo || '',
     'risco':              d.risco_agregado || '',
 
-    'marcas-espec_1': d.classes_agrupadas_1[0] || '',
-    'marcas-espec_2': d.classes_agrupadas_1[1] || '',
-    'marcas-espec_3': d.classes_agrupadas_1[2] || '',
-    'marcas-espec_4': d.classes_agrupadas_1[3] || '',
-    'marcas-espec_5': d.classes_agrupadas_1[4] || '',
+    'marcasespec1': d.classes_agrupadas_1[0] || '',
+    'marcasespec2': d.classes_agrupadas_1[1] || '',
+    'marcasespec3': d.classes_agrupadas_1[2] || '',
+    'marcasespec4': d.classes_agrupadas_1[3] || '',
+    'marcasespec5': d.classes_agrupadas_1[4] || '',
 
-    'cabecalho_servicos_2': d.nome2 ? (d.cabecalho_servicos_2 || '') : '',
-    'marcas2-espec_1': d.nome2 ? (d.linhas_marcas_espec_2[0] || '') : '',
-    'marcas2-espec_2': d.nome2 ? (d.linhas_marcas_espec_2[1] || '') : '',
-    'marcas2-espec_3': d.nome2 ? (d.linhas_marcas_espec_2[2] || '') : '',
-    'marcas2-espec_4': d.nome2 ? (d.linhas_marcas_espec_2[3] || '') : '',
-    'marcas2-espec_5': d.nome2 ? (d.linhas_marcas_espec_2[4] || '') : '',
+    'cabecalhoservicos2': d.nome2 ? (d.cabecalho_servicos_2 || '') : '',
+    'marcas2espec1': d.nome2 ? (d.linhas_marcas_espec_2[0] || '') : '',
+    'marcas2espec2': d.nome2 ? (d.linhas_marcas_espec_2[1] || '') : '',
+    'marcas2espec3': d.nome2 ? (d.linhas_marcas_espec_2[2] || '') : '',
+    'marcas2espec4': d.nome2 ? (d.linhas_marcas_espec_2[3] || '') : '',
+    'marcas2espec5': d.nome2 ? (d.linhas_marcas_espec_2[4] || '') : '',
   };
 
   // Classes extras (marcas-espec_6 em diante) — marca 1
   for (let i = 5; i < 30; i++) {
-    base[`marcas-espec_${i + 1}`] = d.classes_agrupadas_1[i] || '';
+    base[`marcasespec${i + 1}`] = d.classes_agrupadas_1[i] || '';
   }
   // Classes extras — marca 2
   for (let i = 5; i < 25; i++) {
-    base[`marcas2-espec_${i + 1}`] = d.nome2 ? (d.linhas_marcas_espec_2[i] || '') : '';
+    base[`marcas2espec${i + 1}`] = d.nome2 ? (d.linhas_marcas_espec_2[i] || '') : '';
   }
 
   return base;
@@ -2563,53 +2563,53 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'representante': d.representante || '',
 
     // Contratantes
-    'contratante_1': d.contratante_1_texto || d.nome || '',
-    'contratante_2': d.contratante_2_texto || '',
-    'contratante_3': d.contratante_3_texto || '',
+    'contratante1': d.contratante_1_texto || d.nome || '',
+    'contratante2': d.contratante_2_texto || '',
+    'contratante3': d.contratante_3_texto || '',
 
     // Contato
-    'dados_para_contato_1': d.dados_contato_1 || '',
-    'dados_para_contato_2': d.dados_contato_2 || '',
-    'dados_para_contato_3': d.dados_contato_3 || '',
+    'dadosparacontato1': d.dados_contato_1 || '',
+    'dadosparacontato2': d.dados_contato_2 || '',
+    'dadosparacontato3': d.dados_contato_3 || '',
 
     // PATENTE
-    'quantidade_depositos_processos_de_patente': d.qtd_desc.PATENTE || '',
-    'descricao_do_servico_patente': d.qtd_desc.PATENTE ? '' : '',
-    'detalhes_do_servico_patente': d.det.PATENTE[0] || '',
-    'detalhes_do_servico_patente_2': d.det.PATENTE[1] || '',
-    'detalhes_do_servico_patente_3': d.det.PATENTE[2] || '',
-    'detalhes_do_servico_patente_4': d.det.PATENTE[3] || '',
-    'detalhes_do_servico_patente_5': d.det.PATENTE[4] || '',
+    'quantidadedepositosprocessosdepatente': d.qtd_desc.PATENTE || '',
+    'descricaodoservicopatente': d.qtd_desc.PATENTE ? '' : '',
+    'detalhesdoservicopatente': d.det.PATENTE[0] || '',
+    'detalhesdoservicopatente2': d.det.PATENTE[1] || '',
+    'detalhesdoservicopatente3': d.det.PATENTE[2] || '',
+    'detalhesdoservicopatente4': d.det.PATENTE[3] || '',
+    'detalhesdoservicopatente5': d.det.PATENTE[4] || '',
 
     // DESENHO INDUSTRIAL
-    'quantidade_depositos_processos_desenho_industrial': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
-    'descricao_do_servico_desenho_industrial': (d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL']) ? '' : '',
-    'detalhes_do_servico_desenho_industrial': d.det['DESENHO INDUSTRIAL'][0] || '',
-    'detalhes_do_servico_desenho_industrial_2': d.det['DESENHO INDUSTRIAL'][1] || '',
-    'detalhes_do_servico_desenho_industrial_3': d.det['DESENHO INDUSTRIAL'][2] || '',
-    'detalhes_do_servico_desenho_industrial_4': d.det['DESENHO INDUSTRIAL'][3] || '',
-    'detalhes_do_servico_desenho_industrial_5': d.det['DESENHO INDUSTRIAL'][4] || '',
+    'quantidadedepositosprocessosdesenhoindustrial': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
+    'descricaodoservicodesenhoindustrial': (d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL']) ? '' : '',
+    'detalhesdoservicodesenhoindustrial': d.det['DESENHO INDUSTRIAL'][0] || '',
+    'detalhesdoservicodesenhoindustrial2': d.det['DESENHO INDUSTRIAL'][1] || '',
+    'detalhesdoservicodesenhoindustrial3': d.det['DESENHO INDUSTRIAL'][2] || '',
+    'detalhesdoservicodesenhoindustrial4': d.det['DESENHO INDUSTRIAL'][3] || '',
+    'detalhesdoservicodesenhoindustrial5': d.det['DESENHO INDUSTRIAL'][4] || '',
 
     // COPYRIGHT
-    'quantidade_registros_de_copyright_direito_autoral': d.qtd_desc.COPY || '',
-    'descricao_do_servico_copyright_direito_autoral': d.qtd_desc.COPY ? '' : '',
-    'detalhes_do_servico_copyright_direito_autoral': d.det['COPYRIGHT/DIREITO AUTORAL'][0] || '',
-    'detalhes_do_servico_copyright_direito_autoral_2': d.det['COPYRIGHT/DIREITO AUTORAL'][1] || '',
-    'detalhes_do_servico_copyright_direito_autoral_3': d.det['COPYRIGHT/DIREITO AUTORAL'][2] || '',
-    'detalhes_do_servico_copyright_direito_autoral_4': d.det['COPYRIGHT/DIREITO AUTORAL'][3] || '',
-    'detalhes_do_servico_copyright_direito_autoral_5': d.det['COPYRIGHT/DIREITO AUTORAL'][4] || '',
+    'quantidaderegistrosdecopyrightdireitoautoral': d.qtd_desc.COPY || '',
+    'descricaodoservicocopyrightdireitoautoral': d.qtd_desc.COPY ? '' : '',
+    'detalhesdoservicocopyrightdireitoautoral': d.det['COPYRIGHT/DIREITO AUTORAL'][0] || '',
+    'detalhesdoservicocopyrightdireitoautoral2': d.det['COPYRIGHT/DIREITO AUTORAL'][1] || '',
+    'detalhesdoservicocopyrightdireitoautoral3': d.det['COPYRIGHT/DIREITO AUTORAL'][2] || '',
+    'detalhesdoservicocopyrightdireitoautoral4': d.det['COPYRIGHT/DIREITO AUTORAL'][3] || '',
+    'detalhesdoservicocopyrightdireitoautoral5': d.det['COPYRIGHT/DIREITO AUTORAL'][4] || '',
 
     // OUTROS SERVIÇOS
-    'quantidade_registros_de_outros_servicos': d.qtd_desc.OUTROS || '',
-    'descricao_do_servico_outros_servicos': d.qtd_desc.OUTROS ? '' : '',
-    'detalhes_do_servico_outros_servicos': d.det['OUTROS'][0] || '',
-    'detalhes_do_servico_outros_servicos_2': d.det['OUTROS'][1] || '',
-    'detalhes_do_servico_outros_servicos_3': d.det['OUTROS'][2] || '',
-    'detalhes_do_servico_outros_servicos_4': d.det['OUTROS'][3] || '',
-    'detalhes_do_servico_outros_servicos_5': d.det['OUTROS'][4] || '',
+    'quantidaderegistrosdeoutrosservicos': d.qtd_desc.OUTROS || '',
+    'descricaodoservicooutrosservicos': d.qtd_desc.OUTROS ? '' : '',
+    'detalhesdoservicooutrosservicos': d.det['OUTROS'][0] || '',
+    'detalhesdoservicooutrosservicos2': d.det['OUTROS'][1] || '',
+    'detalhesdoservicooutrosservicos3': d.det['OUTROS'][2] || '',
+    'detalhesdoservicooutrosservicos4': d.det['OUTROS'][3] || '',
+    'detalhesdoservicooutrosservicos5': d.det['OUTROS'][4] || '',
 
     // Assessoria
-    'contrato_da_assessoria': montarTextoAssessoria({
+    'contratodaassessoria': montarTextoAssessoria({
       parcelas: d.parcelas || '1',
       valorParcela: toBRL(valorParcela),
       formaPagamento: d.forma_pagto_assessoria || '',
@@ -2617,7 +2617,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     }),
 
     // Pesquisa
-    'contrato_da_pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
+    'contratodapesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
       ? montarTextoPesquisa({
           tipoPesquisa: d.forma_pesquisa || '',
           valorPesquisa: d.valor_pesquisa || 'R$ 98,00',
@@ -2627,14 +2627,14 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
       : 'Não se aplica',
 
     // Taxa / Financeiro
-    'contrato_financeiro': montarTextoTaxa({
+    'contratofinanceiro': montarTextoTaxa({
       valorTaxa: d.valor_taxa_brl || '',
       formaPagamentoTaxa: d.forma_pagto_taxa || '',
       dataPagamentoTaxa: d.data_pagto_taxa || ''
     }),
 
     // Condições de pagamento
-    'condicoes_de_pagamento': (() => {
+    'condicoesdepagamento': (() => {
       if (d.descreva_condicoes_de_pagamento && String(d.descreva_condicoes_de_pagamento).trim()) {
         return String(d.descreva_condicoes_de_pagamento).trim();
       }
@@ -2646,7 +2646,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     })(),
 
     // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || '',
+    'clausulaadicional': d.clausula_adicional || '',
 
     // Datas e Local
     'cidade': d.cidade_cnpj || '',
@@ -2677,29 +2677,24 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
 
   const base = {
     // Identificação do outorgante
-    'Contratante 1': d.contratante_1_texto || d.nome || '',
-    'Contratante 2': d.contratante_2_texto || '',
-    'Contratante 3': d.contratante_3_texto || '',
-    'CONTRATANTE 3': d.contratante_3_texto || '',
-    'contratante_1': d.contratante_1_texto || d.nome || '',
-    'contratante_2': d.contratante_2_texto || '',
-    'contratante_3': d.contratante_3_texto || '',
-    'Nome': d.nome || '',
-    'CPF': cpfFmt || '',
-    'CNPJ': cnpjFmt || '',
-    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
-    'RG': d.rg || '',
-    'Estado Civil': d.estado_civil || '',
-    'Estado Civíl': d.estado_civil || '',
+    'contratante1': d.contratante_1_texto || d.nome || '',
+    'contratante2': d.contratante_2_texto || '',
+    'contratante3': d.contratante_3_texto || '',
+    'nome': d.nome || '',
+    'cpf': cpfFmt || '',
+    'cnpj': cnpjFmt || '',
+    'cpfcnpj': d.selecao_cnpj_ou_cpf || '',
+    'rg': d.rg || '',
+    'estadocivil': d.estado_civil || '',
 
     // Endereço
-    'Rua': d.rua_cnpj || '',
-    'Bairro': d.bairro_cnpj || '',
-    'Número': d.numero_cnpj || '',
-    'Cidade': d.cidade_cnpj || '',
-    'UF': d.uf_cnpj || '',
-    'CEP': d.cep_cnpj || '',
-    'Endereço completo': [
+    'rua': d.rua_cnpj || '',
+    'bairro': d.bairro_cnpj || '',
+    'numero': d.numero_cnpj || '',
+    'cidade': d.cidade_cnpj || '',
+    'uf': d.uf_cnpj || '',
+    'cep': d.cep_cnpj || '',
+    'enderecocompleto': [
       d.rua_cnpj ? `Rua ${d.rua_cnpj}` : '',
       d.numero_cnpj ? `nº ${d.numero_cnpj}` : '',
       d.bairro_cnpj ? `Bairro ${d.bairro_cnpj}` : '',
@@ -2708,31 +2703,27 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
     ].filter(Boolean).join(', '),
 
     // Contato
-    'E-mail': d.email || '',
-    'Telefone': d.telefone || '',
-    'dados para contato 1': d.dados_contato_1 || '',
-    'dados para contato 2': d.dados_contato_2 || '',
-    'dados para contato 3': d.dados_contato_3 || '',
+    'email': d.email || '',
+    'telefone': d.telefone || '',
+    'dadosparacontato1': d.dados_contato_1 || '',
+    'dadosparacontato2': d.dados_contato_2 || '',
+    'dadosparacontato3': d.dados_contato_3 || '',
 
     // Datas
-    'Dia': dia,
-    'Mês': mesExtenso,
-    'Mes': mesExtenso,
-    'Ano': ano,
-    'Data': `${dia} de ${mesExtenso} de ${ano}`,
+    'dia': dia,
+    'mes': mesExtenso,
+    'ano': ano,
+    'data': `${dia} de ${mesExtenso} de ${ano}`,
 
     // Informações do contrato relacionadas
-    'Título': d.titulo || '',
-    'Serviços': d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.OUTROS || '',
-    'Risco': d.risco_agregado || '',
+    'titulo': d.titulo || '',
+    'servicos': d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.OUTROS || '',
+    'risco': d.risco_agregado || '',
 
     // Assinatura dos contratantes (apenas nomes)
-    'ASSINATURA CONTRATANTE 1': d.nome_contratante_1 || d.nome || '',
-    'ASSINATURA CONTRATANTE 2': d.nome_contratante_2 || '',
-    'ASSINATURA CONTRATANTE 3': d.nome_contratante_3 || '',
-    'Assinatura Contratante 1': d.nome_contratante_1 || d.nome || '',
-    'Assinatura Contratante 2': d.nome_contratante_2 || '',
-    'Assinatura Contratante 3': d.nome_contratante_3 || ''
+    'assinaturacontratante1': d.nome_contratante_1 || d.nome || '',
+    'assinaturacontratante2': d.nome_contratante_2 || '',
+    'assinaturacontratante3': d.nome_contratante_3 || ''
   };
 
   return base;
