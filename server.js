@@ -2422,144 +2422,55 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
   const cardIdStr = String(d.cardId || '');
   console.log(`[TEMPLATE MARCA] cardId para número do contrato: ${cardIdStr}`);
-  console.log(`[TEMPLATE MARCA] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
-  console.log(`[TEMPLATE MARCA] cardIdStr final: "${cardIdStr}"`);
 
+  // ⚠️ IMPORTANTE: as chaves aqui devem ser EXATAMENTE os tokens registrados no D4Sign
+  // (obtidos via GET /api/v1/templates/{id}/list — campo variables.tokens_gerais)
+  // O D4Sign normaliza os tokens do template Word para snake_case sem acentos,
+  // mas NÃO normaliza as chaves do payload da API — o match é feito por igualdade exata
+  // (case-insensitive). Não enviar duplicatas que normalizem para o mesmo token.
   const base = {
-    // Identificação - Número do contrato (múltiplas variações para compatibilidade)
-    'N° contrato': cardIdStr,
-    'Nº contrato': cardIdStr,
-    'Numero contrato': cardIdStr,
-    'Número contrato': cardIdStr,
-    'CONTRATO nº': cardIdStr,
-    'CONTRATO Nº': cardIdStr,
-    'CONTRATO N°': cardIdStr,
-    'CONTRATO nº:': cardIdStr,
-    'CONTRATO Nº:': cardIdStr,
-    'CONTRATO N°:': cardIdStr,
-    'contrato nº': cardIdStr,
-    'contrato n°': cardIdStr,
-    'contrato nº:': cardIdStr,
-    'contrato n°:': cardIdStr,
-    'numero contrato': cardIdStr,
-    'numero do contrato': cardIdStr,
-    'Número do contrato': cardIdStr,
-    // Variações para cabeçalho
-    'N° de contrato': cardIdStr,
-    'Nº de contrato': cardIdStr,
-    'Número de contrato': cardIdStr,
-    'Numero de contrato': cardIdStr,
-    'CONTRATO N°:': cardIdStr,
-    'CONTRATO Nº:': cardIdStr,
-    'Contrato N°': cardIdStr,
-    'Contrato Nº': cardIdStr,
-    'Contrato nº': cardIdStr,
-    'Contrato n°': cardIdStr,
-    // Campo específico do D4Sign - [ATUALIZADO] Renomeado para NContrato
-    'NContrato': cardIdStr,
-    'NContrato*': cardIdStr,
-    // Manter compatibilidade com variáveis antigas (caso usadas em templates)
-    'Número do contrato do bloco físico*': cardIdStr,
-    'Número do contrato do bloco físico': cardIdStr,
-    'Numero do contrato do bloco fisico': cardIdStr,
+    // Identificação
+    'ncontrato': cardIdStr,
 
-    // [NOVO] Filial e Representante
-    'Filial': d.equipeName || '',  // Vem direto do campo "equipe contrato"
-    'Representante': d.representante || '',  // Campo "nome_do_representante" do Pipefy
+    // Cabeçalho
+    'filial': d.equipeName || '',
+    'representante': d.representante || '',
 
-    'Contratante 1': d.contratante_1_texto || d.nome || '',
-    'Contratante 2': d.contratante_2_texto || '',
-    'Contratante 3': d.contratante_3_texto || '',
-    'CONTRATANTE 3': d.contratante_3_texto || '',
+    // Contratantes
     'contratante_1': d.contratante_1_texto || d.nome || '',
     'contratante_2': d.contratante_2_texto || '',
     'contratante_3': d.contratante_3_texto || '',
-    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
-    'CPF': d.cpf_campo || '',
-    'CNPJ': d.cnpj_campo || '',
-    rg: d.rg || '',
-    'Estado Civíl': d.estado_civil || '',
-    'Estado Civil': d.estado_civil || '',
-
-    // Endereço
-    rua: d.rua_cnpj || '',
-    bairro: d.bairro_cnpj || '',
-    numero: d.numero_cnpj || '',
-    nome_da_cidade: d.cidade_cnpj || '',
-    cidade: d.cidade_cnpj || '',
-    uf: d.uf_cnpj || '',
-    cep: d.cep_cnpj || '',
 
     // Contato
-    'E-mail': d.email || '',
-    telefone: d.telefone || '',
-    'dados para contato 1': d.dados_contato_1 || '',
-    'dados para contato 2': d.dados_contato_2 || '',
-    'dados para contato 3': d.dados_contato_3 || '',
+    'dados_para_contato_1': d.dados_contato_1 || '',
+    'dados_para_contato_2': d.dados_contato_2 || '',
+    'dados_para_contato_3': d.dados_contato_3 || '',
 
-    // Resultado da pesquisa prévia
-    'Risco': d.risco_agregado || '',
+    // Descrição dos serviços por marca
+    'descricao_do_servico_marca':   d.desc_servico_marca_1 || '',
+    'detalhes_do_servico_marca':    d.det.MARCA[0] || '',
 
-    // Descrição e detalhes por marca (isolados por slot)
-    'Descrição do serviço - MARCA': d.desc_servico_marca_1 || '',
-    'Detalhes do serviço - MARCA': d.det.MARCA[0] || '',
+    'descricao_do_servico_marca_2': d.nome2 ? (d.desc_servico_marca_2 || '') : '',
+    'detalhes_do_servico_marca_2':  d.nome2 ? (d.det.MARCA[1] || '') : '',
 
-    'Descrição do serviço – MARCA 2': d.nome2 ? (d.desc_servico_marca_2 || '') : '',
-    'Detalhes do serviço - MARCA 2': d.nome2 ? (d.det.MARCA[1] || '') : '',
+    'descricao_do_servico_marca_3': d.nome3 ? (d.desc_servico_marca_3 || '') : '',
+    'detalhes_do_servico_marca_3':  d.nome3 ? (d.det.MARCA[2] || '') : '',
 
-    'Descrição do serviço – MARCA 3': d.nome3 ? (d.desc_servico_marca_3 || '') : '',
-    'Detalhes do serviço - MARCA 3': d.nome3 ? (d.det.MARCA[2] || '') : '',
+    'descricao_do_servico_marca_4': d.nome4 ? (d.desc_servico_marca_4 || '') : '',
+    'detalhes_do_servico_marca_4':  d.nome4 ? (d.det.MARCA[3] || '') : '',
 
-    'Descrição do serviço – MARCA 4': d.nome4 ? (d.desc_servico_marca_4 || '') : '',
-    'Detalhes do serviço - MARCA 4': d.nome4 ? (d.det.MARCA[3] || '') : '',
+    'descricao_do_servico_marca_5': d.nome5 ? (d.desc_servico_marca_5 || '') : '',
+    'detalhes_do_servico_marca_5':  d.nome5 ? (d.det.MARCA[4] || '') : '',
 
-    'Descrição do serviço – MARCA 5': d.nome5 ? (d.desc_servico_marca_5 || '') : '',
-    'Detalhes do serviço - MARCA 5': d.nome5 ? (d.det.MARCA[4] || '') : '',
-
-    // Formulário de Classes
-    'Cabeçalho - SERVIÇOS': d.cabecalho_servicos_1 || '',
-    // Tipo de marca (token no template Word: ${"tipo de marca"})
-    'tipo de marca': d.tipo1 || '',
-    'tipo de marca 2': d.nome2 ? (d.tipo2 || '') : '',
-    'tipo de marca 3': d.nome3 ? (d.tipo3 || '') : '',
-    'tipo de marca 4': d.nome4 ? (d.tipo4 || '') : '',
-    'tipo de marca 5': d.nome5 ? (d.tipo5 || '') : '',
-    // [NOVO] Nome da marca principal - campo "marca_ou_patente_1" do Pipefy
-    'nome_da_marca': d.nome1 || d.titulo || '',
-    // Classes agrupadas por "Classe XX" / "NCL XX" com especificações separadas por vírgula
-    'marcas-espec_1': d.classes_agrupadas_1[0] || '',
-    'marcas-espec_2': d.classes_agrupadas_1[1] || '',
-    'marcas-espec_3': d.classes_agrupadas_1[2] || '',
-    'marcas-espec_4': d.classes_agrupadas_1[3] || '',
-    'marcas-espec_5': d.classes_agrupadas_1[4] || '',
-
-    'Cabeçalho - SERVIÇOS 2': d.nome2 ? (d.cabecalho_servicos_2 || '') : '',
-    'marcas2-espec_1': d.nome2 ? (d.linhas_marcas_espec_2[0] || '') : '',
-    'marcas2-espec_2': d.nome2 ? (d.linhas_marcas_espec_2[1] || '') : '',
-    'marcas2-espec_3': d.nome2 ? (d.linhas_marcas_espec_2[2] || '') : '',
-    'marcas2-espec_4': d.nome2 ? (d.linhas_marcas_espec_2[3] || '') : '',
-    'marcas2-espec_5': d.nome2 ? (d.linhas_marcas_espec_2[4] || '') : '',
-
-    // Assessoria (campos individuais mantidos para compatibilidade)
-    'Número de parcelas da Assessoria': String(d.parcelas || '1'),
-    'Valor da parcela da Assessoria': toBRL(valorParcela),
-    'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
-    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
-    // [NOVO] Campo consolidado gerado pela função
-    'contrato da Assessoria': montarTextoAssessoria({
+    // Pagamentos — campos consolidados
+    'contrato_da_assessoria': montarTextoAssessoria({
       parcelas: d.parcelas || '1',
       valorParcela: toBRL(valorParcela),
       formaPagamento: d.forma_pagto_assessoria || '',
       dataPagamento: d.data_pagto_assessoria || ''
     }),
 
-    // Pesquisa (campos individuais mantidos para compatibilidade)
-    'Valor da Pesquisa': d.valor_pesquisa || 'R$ 00,00',
-    'Forma de pagamento da Pesquisa': d.forma_pesquisa || '',
-    'Data de pagamento da pesquisa': d.data_pesquisa || '00/00/00',
-    // [NOVO] Campo consolidado gerado pela função
-    // Pesquisa só se aplica a Marca, Patente ou Desenho Industrial
-    'contrato da Pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
+    'contrato_da_pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
       ? montarTextoPesquisa({
           tipoPesquisa: d.forma_pesquisa || '',
           valorPesquisa: d.valor_pesquisa || 'R$ 98,00',
@@ -2568,32 +2479,13 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
         })
       : 'Não se aplica',
 
-    // Taxa (campos individuais mantidos para compatibilidade)
-    'Valor da Taxa': d.valor_taxa_brl || '',
-    'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
-    'Data de pagamento da Taxa': d.data_pagto_taxa || '',
-    // [NOVO] Campo consolidado gerado pela função
-    'contrato financeiro': montarTextoTaxa({
+    'contrato_financeiro': montarTextoTaxa({
       valorTaxa: d.valor_taxa_brl || '',
       formaPagamentoTaxa: d.forma_pagto_taxa || '',
       dataPagamentoTaxa: d.data_pagto_taxa || ''
     }),
 
-    // Datas
-    Dia: dia,
-    Mês: mesExtenso,
-    Mes: mesExtenso,
-    Ano: ano,
-    Cidade: d.cidade_cnpj || '',
-    UF: d.uf_cnpj || '',
-
-    // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || '',
-
-    // [NOVO] Condições de pagamento (campo condicional)
-    // Se o campo 'Descreva Condições de Pagamento' (descreva_condi_es_de_pagamento) vier preenchido,
-    // usa esse texto; caso contrário monta o texto padrão com Taxa + Parcelas de Assessoria.
-    'Condicoes de pagamento': (() => {
+    'condicoes_de_pagamento': (() => {
       if (d.descreva_condicoes_de_pagamento && String(d.descreva_condicoes_de_pagamento).trim()) {
         return String(d.descreva_condicoes_de_pagamento).trim();
       }
@@ -2602,18 +2494,52 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
       const valorParcelaCalc = toBRL(parcelaNum > 0 ? valorTotalNum / parcelaNum : 0);
       const formaPagto = d.forma_pagto_assessoria || '';
       return `Entrada R$ ${taxa} referente a TAXA + ${nParcelasStr} X ${valorParcelaCalc} da assessoria no ${formaPagto}.`;
-    })()
+    })(),
+
+    // Cláusula adicional
+    'clausula-adicional': d.clausula_adicional || '',
+
+    // Local e data
+    'cidade': d.cidade_cnpj || '',
+    'uf':     d.uf_cnpj || '',
+    'dia':    dia,
+    'mes':    mesExtenso,
+    'ano':    ano,
+
+    // Formulário de classes
+    'tipo_de_marca':      d.tipo1 || '',
+    'cabecalho_servicos': d.cabecalho_servicos_1 || '',
+    'nome_da_marca':      d.nome1 || d.titulo || '',
+    'risco':              d.risco_agregado || '',
+
+    'marcas-espec_1': d.classes_agrupadas_1[0] || '',
+    'marcas-espec_2': d.classes_agrupadas_1[1] || '',
+    'marcas-espec_3': d.classes_agrupadas_1[2] || '',
+    'marcas-espec_4': d.classes_agrupadas_1[3] || '',
+    'marcas-espec_5': d.classes_agrupadas_1[4] || '',
+
+    'cabecalho_servicos_2': d.nome2 ? (d.cabecalho_servicos_2 || '') : '',
+    'marcas2-espec_1': d.nome2 ? (d.linhas_marcas_espec_2[0] || '') : '',
+    'marcas2-espec_2': d.nome2 ? (d.linhas_marcas_espec_2[1] || '') : '',
+    'marcas2-espec_3': d.nome2 ? (d.linhas_marcas_espec_2[2] || '') : '',
+    'marcas2-espec_4': d.nome2 ? (d.linhas_marcas_espec_2[3] || '') : '',
+    'marcas2-espec_5': d.nome2 ? (d.linhas_marcas_espec_2[4] || '') : '',
   };
 
-  // Preencher até 30 linhas por segurança
+  // Classes extras (marcas-espec_6 em diante) — marca 1
   for (let i = 5; i < 30; i++) {
     base[`marcas-espec_${i + 1}`] = d.classes_agrupadas_1[i] || '';
-    base[`marcas2-espec_${i - 4}`] = d.nome2 ? (d.linhas_marcas_espec_2[i - 5] || '') : '';
+  }
+  // Classes extras — marca 2
+  for (let i = 5; i < 25; i++) {
+    base[`marcas2-espec_${i + 1}`] = d.nome2 ? (d.linhas_marcas_espec_2[i] || '') : '';
   }
 
   return base;
 }
 
+
+// Outros
 // Outros
 function montarVarsParaTemplateOutros(d, nowInfo) {
   const valorTotalNum = onlyNumberBR(d.valor_total);
@@ -2626,138 +2552,72 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
 
   const cardIdStr = String(d.cardId || '');
   console.log(`[TEMPLATE OUTROS] cardId para número do contrato: ${cardIdStr}`);
-  console.log(`[TEMPLATE OUTROS] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
-  console.log(`[TEMPLATE OUTROS] cardIdStr final: "${cardIdStr}"`);
 
+  // ⚠️ Chaves EXATAS correspondentes aos tokens_gerais do D4Sign
   const base = {
-    // Identificação - Número do contrato (múltiplas variações para compatibilidade)
-    'N° contrato': cardIdStr,
-    'Nº contrato': cardIdStr,
-    'Numero contrato': cardIdStr,
-    'Número contrato': cardIdStr,
-    'CONTRATO nº': cardIdStr,
-    'CONTRATO Nº': cardIdStr,
-    'CONTRATO N°': cardIdStr,
-    'CONTRATO nº:': cardIdStr,
-    'CONTRATO Nº:': cardIdStr,
-    'CONTRATO N°:': cardIdStr,
-    'contrato nº': cardIdStr,
-    'contrato n°': cardIdStr,
-    'contrato nº:': cardIdStr,
-    'contrato n°:': cardIdStr,
-    'numero contrato': cardIdStr,
-    'numero do contrato': cardIdStr,
-    'Número do contrato': cardIdStr,
-    // Variações para cabeçalho
-    'N° de contrato': cardIdStr,
-    'Nº de contrato': cardIdStr,
-    'Número de contrato': cardIdStr,
-    'Numero de contrato': cardIdStr,
-    'Contrato N°': cardIdStr,
-    'Contrato Nº': cardIdStr,
-    'Contrato nº': cardIdStr,
-    'Contrato n°': cardIdStr,
-    // Campo específico do D4Sign - [ATUALIZADO] Renomeado para NContrato
-    'NContrato': cardIdStr,
-    'NContrato*': cardIdStr,
-    // Manter compatibilidade com variáveis antigas (caso usadas em templates)
-    'Número do contrato do bloco físico*': cardIdStr,
-    'Número do contrato do bloco físico': cardIdStr,
-    'Numero do contrato do bloco fisico': cardIdStr,
+    // Identificação
+    'ncontrato': cardIdStr,
 
-    // [NOVO] Filial e Representante
-    'Filial': d.equipeName || '',  // Vem direto do campo "equipe contrato"
-    'Representante': d.representante || '',  // Campo "nome_do_representante" do Pipefy
+    // Cabeçalho
+    'filial': d.equipeName || '',
+    'representante': d.representante || '',
 
-    'Contratante 1': d.contratante_1_texto || d.nome || '',
-    'Contratante 2': d.contratante_2_texto || '',
-    'Contratante 3': d.contratante_3_texto || '',
-    'CONTRATANTE 3': d.contratante_3_texto || '',
+    // Contratantes
     'contratante_1': d.contratante_1_texto || d.nome || '',
     'contratante_2': d.contratante_2_texto || '',
     'contratante_3': d.contratante_3_texto || '',
-    'CPF/CNPJ': d.selecao_cnpj_ou_cpf || '',
-    'CPF': d.cpf_campo || '',
-    'CNPJ': d.cnpj_campo || '',
-    rg: d.rg || '',
-    'Estado Civíl': d.estado_civil || '',
-    'Estado Civil': d.estado_civil || '',
-
-    // Endereço
-    rua: d.rua_cnpj || '',
-    bairro: d.bairro_cnpj || '',
-    numero: d.numero_cnpj || '',
-    nome_da_cidade: d.cidade_cnpj || '',
-    cidade: d.cidade_cnpj || '',
-    uf: d.uf_cnpj || '',
-    cep: d.cep_cnpj || '',
 
     // Contato
-    'E-mail': d.email || '',
-    telefone: d.telefone || '',
-    'dados para contato 1': d.dados_contato_1 || '',
-    'dados para contato 2': d.dados_contato_2 || '',
-    'dados para contato 3': d.dados_contato_3 || '',
-
-    // Resultado da pesquisa prévia
-    'Risco': d.risco_agregado || '',
+    'dados_para_contato_1': d.dados_contato_1 || '',
+    'dados_para_contato_2': d.dados_contato_2 || '',
+    'dados_para_contato_3': d.dados_contato_3 || '',
 
     // PATENTE
-    'Quantidade depósitos/processos de PATENTE': d.qtd_desc.PATENTE || '',
-    'Descrição do serviço - PATENTE': d.qtd_desc.PATENTE ? '' : '',
-    'Detalhes do serviço - PATENTE': d.det.PATENTE[0] || '',
-    'Detalhes do serviço - PATENTE 2': d.det.PATENTE[1] || '',
-    'Detalhes do serviço - PATENTE 3': d.det.PATENTE[2] || '',
-    'Detalhes do serviço - PATENTE 4': d.det.PATENTE[3] || '',
-    'Detalhes do serviço - PATENTE 5': d.det.PATENTE[4] || '',
+    'quantidade_depositos_processos_de_patente': d.qtd_desc.PATENTE || '',
+    'descricao_do_servico_patente': d.qtd_desc.PATENTE ? '' : '',
+    'detalhes_do_servico_patente': d.det.PATENTE[0] || '',
+    'detalhes_do_servico_patente_2': d.det.PATENTE[1] || '',
+    'detalhes_do_servico_patente_3': d.det.PATENTE[2] || '',
+    'detalhes_do_servico_patente_4': d.det.PATENTE[3] || '',
+    'detalhes_do_servico_patente_5': d.det.PATENTE[4] || '',
 
     // DESENHO INDUSTRIAL
-    'Quantidade depósitos – DESENHO INDUSTRIAL': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
-    'Descrição do serviço - DESENHO INDUSTRIAL': (d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL']) ? '' : '',
-    'Detalhes do serviço - DESENHO INDUSTRIAL': d.det['DESENHO INDUSTRIAL'][0] || '',
-    'Detalhes do serviço - DESENHO INDUSTRIAL 2': d.det['DESENHO INDUSTRIAL'][1] || '',
-    'Detalhes do serviço - DESENHO INDUSTRIAL 3': d.det['DESENHO INDUSTRIAL'][2] || '',
-    'Detalhes do serviço - DESENHO INDUSTRIAL 4': d.det['DESENHO INDUSTRIAL'][3] || '',
-    'Detalhes do serviço - DESENHO INDUSTRIAL 5': d.det['DESENHO INDUSTRIAL'][4] || '',
+    'quantidade_depositos_processos_desenho_industrial': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
+    'descricao_do_servico_desenho_industrial': (d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL']) ? '' : '',
+    'detalhes_do_servico_desenho_industrial': d.det['DESENHO INDUSTRIAL'][0] || '',
+    'detalhes_do_servico_desenho_industrial_2': d.det['DESENHO INDUSTRIAL'][1] || '',
+    'detalhes_do_servico_desenho_industrial_3': d.det['DESENHO INDUSTRIAL'][2] || '',
+    'detalhes_do_servico_desenho_industrial_4': d.det['DESENHO INDUSTRIAL'][3] || '',
+    'detalhes_do_servico_desenho_industrial_5': d.det['DESENHO INDUSTRIAL'][4] || '',
 
     // COPYRIGHT
-    'Quantidade registros de Copyright/Direito Autoral': d.qtd_desc.COPY || '',
-    'Descrição do serviço - Copyright/Direito Autoral': d.qtd_desc.COPY ? '' : '',
-    'Detalhes do serviço - Copyright/Direito Autoral': d.det['COPYRIGHT/DIREITO AUTORAL'][0] || '',
-    'Detalhes do serviço - Copyright/Direito Autoral 2': d.det['COPYRIGHT/DIREITO AUTORAL'][1] || '',
-    'Detalhes do serviço - Copyright/Direito Autoral 3': d.det['COPYRIGHT/DIREITO AUTORAL'][2] || '',
-    'Detalhes do serviço - Copyright/Direito Autoral 4': d.det['COPYRIGHT/DIREITO AUTORAL'][3] || '',
-    'Detalhes do serviço - Copyright/Direito Autoral 5': d.det['COPYRIGHT/DIREITO AUTORAL'][4] || '',
+    'quantidade_registros_de_copyright_direito_autoral': d.qtd_desc.COPY || '',
+    'descricao_do_servico_copyright_direito_autoral': d.qtd_desc.COPY ? '' : '',
+    'detalhes_do_servico_copyright_direito_autoral': d.det['COPYRIGHT/DIREITO AUTORAL'][0] || '',
+    'detalhes_do_servico_copyright_direito_autoral_2': d.det['COPYRIGHT/DIREITO AUTORAL'][1] || '',
+    'detalhes_do_servico_copyright_direito_autoral_3': d.det['COPYRIGHT/DIREITO AUTORAL'][2] || '',
+    'detalhes_do_servico_copyright_direito_autoral_4': d.det['COPYRIGHT/DIREITO AUTORAL'][3] || '',
+    'detalhes_do_servico_copyright_direito_autoral_5': d.det['COPYRIGHT/DIREITO AUTORAL'][4] || '',
 
-    // OUTROS
-    'Quantidade registros de outros serviços': d.qtd_desc.OUTROS || '',
-    'Descrição do serviço - outros serviços': d.qtd_desc.OUTROS ? '' : '',
-    'Detalhes do serviço - outros serviços': d.det['OUTROS'][0] || '',
-    'Detalhes do serviço - outros serviços 2': d.det['OUTROS'][1] || '',
-    'Detalhes do serviço - outros serviços 3': d.det['OUTROS'][2] || '',
-    'Detalhes do serviço - outros serviços 4': d.det['OUTROS'][3] || '',
-    'Detalhes do serviço - outros serviços 5': d.det['OUTROS'][4] || '',
+    // OUTROS SERVIÇOS
+    'quantidade_registros_de_outros_servicos': d.qtd_desc.OUTROS || '',
+    'descricao_do_servico_outros_servicos': d.qtd_desc.OUTROS ? '' : '',
+    'detalhes_do_servico_outros_servicos': d.det['OUTROS'][0] || '',
+    'detalhes_do_servico_outros_servicos_2': d.det['OUTROS'][1] || '',
+    'detalhes_do_servico_outros_servicos_3': d.det['OUTROS'][2] || '',
+    'detalhes_do_servico_outros_servicos_4': d.det['OUTROS'][3] || '',
+    'detalhes_do_servico_outros_servicos_5': d.det['OUTROS'][4] || '',
 
-    // Assessoria (campos individuais mantidos para compatibilidade)
-    'Número de parcelas da Assessoria': String(d.parcelas || '1'),
-    'Valor da parcela da Assessoria': toBRL(valorParcela),
-    'Forma de pagamento da Assessoria': d.forma_pagto_assessoria || '',
-    'Data de pagamento da Assessoria': d.data_pagto_assessoria || '',
-    // [NOVO] Campo consolidado gerado pela função
-    'contrato da Assessoria': montarTextoAssessoria({
+    // Assessoria
+    'contrato_da_assessoria': montarTextoAssessoria({
       parcelas: d.parcelas || '1',
       valorParcela: toBRL(valorParcela),
       formaPagamento: d.forma_pagto_assessoria || '',
       dataPagamento: d.data_pagto_assessoria || ''
     }),
 
-    // Pesquisa (campos individuais mantidos para compatibilidade)
-    'Valor da Pesquisa': d.valor_pesquisa || 'R$ 00,00',
-    'Forma de pagamento da Pesquisa': d.forma_pesquisa || '',
-    'Data de pagamento da pesquisa': d.data_pesquisa || '00/00/00',
-    // [NOVO] Campo consolidado gerado pela função
-    // Pesquisa só se aplica a Marca, Patente ou Desenho Industrial
-    'contrato da Pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
+    // Pesquisa
+    'contrato_da_pesquisa': (d.qtd_desc.MARCA || d.qtd_desc.PATENTE || d.qtd_desc.DI)
       ? montarTextoPesquisa({
           tipoPesquisa: d.forma_pesquisa || '',
           valorPesquisa: d.valor_pesquisa || 'R$ 98,00',
@@ -2766,41 +2626,34 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
         })
       : 'Não se aplica',
 
-    // Taxa (campos individuais mantidos para compatibilidade)
-    'Valor da Taxa': d.valor_taxa_brl || '',
-    'Forma de pagamento da Taxa': d.forma_pagto_taxa || '',
-    'Data de pagamento da Taxa': d.data_pagto_taxa || '',
-    // [NOVO] Campo consolidado gerado pela função
-    'contrato financeiro': montarTextoTaxa({
+    // Taxa / Financeiro
+    'contrato_financeiro': montarTextoTaxa({
       valorTaxa: d.valor_taxa_brl || '',
       formaPagamentoTaxa: d.forma_pagto_taxa || '',
       dataPagamentoTaxa: d.data_pagto_taxa || ''
     }),
 
-    // Datas
-    Dia: dia,
-    Mês: mesExtenso,
-    Mes: mesExtenso,
-    Ano: ano,
-    Cidade: d.cidade_cnpj || '',
-    UF: d.uf_cnpj || '',
-
-    // Cláusula adicional
-    'clausula-adicional': d.clausula_adicional || '',
-
-    // [NOVO] Condições de pagamento (campo condicional)
-    // Se o campo 'Descreva Condições de Pagamento' (descreva_condi_es_de_pagamento) vier preenchido,
-    // usa esse texto; caso contrário monta o texto padrão com Taxa + Parcelas de Assessoria.
-    'Condicoes de pagamento': (() => {
+    // Condições de pagamento
+    'condicoes_de_pagamento': (() => {
       if (d.descreva_condicoes_de_pagamento && String(d.descreva_condicoes_de_pagamento).trim()) {
         return String(d.descreva_condicoes_de_pagamento).trim();
       }
       const taxa = d.valor_taxa_brl || '';
       const nParcelas = String(d.parcelas || '1');
-      const valorParcela = toBRL(parcelaNum > 0 ? valorTotalNum / parcelaNum : 0);
+      const valorParcelaCalc = toBRL(parcelaNum > 0 ? valorTotalNum / parcelaNum : 0);
       const formaPagto = d.forma_pagto_assessoria || '';
-      return `Entrada R$ ${taxa} referente a TAXA + ${nParcelas} X ${valorParcela} da assessoria no ${formaPagto}.`;
-    })()
+      return `Entrada R$ ${taxa} referente a TAXA + ${nParcelas} X ${valorParcelaCalc} da assessoria no ${formaPagto}.`;
+    })(),
+
+    // Cláusula adicional
+    'clausula-adicional': d.clausula_adicional || '',
+
+    // Datas e Local
+    'cidade': d.cidade_cnpj || '',
+    'uf':     d.uf_cnpj || '',
+    'dia':    dia,
+    'mes':    mesExtenso,
+    'ano':    ano
   };
 
   return base;
