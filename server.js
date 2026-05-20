@@ -669,6 +669,9 @@ app.post('/manual-attach/:id', async (req, res) => {
       try {
         console.log(`[MANUAL ATTACH] Baixando Contrato ${uuidContrato}...`);
         const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidContrato, { type: 'PDF', language: 'pt' });
+        if (info.name && /\.(doc|docx)$/i.test(info.name)) {
+          console.error(`[MANUAL ATTACH] ALERTA: D4Sign retornou arquivo Word (${info.name}) em vez de PDF unificado — o template não foi convertido corretamente pelo D4Sign (provável causa do documento arquivado/processando)`);
+        }
 
         // Upload para Pipefy (anexo real, não link que expira)
         const fileName = `${nomeMarca} - Contrato Assinado.pdf`;
@@ -695,6 +698,9 @@ app.post('/manual-attach/:id', async (req, res) => {
       try {
         console.log(`[MANUAL ATTACH] Baixando Procuração ${uuidProcuracao}...`);
         const info = await getDownloadUrl(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, { type: 'PDF', language: 'pt' });
+        if (info.name && /\.(doc|docx)$/i.test(info.name)) {
+          console.error(`[MANUAL ATTACH] ALERTA: D4Sign retornou arquivo Word (${info.name}) em vez de PDF unificado — o template não foi convertido corretamente pelo D4Sign (provável causa do documento arquivado/processando)`);
+        }
 
         // Upload para Pipefy (anexo real, não link que expira)
         const fileName = `${nomeMarca} - Procuração.pdf`;
@@ -3579,6 +3585,9 @@ app.post('/d4sign/postback', async (req, res) => {
         type: 'PDF',
         language: 'pt'
       });
+      if (info.name && /\.(doc|docx)$/i.test(info.name)) {
+        console.error(`[POSTBACK D4SIGN] ALERTA: D4Sign retornou arquivo Word (${info.name}) em vez de PDF unificado — o template não foi convertido corretamente pelo D4Sign`);
+      }
     } catch (e) {
       console.error('[POSTBACK D4SIGN] Erro ao buscar download:', e.message);
       return res.status(200).json({ ok: true });
@@ -5145,17 +5154,44 @@ async function processarContrato(cardId) {
   );
   if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
   console.log(`[PROCESSAR] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
+  try {
+    const statusDoc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
+    console.log(`[PROCESSAR] Status D4Sign contrato: ${JSON.stringify(statusDoc)?.substring(0, 200)}`);
+    if (String(statusDoc?.statusId) === '5') console.error(`[PROCESSAR] ALERTA: Contrato ${uuidDoc} arquivado pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
+  } catch (e) { console.warn('[PROCESSAR] Não foi possível verificar status do contrato:', e.message); }
 
   let uuidProcuracao = null;
   if (TEMPLATE_UUID_PROCURACAO) {
     try {
-      const varsProcuracao = montarVarsParaTemplateProcuracao(d, nowInfo);
+      // Grupo 2: validar contratante_1_texto antes de gerar procuração
+      // Se vazio, retenta buscar o card (race condition: Pipefy pode não ter propagado o campo ainda)
+      let dProc = d;
+      console.log(`[PROCESSAR] contratante_1_texto (${dProc.contratante_1_texto?.length || 0} chars): "${dProc.contratante_1_texto?.substring(0, 80) || ''}"`);
+      if (!dProc.contratante_1_texto) {
+        for (let tentativa = 1; tentativa <= 3; tentativa++) {
+          console.warn(`[PROCESSAR] contratante_1_texto vazio — tentativa ${tentativa}/3 re-buscando card do Pipefy em 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+          const cardFresh = await getCard(cardId);
+          dProc = await montarDados(cardFresh);
+          console.log(`[PROCESSAR] Re-tentativa ${tentativa}: contratante_1_texto (${dProc.contratante_1_texto?.length || 0} chars): "${dProc.contratante_1_texto?.substring(0, 80) || ''}"`);
+          if (dProc.contratante_1_texto) break;
+        }
+      }
+      if (!dProc.contratante_1_texto) {
+        throw new Error('contratante_1_texto permanece vazio após 3 re-tentativas — geração de procuração abortada para evitar documento com campo vazio');
+      }
+      const varsProcuracao = montarVarsParaTemplateProcuracao(dProc, nowInfo);
       uuidProcuracao = await makeDocFromWordTemplate(
         D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-        TEMPLATE_UUID_PROCURACAO, `Procuração - ${d.titulo || card.title}`, varsProcuracao
+        TEMPLATE_UUID_PROCURACAO, `Procuração - ${dProc.titulo || card.title}`, varsProcuracao
       );
       console.log(`[PROCESSAR] Procuração criada: ${uuidProcuracao} (${Date.now() - tInicio}ms)`);
-    } catch (e) { console.error('Erro procuração:', e.message); }
+      try {
+        const statusProc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao);
+        console.log(`[PROCESSAR] Status D4Sign procuração: ${JSON.stringify(statusProc)?.substring(0, 200)}`);
+        if (String(statusProc?.statusId) === '5') console.error(`[PROCESSAR] ALERTA: Procuração ${uuidProcuracao} arquivada pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
+      } catch (e) { console.warn('[PROCESSAR] Não foi possível verificar status da procuração:', e.message); }
+    } catch (e) { console.error('[PROCESSAR] Erro procuração:', e.message); }
   }
 
   const uuidTermoDeRisco = null;
