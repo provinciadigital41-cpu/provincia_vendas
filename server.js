@@ -2421,7 +2421,6 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
   const ano = String(nowInfo.ano);
 
   const cardIdStr = String(d.cardId || '');
-  console.log(`[TEMPLATE MARCA] cardId para número do contrato: ${cardIdStr}`);
 
   // ⚠️ IMPORTANTE: as chaves aqui devem ser EXATAMENTE os tokens registrados no D4Sign
   // (obtidos via GET /api/v1/templates/{id}/list — campo variables.tokens_gerais)
@@ -2551,7 +2550,6 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
   const ano = String(nowInfo.ano);
 
   const cardIdStr = String(d.cardId || '');
-  console.log(`[TEMPLATE OUTROS] cardId para número do contrato: ${cardIdStr}`);
 
   // ⚠️ Chaves EXATAS correspondentes aos tokens_gerais do D4Sign
   const base = {
@@ -2875,9 +2873,6 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
   }
 
   const body = { name_document: titleSanitized, templates: { [templateId]: varsObjValidated } };
-  
-  // LOG CRÍTICO para depuração: mostra exatamente quais chaves e valores estão indo pro D4Sign
-  console.log(`[D4SIGN PAYLOAD WORD] Enviando para template ${templateId}:`, JSON.stringify(body.templates, null, 2));
 
   const res = await fetchWithRetry(url.toString(), {
     method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
@@ -2893,59 +2888,6 @@ async function makeDocFromWordTemplate(tokenAPI, cryptKey, uuidSafe, templateId,
     throw new Error(`Falha D4Sign(WORD): ${res.status} - ${text.substring(0, 200)}`);
   }
   return json.uuid || json.uuid_document;
-}
-
-// ===============================
-// CRIAR DOCUMENTO A PARTIR DE TEMPLATE HTML NO D4SIGN
-// Endpoint: POST /api/v1/documents/{UUID-SAFE}/makedocumentbytemplate
-// Formato correto (doc oficial D4Sign):
-//   { "name_document": "...", "templates": { "<ID_TEMPLATE>": { "var": "val" } } }
-// ===============================
-async function makeDocFromHtmlTemplate(tokenAPI, cryptKey, uuidSafe, templateId, title, fieldsObj) {
-  const base = 'https://secure.d4sign.com.br';
-
-  const titleSanitized = String(title || 'Termo de Risco').replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
-
-  const fieldsObjValidated = {};
-  for (const [key, value] of Object.entries(fieldsObj || {})) {
-    let v = value == null ? '' : String(value);
-    v = v.replace(/[\x00-\x1F\x7F-\x9F]/g, '').trim();
-    fieldsObjValidated[key] = v;
-  }
-
-  // Formato correto: templates = { "<id_template>": { var: val, ... } }
-  const payload = {
-    name_document: titleSanitized,
-    templates: {
-      [templateId]: fieldsObjValidated
-    }
-  };
-
-  const url = new URL(`/api/v1/documents/${uuidSafe}/makedocumentbytemplate`, base);
-  url.searchParams.set('tokenAPI', tokenAPI);
-  url.searchParams.set('cryptKey', cryptKey);
-
-  console.log(`[D4SIGN HTML] Template: ${templateId} | Cofre: ${uuidSafe} | Título: ${titleSanitized}`);
-  console.log(`[D4SIGN HTML] Body: ${JSON.stringify(payload).substring(0, 600)}`);
-
-  const res = await fetchWithRetry(url.toString(), {
-    method: 'POST',
-    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }, { attempts: 3, baseDelayMs: 600, timeoutMs: 20000 });
-
-  const text = await res.text();
-  console.log(`[D4SIGN HTML] Resposta: status ${res.status} | body: ${text.substring(0, 500)}`);
-
-  let json; try { json = JSON.parse(text); } catch { json = null; }
-  const uuid = json && (json.uuid || json.uuid_document || json.document_uuid);
-
-  if (!uuid) {
-    throw new Error(`Falha D4Sign(HTML): status ${res.status} - ${text.substring(0, 200)}`);
-  }
-
-  console.log(`[D4SIGN HTML] ✓ Documento criado: ${uuid}`);
-  return uuid;
 }
 
 // Variáveis para o Termo de Risco (CPF e CNPJ)
@@ -3749,23 +3691,6 @@ app.post('/lead/:token/generate', async (req, res) => {
       throw new Error('Falha ao montar variáveis do template. Verifique os dados do card.');
     }
 
-    // Log para verificar se o número do contrato está sendo passado
-    console.log(`[LEAD-GENERATE] ========== DEBUG NÚMERO DO CONTRATO ==========`);
-    console.log(`[LEAD-GENERATE] card.id: ${card.id}, tipo: ${typeof card.id}`);
-    console.log(`[LEAD-GENERATE] d.cardId: ${d.cardId}, tipo: ${typeof d.cardId}`);
-    console.log(`[LEAD-GENERATE] isMarcaTemplate: ${isMarcaTemplate}`);
-    console.log(`[LEAD-GENERATE] Campo "Número do contrato do bloco físico*": ${add['Número do contrato do bloco físico*'] || 'NÃO ENCONTRADO'}`);
-    console.log(`[LEAD-GENERATE] Número do contrato no template (primeiras variações):`, {
-      'N° contrato': add['N° contrato'],
-      'Nº contrato': add['Nº contrato'],
-      'CONTRATO nº': add['CONTRATO nº'],
-      'CONTRATO nº:': add['CONTRATO nº:'],
-      'N° de contrato': add['N° de contrato'],
-      'Contrato N°': add['Contrato N°']
-    });
-    console.log(`[LEAD-GENERATE] Total de chaves no objeto add: ${Object.keys(add).length}`);
-    console.log(`[LEAD-GENERATE] =============================================`);
-
     const signers = montarSigners(d);
     if (!signers || signers.length === 0) {
       throw new Error('Nenhum signatário encontrado. Verifique se há email configurado no card.');
@@ -3807,34 +3732,6 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     // ===============================
     // CRIAR DOCUMENTOS SEQUENCIALMENTE (D4Sign tem rate limit por API key)
-    // ===============================
-    // Log das variáveis críticas sendo enviadas ao D4Sign (diagnóstico de campos em branco)
-    console.log(`[LEAD-GENERATE] ========== PAYLOAD COMPLETO PARA D4SIGN ==========`);
-    console.log(`[LEAD-GENERATE] Template UUID: ${d.templateToUse}`);
-    console.log(`[LEAD-GENERATE] Cofre UUID: ${uuidSafe}`);
-    console.log(`[LEAD-GENERATE] Vars críticas:`, {
-      'Contratante 1': add['Contratante 1']?.substring(0, 120) || '(VAZIO)',
-      'contratante_1': add['contratante_1']?.substring(0, 120) || '(VAZIO)',
-      'dados para contato 1': add['dados para contato 1'] || '(VAZIO)',
-      'Descrição do serviço - MARCA': add['Descrição do serviço - MARCA'] || '(VAZIO)',
-      'Detalhes do serviço - MARCA': add['Detalhes do serviço - MARCA'] || '(VAZIO)',
-      'Filial': add['Filial'] || '(VAZIO)',
-      'Representante': add['Representante'] || '(VAZIO)',
-      'nome_da_marca': add['nome_da_marca'] || '(VAZIO)',
-      'Valor da Taxa': add['Valor da Taxa'] || '(VAZIO)',
-      'Número de parcelas da Assessoria': add['Número de parcelas da Assessoria'] || '(VAZIO)',
-      'Cidade': add['Cidade'] || '(VAZIO)',
-      'UF': add['UF'] || '(VAZIO)',
-      'NContrato': add['NContrato'] || '(VAZIO)',
-      'clausula-adicional': add['clausula-adicional']?.substring(0, 80) || '(VAZIO)',
-      'contrato da Assessoria': add['contrato da Assessoria']?.substring(0, 80) || '(VAZIO)',
-      'total de chaves no payload': Object.keys(add).length
-    });
-    // Log de TODAS as chaves enviadas (para comparar com o template Word)
-    console.log(`[LEAD-GENERATE] Todas as chaves enviadas ao D4Sign:`, Object.keys(add).join(' | '));
-    console.log(`[LEAD-GENERATE] ==================================================`);
-
-
     let uuidDoc = null;
     try {
       uuidDoc = await makeDocFromWordTemplate(
