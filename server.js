@@ -1330,7 +1330,7 @@ function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '',
 
   if (k === 'MARCA') {
     const tipo = tipoMarca ? `, Apresentação: ${tipoMarca}` : '';
-    const classe = classeNums ? `, CLASSE: nº ${classeNums}` : '';
+    const classe = (!isAcompanhamento && classeNums) ? `, CLASSE: nº ${classeNums}` : '';
     // Normaliza risco: "Médio com Termo" → "Médio"
     // [CONDICIONAL] Quando o serviço é de acompanhamento de marca, o risco NÃO é exibido nos detalhes
     let riscoNorm = String(risco || '').trim();
