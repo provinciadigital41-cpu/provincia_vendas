@@ -1981,7 +1981,10 @@ async function montarDados(card) {
   // Cabeçalhos “SERVIÇOS” para classes
   const headersServicos = {
     h1: byKind['MARCA'][0] ? `MARCA: ${byKind['MARCA'][0].title || ''}` : '',
-    h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title || ''}` : ''
+    h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title || ''}` : '',
+    h3: byKind['MARCA'][2] ? `MARCA: ${byKind['MARCA'][2].title || ''}` : '',
+    h4: byKind['MARCA'][3] ? `MARCA: ${byKind['MARCA'][3].title || ''}` : '',
+    h5: byKind['MARCA'][4] ? `MARCA: ${byKind['MARCA'][4].title || ''}` : '',
   };
 
   // Risco agregado formatado com nome do tipo e do item
@@ -2053,6 +2056,9 @@ async function montarDados(card) {
     // MARCA 1..5: linhas e cabeçalhos do formulário
     cabecalho_servicos_1: headersServicos.h1,
     cabecalho_servicos_2: headersServicos.h2,
+    cabecalho_servicos_3: headersServicos.h3,
+    cabecalho_servicos_4: headersServicos.h4,
+    cabecalho_servicos_5: headersServicos.h5,
 
     linhas_marcas_espec_1: linhasMarcasEspec1,
     linhas_marcas_espec_2: linhasMarcasEspec2,
@@ -2523,6 +2529,27 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'marcas2espec3': d.nome2 ? (d.linhas_marcas_espec_2[2] || '') : '',
     'marcas2espec4': d.nome2 ? (d.linhas_marcas_espec_2[3] || '') : '',
     'marcas2espec5': d.nome2 ? (d.linhas_marcas_espec_2[4] || '') : '',
+
+    'cabecalhoservicos3': d.nome3 ? (d.cabecalho_servicos_3 || '') : '',
+    'marcas3espec1': d.nome3 ? (d.linhas_marcas_espec_3[0] || '') : '',
+    'marcas3espec2': d.nome3 ? (d.linhas_marcas_espec_3[1] || '') : '',
+    'marcas3espec3': d.nome3 ? (d.linhas_marcas_espec_3[2] || '') : '',
+    'marcas3espec4': d.nome3 ? (d.linhas_marcas_espec_3[3] || '') : '',
+    'marcas3espec5': d.nome3 ? (d.linhas_marcas_espec_3[4] || '') : '',
+
+    'cabecalhoservicos4': d.nome4 ? (d.cabecalho_servicos_4 || '') : '',
+    'marcas4espec1': d.nome4 ? (d.linhas_marcas_espec_4[0] || '') : '',
+    'marcas4espec2': d.nome4 ? (d.linhas_marcas_espec_4[1] || '') : '',
+    'marcas4espec3': d.nome4 ? (d.linhas_marcas_espec_4[2] || '') : '',
+    'marcas4espec4': d.nome4 ? (d.linhas_marcas_espec_4[3] || '') : '',
+    'marcas4espec5': d.nome4 ? (d.linhas_marcas_espec_4[4] || '') : '',
+
+    'cabecalhoservicos5': d.nome5 ? (d.cabecalho_servicos_5 || '') : '',
+    'marcas5espec1': d.nome5 ? (d.linhas_marcas_espec_5[0] || '') : '',
+    'marcas5espec2': d.nome5 ? (d.linhas_marcas_espec_5[1] || '') : '',
+    'marcas5espec3': d.nome5 ? (d.linhas_marcas_espec_5[2] || '') : '',
+    'marcas5espec4': d.nome5 ? (d.linhas_marcas_espec_5[3] || '') : '',
+    'marcas5espec5': d.nome5 ? (d.linhas_marcas_espec_5[4] || '') : '',
   };
 
   // Classes extras (marcas-espec_6 em diante) — marca 1
@@ -2532,6 +2559,12 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
   // Classes extras — marca 2
   for (let i = 5; i < 25; i++) {
     base[`marcas2espec${i + 1}`] = d.nome2 ? (d.linhas_marcas_espec_2[i] || '') : '';
+  }
+  // Classes extras — marcas 3, 4, 5
+  for (let i = 5; i < 25; i++) {
+    base[`marcas3espec${i + 1}`] = d.nome3 ? (d.linhas_marcas_espec_3[i] || '') : '';
+    base[`marcas4espec${i + 1}`] = d.nome4 ? (d.linhas_marcas_espec_4[i] || '') : '';
+    base[`marcas5espec${i + 1}`] = d.nome5 ? (d.linhas_marcas_espec_5[i] || '') : '';
   }
 
   return base;
