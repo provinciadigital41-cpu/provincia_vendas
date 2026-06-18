@@ -1906,9 +1906,12 @@ async function montarDados(card) {
 
   // Dados para contato 1, 2 e 3
   const dadosContato1 = [contatoNome, contatoTelefone, contatoEmail].filter(Boolean).join(' | ');
-  const dadosContato2 = hasCotitular
+  // Contato 2 aparece sempre que QUALQUER campo de contato 2 estiver preenchido,
+  // independente de cotitularidade. Mantém o fallback p/ dados de cotitular caso exista.
+  const temDadosContato2 = Boolean(nomeContato2 || contatoTelefone2 || contatoEmail2);
+  const dadosContato2 = (temDadosContato2 || hasCotitular)
     ? [
-      (nomeContato2 || cot_nome || contato2Nome_old || 'Cotitular'),
+      (nomeContato2 || cot_nome || contato2Nome_old || ''),
       (contatoTelefone2 || telefoneCotitularEnvio || contato2Telefone_old || ''),
       (contatoEmail2 || emailCotitularEnvio || contato2Email_old || '')
     ].filter(Boolean).join(' | ')
@@ -3690,16 +3693,22 @@ app.post('/lead/:token/generate', async (req, res) => {
     const uuidExistente = byCheck[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
     const uuidProcExistente = byCheck[PIPEFY_FIELD_D4_UUID_PROCURACAO] || '';
 
-    if (uuidExistente || uuidProcExistente) {
-      const uuidInfo = uuidExistente
-        ? `Contrato: ${uuidExistente}${uuidProcExistente ? `, Procuração: ${uuidProcExistente}` : ''}`
-        : `Procuração: ${uuidProcExistente}`;
-      console.log(`[LEAD-GENERATE] Double-check: Card ${cardId} já tem documentos (${uuidInfo}). Abortando para evitar duplicata.`);
+    // Gera apenas os documentos cujo UUID está ausente no card.
+    // Para regenerar só o contrato, apague o UUID do contrato; para regenerar
+    // só a procuração, apague o UUID da procuração. Documentos cujo UUID ainda
+    // existe são mantidos como estão (não são recriados).
+    const precisaContrato = !uuidExistente;
+    const precisaProcuracao = Boolean(TEMPLATE_UUID_PROCURACAO) && !uuidProcExistente;
+
+    if (!precisaContrato && !precisaProcuracao) {
+      const uuidInfo = `Contrato: ${uuidExistente}${uuidProcExistente ? `, Procuração: ${uuidProcExistente}` : ''}`;
+      console.log(`[LEAD-GENERATE] Double-check: Card ${cardId} já tem todos os documentos (${uuidInfo}). Abortando para evitar duplicata.`);
       releaseLock(lockKey);
       return res.status(200).send(`<!doctype html><meta charset="utf-8"><title>Província Marcas</title>
 <body style="font-family:sans-serif;text-align:center;padding:60px">
 <h2>Documentos já foram gerados anteriormente.</h2>
 <p>Os documentos para este card já existem no D4Sign (${uuidInfo}).</p>
+<p>Para regenerar apenas um deles, apague o UUID correspondente no Pipefy e gere novamente.</p>
 </body>`);
     }
 
@@ -3765,26 +3774,31 @@ app.post('/lead/:token/generate', async (req, res) => {
 
     // ===============================
     // CRIAR DOCUMENTOS SEQUENCIALMENTE (D4Sign tem rate limit por API key)
-    let uuidDoc = null;
-    try {
-      uuidDoc = await makeDocFromWordTemplate(
-        D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-        d.templateToUse, d.titulo || card.title || 'Contrato', add
-      );
-      if (!uuidDoc) throw new Error('Documento não foi criado.');
-      console.log(`[D4SIGN] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
+    // Mantém o UUID já existente quando o documento não precisa ser regerado.
+    let uuidDoc = uuidExistente || null;
+    if (precisaContrato) {
       try {
-        const statusDoc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-        console.log(`[D4SIGN] Status contrato logo após criação: ${JSON.stringify(statusDoc)?.substring(0, 200)}`);
-        if (String(statusDoc?.statusId) === '5') console.error(`[D4SIGN] ALERTA: Contrato ${uuidDoc} arquivado pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
-      } catch (e) { console.warn('[D4SIGN] Não foi possível verificar status do contrato:', e.message); }
-    } catch (e) {
-      console.error('[ERRO] Falha ao criar documento no D4Sign:', e.message);
-      throw new Error(`Erro ao criar documento no D4Sign: ${e.message}`);
+        uuidDoc = await makeDocFromWordTemplate(
+          D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+          d.templateToUse, d.titulo || card.title || 'Contrato', add
+        );
+        if (!uuidDoc) throw new Error('Documento não foi criado.');
+        console.log(`[D4SIGN] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
+        try {
+          const statusDoc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
+          console.log(`[D4SIGN] Status contrato logo após criação: ${JSON.stringify(statusDoc)?.substring(0, 200)}`);
+          if (String(statusDoc?.statusId) === '5') console.error(`[D4SIGN] ALERTA: Contrato ${uuidDoc} arquivado pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
+        } catch (e) { console.warn('[D4SIGN] Não foi possível verificar status do contrato:', e.message); }
+      } catch (e) {
+        console.error('[ERRO] Falha ao criar documento no D4Sign:', e.message);
+        throw new Error(`Erro ao criar documento no D4Sign: ${e.message}`);
+      }
+    } else {
+      console.log(`[LEAD-GENERATE] Contrato já existe (${uuidExistente}) — mantido. Gerando apenas os documentos faltantes.`);
     }
 
-    let uuidProcuracao = null;
-    if (TEMPLATE_UUID_PROCURACAO) {
+    let uuidProcuracao = uuidProcExistente || null;
+    if (precisaProcuracao) {
       try {
         // Validar contratante_1_texto antes de gerar procuração
         // Se vazio, retenta buscar o card (race condition: Pipefy pode não ter propagado o campo ainda)
@@ -3828,12 +3842,15 @@ app.post('/lead/:token/generate', async (req, res) => {
     const webhookUrl = `${PUBLIC_BASE_URL}/d4sign/postback`;
 
     // Webhooks no D4Sign precisam ser sequenciais (mesmo rate limit)
-    try {
-      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
-      console.log('[D4SIGN] Webhook contrato registrado.');
-    } catch (e) { console.error('[ERRO] Webhook contrato:', e.message); }
+    // Só registra/salva para os documentos que foram efetivamente (re)gerados agora.
+    if (precisaContrato && uuidDoc) {
+      try {
+        await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
+        console.log('[D4SIGN] Webhook contrato registrado.');
+      } catch (e) { console.error('[ERRO] Webhook contrato:', e.message); }
+    }
 
-    if (uuidProcuracao) {
+    if (precisaProcuracao && uuidProcuracao) {
       try {
         await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, webhookUrl);
         console.log('[D4SIGN] Webhook procuração registrado.');
@@ -3841,19 +3858,22 @@ app.post('/lead/:token/generate', async (req, res) => {
     }
 
     // Salvar UUIDs no Pipefy em paralelo (API diferente, sem rate limit)
-    const saveTasks = [
-      updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc)
-        .then(() => console.log(`[LEAD-GENERATE] UUID Contrato salvo: ${uuidDoc}`))
-        .catch(e => console.error('[ERRO] Save UUID contrato:', e.message)),
-    ];
-    if (uuidProcuracao) {
+    const saveTasks = [];
+    if (precisaContrato && uuidDoc) {
+      saveTasks.push(
+        updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc)
+          .then(() => console.log(`[LEAD-GENERATE] UUID Contrato salvo: ${uuidDoc}`))
+          .catch(e => console.error('[ERRO] Save UUID contrato:', e.message))
+      );
+    }
+    if (precisaProcuracao && uuidProcuracao) {
       saveTasks.push(
         updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao)
           .then(() => console.log(`[LEAD-GENERATE] UUID Procuração salvo: ${uuidProcuracao}`))
           .catch(e => console.error('[ERRO] Save UUID procuração:', e.message))
       );
     }
-    await Promise.all(saveTasks);
+    if (saveTasks.length) await Promise.all(saveTasks);
 
     console.log(`[LEAD-GENERATE] Total: ${Date.now() - tInicio}ms. Aguardando envio manual...`);
 
@@ -4963,12 +4983,17 @@ app.get('/novo-pipe/criar-link-confirmacao', async (req, res) => {
 async function processarContrato(cardId) {
   const card = await getCard(cardId);
 
-  // Proteção contra reprocessamento: se já existe UUID de contrato no card, ignora
+  // Proteção contra reprocessamento: gera apenas os documentos cujo UUID está
+  // ausente. Para regenerar só o contrato, apague o UUID do contrato; para
+  // regenerar só a procuração, apague o UUID da procuração.
   const by = toById(card);
   const uuidExistente = by[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
-  if (uuidExistente) {
-    console.log(`[PROCESSAR] Card ${cardId} já possui contrato gerado (${uuidExistente}). Ignorando.`);
-    return { uuidDoc: uuidExistente, uuidProcuracao: null, uuidTermoDeRisco: null };
+  const uuidProcExistente = by[PIPEFY_FIELD_D4_UUID_PROCURACAO] || '';
+  const precisaContrato = !uuidExistente;
+  const precisaProcuracao = Boolean(TEMPLATE_UUID_PROCURACAO) && !uuidProcExistente;
+  if (!precisaContrato && !precisaProcuracao) {
+    console.log(`[PROCESSAR] Card ${cardId} já possui todos os documentos (Contrato: ${uuidExistente}${uuidProcExistente ? `, Procuração: ${uuidProcExistente}` : ''}). Ignorando.`);
+    return { uuidDoc: uuidExistente, uuidProcuracao: uuidProcExistente || null, uuidTermoDeRisco: null };
   }
 
   const d = await montarDados(card);
@@ -4995,20 +5020,26 @@ async function processarContrato(cardId) {
   const tInicio = Date.now();
 
   // Criar Contrato + Procuração sequencialmente (D4Sign tem rate limit por API key)
-  const uuidDoc = await makeDocFromWordTemplate(
-    D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
-    d.templateToUse, d.titulo || card.title || 'Contrato', add
-  );
-  if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
-  console.log(`[PROCESSAR] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
-  try {
-    const statusDoc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-    console.log(`[PROCESSAR] Status D4Sign contrato: ${JSON.stringify(statusDoc)?.substring(0, 200)}`);
-    if (String(statusDoc?.statusId) === '5') console.error(`[PROCESSAR] ALERTA: Contrato ${uuidDoc} arquivado pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
-  } catch (e) { console.warn('[PROCESSAR] Não foi possível verificar status do contrato:', e.message); }
+  // Mantém o UUID já existente quando o documento não precisa ser regerado.
+  let uuidDoc = uuidExistente || null;
+  if (precisaContrato) {
+    uuidDoc = await makeDocFromWordTemplate(
+      D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidSafe,
+      d.templateToUse, d.titulo || card.title || 'Contrato', add
+    );
+    if (!uuidDoc) throw new Error('Falha ao criar documento no D4Sign.');
+    console.log(`[PROCESSAR] Contrato criado: ${uuidDoc} (${Date.now() - tInicio}ms)`);
+    try {
+      const statusDoc = await getDocumentStatus(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
+      console.log(`[PROCESSAR] Status D4Sign contrato: ${JSON.stringify(statusDoc)?.substring(0, 200)}`);
+      if (String(statusDoc?.statusId) === '5') console.error(`[PROCESSAR] ALERTA: Contrato ${uuidDoc} arquivado pelo D4Sign imediatamente após criação — possível falha de conversão do template Word`);
+    } catch (e) { console.warn('[PROCESSAR] Não foi possível verificar status do contrato:', e.message); }
+  } else {
+    console.log(`[PROCESSAR] Contrato já existe (${uuidExistente}) — mantido. Gerando apenas os documentos faltantes.`);
+  }
 
-  let uuidProcuracao = null;
-  if (TEMPLATE_UUID_PROCURACAO) {
+  let uuidProcuracao = uuidProcExistente || null;
+  if (precisaProcuracao) {
     try {
       // Grupo 2: validar contratante_1_texto antes de gerar procuração
       // Se vazio, retenta buscar o card (race condition: Pipefy pode não ter propagado o campo ainda)
@@ -5044,30 +5075,36 @@ async function processarContrato(cardId) {
   const uuidTermoDeRisco = null;
 
   // Webhooks sequenciais (D4Sign rate limit) + saves Pipefy em paralelo
+  // Só registra/salva para os documentos que foram efetivamente (re)gerados agora.
   const webhookUrl = `${PUBLIC_BASE_URL}/d4sign/postback`;
-  try {
-    await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
-  } catch (e) { console.error('Erro webhook contrato:', e.message); }
+  if (precisaContrato && uuidDoc) {
+    try {
+      await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, webhookUrl);
+    } catch (e) { console.error('Erro webhook contrato:', e.message); }
+  }
 
-  if (uuidProcuracao) {
+  if (precisaProcuracao && uuidProcuracao) {
     try {
       await registerWebhookForDocument(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidProcuracao, webhookUrl);
     } catch (e) { console.error('Erro webhook procuração:', e.message); }
   }
 
-  const saveTasks = [
-    updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc)
-      .then(() => console.log(`[PROCESSAR] UUID Contrato salvo: ${uuidDoc}`))
-      .catch(e => console.error('Erro save UUID contrato:', e.message)),
-  ];
-  if (uuidProcuracao) {
+  const saveTasks = [];
+  if (precisaContrato && uuidDoc) {
+    saveTasks.push(
+      updateCardField(cardId, PIPEFY_FIELD_D4_UUID_CONTRATO, uuidDoc)
+        .then(() => console.log(`[PROCESSAR] UUID Contrato salvo: ${uuidDoc}`))
+        .catch(e => console.error('Erro save UUID contrato:', e.message))
+    );
+  }
+  if (precisaProcuracao && uuidProcuracao) {
     saveTasks.push(
       updateCardField(cardId, PIPEFY_FIELD_D4_UUID_PROCURACAO, uuidProcuracao)
         .then(() => console.log(`[PROCESSAR] UUID Procuração salvo: ${uuidProcuracao}`))
         .catch(e => console.error('Erro save UUID procuração:', e.message))
     );
   }
-  await Promise.all(saveTasks);
+  if (saveTasks.length) await Promise.all(saveTasks);
 
   console.log(`[PROCESSAR] Total: ${Date.now() - tInicio}ms`);
   return { uuidDoc, uuidProcuracao, uuidTermoDeRisco };
