@@ -3499,6 +3499,19 @@ app.get('/lead/:token', async (req, res) => {
     const filiaisOuDigital = by['filiais_ou_digital'] || '';
     const tipoUnidade = filiaisOuDigital || 'Não informado';
 
+    // Detecta o que ainda falta gerar para rotular o botão de acordo.
+    // Mesmo critério usado em /lead/:token/generate: gera apenas o que não tem UUID.
+    const uuidContratoAtual = by[PIPEFY_FIELD_D4_UUID_CONTRATO] || '';
+    const uuidProcAtual = by[PIPEFY_FIELD_D4_UUID_PROCURACAO] || '';
+    const precisaContrato = !uuidContratoAtual;
+    const precisaProcuracao = Boolean(TEMPLATE_UUID_PROCURACAO) && !uuidProcAtual;
+    let labelGerar;
+    if (precisaContrato && precisaProcuracao) labelGerar = '📄 Gerar Contrato e Procuração';
+    else if (precisaContrato) labelGerar = '📄 Gerar Contrato';
+    else if (precisaProcuracao) labelGerar = '📋 Gerar Procuração';
+    else labelGerar = '✅ Documentos já gerados';
+    const nadaAGerar = !precisaContrato && !precisaProcuracao;
+
     const html = `
 <!doctype html><html lang="pt-BR"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -3607,7 +3620,7 @@ app.get('/lead/:token', async (req, res) => {
     <div style="margin-top:24px;padding-top:20px;border-top:2px solid #FFE200">
       <form method="POST" id="form-gerar" action="/lead/${encodeURIComponent(req.params.token)}/generate"
             onsubmit="return confirmarGerar(this)">
-        <button class="btn" type="submit" id="btn-gerar">📄 Gerar Contrato e Procuração</button>
+        <button class="btn" type="submit" id="btn-gerar" ${nadaAGerar ? 'disabled style="background:#aaa;cursor:default"' : ''}>${labelGerar}</button>
       </form>
       <script>
         // FIX: bloqueia duplo clique e resubmit por F5
@@ -3917,7 +3930,7 @@ app.post('/lead/:token/generate', async (req, res) => {
 <div class="main">
 <div class="box">
   <div class="box-header">
-    <h2>📄 ${uuidProcuracao ? 'Contrato e Procuração Gerados' : 'Contrato Gerado com Sucesso'}</h2>
+    <h2>📄 ${(precisaContrato && precisaProcuracao) ? 'Contrato e Procuração Gerados' : (precisaProcuracao ? 'Procuração Gerada com Sucesso' : 'Contrato Gerado com Sucesso')}</h2>
   </div>
   <div class="box-body">
 
@@ -3937,14 +3950,19 @@ app.post('/lead/:token/generate', async (req, res) => {
   <div class="alert-yellow">
     <strong>⚠️ Atenção:</strong> Em caso de envio por WhatsApp + Email, necessário remover no D4Sign um dos signatários para que o contrato e procuração fiquem com status finalizado; Baixar os arquivos e anexar documentos no card.
   </div>
-  <div class="row">
-    <a class="btn btn-download" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">⬇ Baixar PDF do Contrato</a>
-    <button class="btn btn-email" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">✉ Enviar por Email</button>
-    <button class="btn btn-whatsapp" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">💬 Enviar por WhatsApp</button>
-    <button class="btn btn-reenviar" onclick="reenviarContrato('${token}', '${uuidDoc}')" id="btn-reenviar-contrato" disabled>Reenviar Link (60s)</button>
+  ${(precisaContrato && uuidDoc) ? `
+  <div class="section">
+    <h3>📄 Contrato</h3>
+    <div class="row">
+      <a class="btn btn-download" href="/lead/${encodeURIComponent(token)}/doc/${encodeURIComponent(uuidDoc)}/download" target="_blank" rel="noopener">⬇ Baixar PDF do Contrato</a>
+      <button class="btn btn-email" onclick="enviarContrato('${token}', '${uuidDoc}', 'email')" id="btn-enviar-contrato-email">✉ Enviar por Email</button>
+      <button class="btn btn-whatsapp" onclick="enviarContrato('${token}', '${uuidDoc}', 'whatsapp')" id="btn-enviar-contrato-whatsapp">💬 Enviar por WhatsApp</button>
+      <button class="btn btn-reenviar" onclick="reenviarContrato('${token}', '${uuidDoc}')" id="btn-reenviar-contrato" disabled>Reenviar Link (60s)</button>
+    </div>
+    <div id="status-contrato" class="status-div"></div>
   </div>
-  <div id="status-contrato" class="status-div"></div>
-  ${uuidProcuracao ? `
+  ` : ''}
+  ${(precisaProcuracao && uuidProcuracao) ? `
   <div class="section">
     <h3>📋 Procuração</h3>
     <div class="row">
