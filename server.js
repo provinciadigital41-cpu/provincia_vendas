@@ -1924,13 +1924,13 @@ async function montarDados(card) {
     ].filter(Boolean).join(' | ')
     : '';
 
-  // Entradas consolidadas
+  // Entradas consolidadas — slotIndex preserva a posição original (0-4) de cada slot
   const entries = [
-    { kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1, temAcomp: temAcomp1, temProrrogacao: temProrrogacao1 },
-    { kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2, temAcomp: temAcomp2, temProrrogacao: temProrrogacao2 },
-    { kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3, temAcomp: temAcomp3, temProrrogacao: temProrrogacao3 },
-    { kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4, temAcomp: temAcomp4, temProrrogacao: temProrrogacao4 },
-    { kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5, temAcomp: temAcomp5, temProrrogacao: temProrrogacao5 },
+    { slotIndex: 0, kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1, temAcomp: temAcomp1, temProrrogacao: temProrrogacao1 },
+    { slotIndex: 1, kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2, temAcomp: temAcomp2, temProrrogacao: temProrrogacao2 },
+    { slotIndex: 2, kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3, temAcomp: temAcomp3, temProrrogacao: temProrrogacao3 },
+    { slotIndex: 3, kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4, temAcomp: temAcomp4, temProrrogacao: temProrrogacao4 },
+    { slotIndex: 4, kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5, temAcomp: temAcomp5, temProrrogacao: temProrrogacao5 },
   ].filter(e => String(e.title || e.stmt || '').trim());
 
   // Agrupamento por kind
@@ -1980,6 +1980,19 @@ async function montarDados(card) {
       detalhes[k][i] = cab;
     }
   });
+
+  // Detalhes indexados por slot original (0-4), independente do kind.
+  // Isso permite que no template de MARCA, serviços mistos (ex: Direitos Autorais
+  // no slot 2) tenham seus detalhes exibidos corretamente sem NCL/classes,
+  // já que normalizarCabecalhoDetalhe não inclui esses campos para kinds não-MARCA.
+  const kindCounters = {};
+  const detalhesPorSlot = Array(5).fill('');
+  for (const e of entries) {
+    if (!kindCounters[e.kind]) kindCounters[e.kind] = 0;
+    const kindIdx = kindCounters[e.kind]++;
+    detalhesPorSlot[e.slotIndex] = detalhes[e.kind][kindIdx];
+  }
+  console.log('[DEBUG] detalhesPorSlot:', JSON.stringify(detalhesPorSlot));
 
   // Cabeçalhos “SERVIÇOS” para classes
   const headersServicos = {
@@ -2088,6 +2101,10 @@ async function montarDados(card) {
 
     // Detalhes por categoria até 5
     det: detalhes,
+
+    // Detalhes por slot original (0-4) — independente do kind do serviço.
+    // Use este para templates mistos (ex: MARCA + Direitos Autorais no mesmo contrato).
+    detalhes_por_slot: detalhesPorSlot,
 
     // Classes e tipos por marca
     desc_servico_marca: descServicoPrincipal,
@@ -2459,16 +2476,18 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
     'detalhesdoservicomarca':    d.det.MARCA[0] || '',
 
     'descricaodoservicomarca2': d.nome2 ? (d.desc_servico_marca_2 || '') : '',
-    'detalhesdoservicomarca2':  d.nome2 ? (d.det.MARCA[1] || '') : '',
+    // [CORRIGIDO] Usa detalhesPorSlot para capturar o detalhe do slot 2 independente do kind
+    // (ex: Direitos Autorais no slot 2 de um contrato com MARCA no slot 1)
+    'detalhesdoservicomarca2':  d.nome2 ? (d.detalhes_por_slot[1] || '') : '',
 
     'descricaodoservicomarca3': d.nome3 ? (d.desc_servico_marca_3 || '') : '',
-    'detalhesdoservicomarca3':  d.nome3 ? (d.det.MARCA[2] || '') : '',
+    'detalhesdoservicomarca3':  d.nome3 ? (d.detalhes_por_slot[2] || '') : '',
 
     'descricaodoservicomarca4': d.nome4 ? (d.desc_servico_marca_4 || '') : '',
-    'detalhesdoservicomarca4':  d.nome4 ? (d.det.MARCA[3] || '') : '',
+    'detalhesdoservicomarca4':  d.nome4 ? (d.detalhes_por_slot[3] || '') : '',
 
     'descricaodoservicomarca5': d.nome5 ? (d.desc_servico_marca_5 || '') : '',
-    'detalhesdoservicomarca5':  d.nome5 ? (d.det.MARCA[4] || '') : '',
+    'detalhesdoservicomarca5':  d.nome5 ? (d.detalhes_por_slot[4] || '') : '',
 
     // Pagamentos — campos consolidados
     'contratodaassessoria': montarTextoAssessoria({
