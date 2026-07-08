@@ -752,6 +752,8 @@ let {
   PHASE_ID_CONTRATO_ENVIADO,
   PIPEFY_FIELD_EXTRA_CONTRATO = 'contrato',
   PIPEFY_FIELD_EXTRA_PROCURACAO = 'procura_o',
+  PIPEFY_FIELD_EXTRA_ANEXOS = 'anexos_extras',
+  PIPEFY_FIELD_EXTRA_ADITIVO = 'aditivo',
 
   // D4Sign
   D4SIGN_TOKEN,
@@ -5457,6 +5459,51 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
         return null;
       }
 
+      // Extrai TODAS as URLs de anexo de um campo (campos que aceitam múltiplos arquivos,
+      // como `anexos_extras`). Retorna um array de { url, nomeOriginal } — pode ser vazio.
+      function extrairTodosAnexos(field) {
+        if (!field) return [];
+
+        function nomeDoArquivoDaUrl(url) {
+          try {
+            const u = new URL(url);
+            const segmentos = u.pathname.split('/');
+            const nomeEncoded = segmentos[segmentos.length - 1] || '';
+            const nome = decodeURIComponent(nomeEncoded);
+            return nome && nome.includes('.') ? nome : '';
+          } catch (_) { return ''; }
+        }
+
+        const resultados = [];
+        const raw = field.value;
+        if (raw) {
+          const s = String(raw).trim();
+          if (s.startsWith('[')) {
+            try {
+              const arr = JSON.parse(s);
+              if (Array.isArray(arr)) {
+                for (const item of arr) {
+                  const url = String(item).trim();
+                  if (url.startsWith('http')) resultados.push({ url, nomeOriginal: nomeDoArquivoDaUrl(url) });
+                }
+              }
+            } catch (_) { /* ignora */ }
+          } else if (s.startsWith('http')) {
+            resultados.push({ url: s, nomeOriginal: nomeDoArquivoDaUrl(s) });
+          }
+        }
+
+        // Fallback: array_value, apenas para URLs completas
+        if (resultados.length === 0 && Array.isArray(field.array_value)) {
+          for (const item of field.array_value) {
+            const url = String(item).trim();
+            if (url.startsWith('http')) resultados.push({ url, nomeOriginal: nomeDoArquivoDaUrl(url) });
+          }
+        }
+
+        return resultados;
+      }
+
       // Verificar campo `procura_o` — Procuração (Assinado)
       const fieldProcuracao = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_PROCURACAO);
       const infoProcuracao = extrairInfoAnexo(fieldProcuracao);
@@ -5491,6 +5538,42 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
         );
       } else {
         console.log(`[WEBHOOK-ATTACH] Campo contrato vazio ou sem URL, ignorando salvamento local.`);
+      }
+
+      // Verificar campo `aditivo` — Aditivo (pode conter múltiplos arquivos)
+      const fieldAditivo = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_ADITIVO);
+      const aditivos = extrairTodosAnexos(fieldAditivo);
+
+      if (aditivos.length > 0) {
+        aditivos.forEach((anexo, i) => {
+          const { url: urlAditivo, nomeOriginal: nomeOriginalAdit } = anexo;
+          const fileName = nomeOriginalAdit || `${nomeMarca} - Aditivo ${i + 1}.pdf`;
+          console.log(`[WEBHOOK-ATTACH] Salvando aditivo localmente: ${fileName} (subpasta: ${nomeMarca})`);
+          tarefas.push(
+            saveFileLocally(urlAditivo, fileName, equipe || 'Sem_Equipe', nomeMarca)
+              .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar aditivo localmente:', e.message))
+          );
+        });
+      } else {
+        console.log(`[WEBHOOK-ATTACH] Campo aditivo vazio ou sem URL, ignorando salvamento local.`);
+      }
+
+      // Verificar campo `anexos_extras` — Anexos Extras (pode conter múltiplos arquivos)
+      const fieldAnexosExtras = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_ANEXOS);
+      const anexosExtras = extrairTodosAnexos(fieldAnexosExtras);
+
+      if (anexosExtras.length > 0) {
+        anexosExtras.forEach((anexo, i) => {
+          const { url: urlAnexo, nomeOriginal: nomeOriginalAnexo } = anexo;
+          const fileName = nomeOriginalAnexo || `${nomeMarca} - Anexo Extra ${i + 1}.pdf`;
+          console.log(`[WEBHOOK-ATTACH] Salvando anexo extra localmente: ${fileName} (subpasta: ${nomeMarca})`);
+          tarefas.push(
+            saveFileLocally(urlAnexo, fileName, equipe || 'Sem_Equipe', nomeMarca)
+              .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar anexo extra localmente:', e.message))
+          );
+        });
+      } else {
+        console.log(`[WEBHOOK-ATTACH] Campo anexos_extras vazio ou sem URL, ignorando salvamento local.`);
       }
 
       await Promise.all(tarefas);
