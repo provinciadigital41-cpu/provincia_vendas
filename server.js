@@ -754,6 +754,7 @@ let {
   PIPEFY_FIELD_EXTRA_PROCURACAO = 'procura_o',
   PIPEFY_FIELD_EXTRA_ANEXOS = 'anexos_extras',
   PIPEFY_FIELD_EXTRA_ADITIVO = 'aditivo',
+  PIPEFY_FIELD_EXTRA_FORMALIZACAO = 'formaliza_o', // Autorização (fase Visita, id 339299691)
 
   // D4Sign
   D4SIGN_TOKEN,
@@ -5512,15 +5513,21 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
       const fieldContrato = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_CONTRATO);
       const infoContrato = extrairInfoAnexo(fieldContrato);
 
+      // Subpastas dentro da pasta da marca:
+      //   Contrato → contrato + aditivo(s)
+      //   Anexos   → procuração + anexos extras + autorização (formaliza_o)
+      const SUBPASTA_CONTRATO = 'Contrato';
+      const SUBPASTA_ANEXOS = 'Anexos';
+
       const tarefas = [];
 
       if (infoProcuracao) {
         const { url: urlProcuracao, nomeOriginal: nomeOriginalProc } = infoProcuracao;
         // Usa o nome original do arquivo que vem do Pipefy; se não consegui extrair, usa fallback
         const fileName = nomeOriginalProc || `${nomeMarca} - Procuracao.pdf`;
-        console.log(`[WEBHOOK-ATTACH] Salvando procuração localmente: ${fileName} (subpasta: ${nomeMarca})`);
+        console.log(`[WEBHOOK-ATTACH] Salvando procuração localmente: ${fileName} (subpasta: ${nomeMarca}/${SUBPASTA_ANEXOS})`);
         tarefas.push(
-          saveFileLocally(urlProcuracao, fileName, equipe || 'Sem_Equipe', nomeMarca)
+          saveFileLocally(urlProcuracao, fileName, equipe || 'Sem_Equipe', nomeMarca, SUBPASTA_ANEXOS)
             .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar procuração localmente:', e.message))
         );
       } else {
@@ -5531,9 +5538,9 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
         const { url: urlContrato, nomeOriginal: nomeOriginalContr } = infoContrato;
         // Usa o nome original do arquivo que vem do Pipefy; se não consegui extrair, usa fallback
         const fileName = nomeOriginalContr || `${nomeMarca} - Contrato Assinado.pdf`;
-        console.log(`[WEBHOOK-ATTACH] Salvando contrato localmente: ${fileName} (subpasta: ${nomeMarca})`);
+        console.log(`[WEBHOOK-ATTACH] Salvando contrato localmente: ${fileName} (subpasta: ${nomeMarca}/${SUBPASTA_CONTRATO})`);
         tarefas.push(
-          saveFileLocally(urlContrato, fileName, equipe || 'Sem_Equipe', nomeMarca)
+          saveFileLocally(urlContrato, fileName, equipe || 'Sem_Equipe', nomeMarca, SUBPASTA_CONTRATO)
             .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar contrato localmente:', e.message))
         );
       } else {
@@ -5548,9 +5555,9 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
         aditivos.forEach((anexo, i) => {
           const { url: urlAditivo, nomeOriginal: nomeOriginalAdit } = anexo;
           const fileName = nomeOriginalAdit || `${nomeMarca} - Aditivo ${i + 1}.pdf`;
-          console.log(`[WEBHOOK-ATTACH] Salvando aditivo localmente: ${fileName} (subpasta: ${nomeMarca})`);
+          console.log(`[WEBHOOK-ATTACH] Salvando aditivo localmente: ${fileName} (subpasta: ${nomeMarca}/${SUBPASTA_CONTRATO})`);
           tarefas.push(
-            saveFileLocally(urlAditivo, fileName, equipe || 'Sem_Equipe', nomeMarca)
+            saveFileLocally(urlAditivo, fileName, equipe || 'Sem_Equipe', nomeMarca, SUBPASTA_CONTRATO)
               .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar aditivo localmente:', e.message))
           );
         });
@@ -5566,14 +5573,32 @@ app.post('/pipefy-webhook-attachment', async (req, res) => {
         anexosExtras.forEach((anexo, i) => {
           const { url: urlAnexo, nomeOriginal: nomeOriginalAnexo } = anexo;
           const fileName = nomeOriginalAnexo || `${nomeMarca} - Anexo Extra ${i + 1}.pdf`;
-          console.log(`[WEBHOOK-ATTACH] Salvando anexo extra localmente: ${fileName} (subpasta: ${nomeMarca})`);
+          console.log(`[WEBHOOK-ATTACH] Salvando anexo extra localmente: ${fileName} (subpasta: ${nomeMarca}/${SUBPASTA_ANEXOS})`);
           tarefas.push(
-            saveFileLocally(urlAnexo, fileName, equipe || 'Sem_Equipe', nomeMarca)
+            saveFileLocally(urlAnexo, fileName, equipe || 'Sem_Equipe', nomeMarca, SUBPASTA_ANEXOS)
               .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar anexo extra localmente:', e.message))
           );
         });
       } else {
         console.log(`[WEBHOOK-ATTACH] Campo anexos_extras vazio ou sem URL, ignorando salvamento local.`);
+      }
+
+      // Verificar campo `formaliza_o` — Autorização (fase Visita, pode conter múltiplos arquivos)
+      const fieldFormalizacao = (card.fields || []).find(f => f?.field?.id === PIPEFY_FIELD_EXTRA_FORMALIZACAO);
+      const autorizacoes = extrairTodosAnexos(fieldFormalizacao);
+
+      if (autorizacoes.length > 0) {
+        autorizacoes.forEach((anexo, i) => {
+          const { url: urlAutorizacao, nomeOriginal: nomeOriginalAutor } = anexo;
+          const fileName = nomeOriginalAutor || `${nomeMarca} - Autorizacao ${i + 1}.pdf`;
+          console.log(`[WEBHOOK-ATTACH] Salvando autorização localmente: ${fileName} (subpasta: ${nomeMarca}/${SUBPASTA_ANEXOS})`);
+          tarefas.push(
+            saveFileLocally(urlAutorizacao, fileName, equipe || 'Sem_Equipe', nomeMarca, SUBPASTA_ANEXOS)
+              .catch(e => console.error('[WEBHOOK-ATTACH] Erro ao salvar autorização localmente:', e.message))
+          );
+        });
+      } else {
+        console.log(`[WEBHOOK-ATTACH] Campo formaliza_o vazio ou sem URL, ignorando salvamento local.`);
       }
 
       await Promise.all(tarefas);
@@ -5699,7 +5724,7 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
 }
 
 // nomeMarca: nome da marca/patente do card — usado como subpasta dentro da pasta de mês/ano
-async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca) {
+async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca, subpasta) {
   const localBase = process.env.LOCAL_FOLDER_PATH;
   if (!localBase) {
     console.warn('[SAVE LOCAL] LOCAL_FOLDER_PATH não configurado. Pulando salvamento local.');
@@ -5718,8 +5743,13 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca) {
     // Subpasta com o nome da marca
     const pastaMarcaSegura = normalizeLocalPathSegment(nomeMarca, 'Sem_Marca');
 
-    // Estrutura: localBase / equipe / Ano / Mês / NomeMarca / arquivo.pdf
-    const pastaDestino = path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura);
+    // Subpasta opcional dentro da pasta da marca (ex.: "Contrato" ou "Anexos")
+    const subpastaSegura = subpasta ? normalizeLocalPathSegment(subpasta, '') : '';
+
+    // Estrutura: localBase / equipe / Ano / Mês / NomeMarca / [Subpasta] / arquivo.pdf
+    const pastaDestino = subpastaSegura
+      ? path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura, subpastaSegura)
+      : path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura);
 
     await fs.ensureDir(pastaDestino);
 
