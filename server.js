@@ -765,13 +765,6 @@ let {
   TEMPLATE_UUID_CONTRATO_OUTROS,    // Modelo de Outros Serviços
   TEMPLATE_UUID_PROCURACAO,         // Modelo de Procuração
 
-  // Zenvia (envio do link de assinatura por WhatsApp) — EM TESTE
-  ZENVIA_API_TOKEN,                 // Header X-API-TOKEN
-  ZENVIA_FROM,                      // Identificador do remetente (número/integração WhatsApp)
-  ZENVIA_TEMPLATE_ID,               // ID do template WhatsApp aprovado pela Meta
-  ZENVIA_BASE_URL,                  // Base da API Zenvia
-  D4SIGN_EMBED_HOST,                // Host do Embed da D4Sign (/embed/viewblob)
-
   // Assinatura interna
   EMAIL_ASSINATURA_EMPRESA,
 
@@ -813,8 +806,6 @@ PIPEFY_FIELD_D4_UUID_PROCURACAO = PIPEFY_FIELD_D4_UUID_PROCURACAO || 'copy_of_d4
 PIPEFY_FIELD_CONTRATO_ASSINADO_D4 = PIPEFY_FIELD_CONTRATO_ASSINADO_D4 || 'contrato_assinado_d4';
 PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 = PIPEFY_FIELD_PROCURACAO_ASSINADA_D4 || 'procura_o_assinada_d4';
 D4SIGN_BASE_URL = D4SIGN_BASE_URL || 'https://secure.d4sign.com.br/api/v1';
-ZENVIA_BASE_URL = ZENVIA_BASE_URL || 'https://api.zenvia.com';
-D4SIGN_EMBED_HOST = D4SIGN_EMBED_HOST || 'https://secure.d4sign.com.br/embed/viewblob';
 
 if (!PUBLIC_BASE_URL || !PUBLIC_LINK_SECRET) console.warn('[AVISO] Configure PUBLIC_BASE_URL e PUBLIC_LINK_SECRET');
 if (!PIPE_API_KEY) console.warn('[AVISO] PIPE_API_KEY ausente');
@@ -826,7 +817,6 @@ if (!PIPEFY_FIELD_D4_UUID_PROCURACAO) console.warn('[AVISO] PIPEFY_FIELD_D4_UUID
 if (!TEMPLATE_UUID_CONTRATO) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO (Marca) ausente');
 if (!TEMPLATE_UUID_CONTRATO_OUTROS) console.warn('[AVISO] TEMPLATE_UUID_CONTRATO_OUTROS (Outros) ausente');
 if (!TEMPLATE_UUID_PROCURACAO) console.warn('[AVISO] TEMPLATE_UUID_PROCURACAO ausente');
-if (!ZENVIA_API_TOKEN || !ZENVIA_FROM || !ZENVIA_TEMPLATE_ID) console.warn('[AVISO] Zenvia (TESTE) não totalmente configurado: ZENVIA_API_TOKEN / ZENVIA_FROM / ZENVIA_TEMPLATE_ID ausentes — o envio de teste via Zenvia vai falhar.');
 
 // Cofres mapeados por EQUIPE (campo "Equipe contrato" no Pipefy)
 // ⚠️ ATENÇÃO: as chaves DEVEM ser exatamente os valores de "Equipe contrato"
@@ -2796,26 +2786,6 @@ function montarVarsParaTemplateProcuracao(d, nowInfo) {
 }
 
 // Assinantes: principal + empresa + cotitular quando houver
-// [ZENVIA - TESTE] Normaliza telefone para o formato exigido pela Zenvia: só dígitos, com DDI, sem '+'.
-function formatPhoneForZenvia(phone) {
-  if (!phone) return '';
-  let p = String(phone).replace(/\D/g, ''); // remove tudo que não é dígito (inclui o +)
-  if (p.startsWith('0')) p = p.replace(/^0+/, '');
-  if (!p.startsWith('55')) p = '55' + p; // DDI Brasil
-  return p;
-}
-
-// [ZENVIA - TESTE] Monta o link de assinatura no modo Embed da D4Sign.
-// `identifier` = valor guardado pela D4Sign no campo email do signatário (e-mail real ou, para WhatsApp, o telefone).
-function montarLinkAssinaturaEmbed(uuidDoc, identifier, keySigner) {
-  const params = new URLSearchParams({
-    email: identifier || '',
-    disable_preview: '0'
-  });
-  if (keySigner) params.set('key_signer', keySigner);
-  return `${D4SIGN_EMBED_HOST}/${uuidDoc}?${params.toString()}`;
-}
-
 function montarSigners(d, incluirTelefone = false) {
   const list = [];
   const emailPrincipal = d.email_envio_contrato || d.email || '';
@@ -3083,57 +3053,6 @@ async function registerWebhookForDocument(tokenAPI, cryptKey, uuidDocument, urlW
   }
 
   return json;
-}
-
-// [ZENVIA - TESTE] Envia mensagem de template WhatsApp via Zenvia (API v2).
-// POST {ZENVIA_BASE_URL}/v2/channels/whatsapp/messages  (header X-API-TOKEN)
-async function enviarWhatsappZenvia({ to, fields }) {
-  if (!ZENVIA_API_TOKEN || !ZENVIA_FROM || !ZENVIA_TEMPLATE_ID) {
-    throw new Error('Integração Zenvia não configurada (ZENVIA_API_TOKEN / ZENVIA_FROM / ZENVIA_TEMPLATE_ID).');
-  }
-  if (!to) throw new Error('Telefone de destino ausente para envio via Zenvia.');
-
-  const url = `${ZENVIA_BASE_URL}/v2/channels/whatsapp/messages`;
-  const body = {
-    from: ZENVIA_FROM,
-    to, // dígitos com DDI, sem '+'
-    contents: [
-      {
-        type: 'template',
-        templateId: ZENVIA_TEMPLATE_ID,
-        fields: fields || {}
-      }
-    ]
-  };
-
-  console.log(`[ZENVIA] Enviando template ${ZENVIA_TEMPLATE_ID} para ${to}. Fields:`, JSON.stringify(fields));
-  const res = await fetchWithRetry(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'X-API-TOKEN': ZENVIA_API_TOKEN
-    },
-    body: JSON.stringify(body)
-  }, { attempts: 3, baseDelayMs: 700, timeoutMs: 20000 });
-
-  const text = await res.text();
-  if (!res.ok) {
-    console.error('[ZENVIA] Falha no envio:', res.status, text);
-    let amigavel = 'Não foi possível enviar a mensagem de WhatsApp via Zenvia.';
-    const low = String(text).toLowerCase();
-    if (res.status === 401 || res.status === 403) amigavel = 'Token da Zenvia inválido ou sem permissão.';
-    else if (low.includes('template')) amigavel = 'Template da Zenvia inválido ou não aprovado.';
-    else if (low.includes('from') || low.includes('sender') || low.includes('integration')) amigavel = 'Remetente (from) da Zenvia inválido — verifique ZENVIA_FROM.';
-    else if (res.status === 400) amigavel = 'Dados inválidos no envio Zenvia (verifique telefone e variáveis do template).';
-    const erro = new Error(amigavel);
-    erro.statusCode = res.status;
-    erro.responseText = text;
-    throw erro;
-  }
-
-  console.log('[ZENVIA] Envio OK:', String(text).substring(0, 300));
-  try { return JSON.parse(text); } catch { return { raw: text }; }
 }
 
 async function cadastrarSignatarios(tokenAPI, cryptKey, uuidDocument, signers, usarWhatsApp = false) {
@@ -4092,20 +4011,6 @@ app.post('/lead/:token/generate', async (req, res) => {
     <div id="status-termo" class="status-div"></div>
   </div>
   ` : ''}
-  ${((precisaContrato && uuidDoc) || (precisaProcuracao && uuidProcuracao) || uuidTermoDeRisco) ? `
-  <div class="section" style="border:2px dashed #d32f2f;background:#fff5f5;margin-top:24px">
-    <div style="background:#d32f2f;color:#fff;font-weight:700;font-size:13px;letter-spacing:.5px;text-transform:uppercase;padding:8px 12px;border-radius:6px;margin-bottom:12px">
-      🧪 Área de TESTE — Envio via Zenvia · NÃO UTILIZAR (em validação)
-    </div>
-    <p style="font-size:13px;color:#856404;margin:0 0 12px">Estes botões entregam o link de assinatura por WhatsApp via <strong>Zenvia</strong> (documento em modo Embed da D4Sign, sem consumir crédito de envio). Uso exclusivo para validação — <strong>não usar no atendimento real</strong> até liberação. Os botões normais de Email/WhatsApp acima continuam funcionando como sempre.</p>
-    <div class="row">
-      ${(precisaContrato && uuidDoc) ? `<button class="btn" style="background:#7b1fa2" onclick="enviarViaZenvia('${token}', '${uuidDoc}', 'contrato', 'btn-zenvia-contrato', 'status-zenvia')" id="btn-zenvia-contrato">🧪 [TESTE] Contrato via Zenvia</button>` : ''}
-      ${(precisaProcuracao && uuidProcuracao) ? `<button class="btn" style="background:#7b1fa2" onclick="enviarViaZenvia('${token}', '${uuidProcuracao}', 'procuracao', 'btn-zenvia-procuracao', 'status-zenvia')" id="btn-zenvia-procuracao">🧪 [TESTE] Procuração via Zenvia</button>` : ''}
-      ${uuidTermoDeRisco ? `<button class="btn" style="background:#7b1fa2" onclick="enviarViaZenvia('${token}', '${uuidTermoDeRisco}', 'termo_de_risco', 'btn-zenvia-termo', 'status-zenvia')" id="btn-zenvia-termo">🧪 [TESTE] Termo via Zenvia</button>` : ''}
-    </div>
-    <div id="status-zenvia" class="status-div"></div>
-  </div>
-  ` : ''}
   <div class="row" style="margin-top:24px">
     <a class="btn btn-default" href="${PUBLIC_BASE_URL}/lead/${encodeURIComponent(token)}">← Voltar</a>
   </div>
@@ -4114,35 +4019,6 @@ app.post('/lead/:token/generate', async (req, res) => {
 </div>
 <div class="footer">© Província Marcas e Patentes — <span>Pensou. Criou. Província Registrou!</span></div>
 <script>
-// [ZENVIA - TESTE] Envia o link de assinatura via Zenvia (canal=zenvia). Não interfere nos botões padrão.
-async function enviarViaZenvia(token, uuid, tipo, btnId, statusId) {
-  const btn = document.getElementById(btnId);
-  const statusDiv = document.getElementById(statusId);
-  const labels = { contrato: 'Contrato', procuracao: 'Procuração', termo_de_risco: 'Termo de Risco' };
-  const label = labels[tipo] || 'Documento';
-  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
-  if (statusDiv) statusDiv.innerHTML = '<span style="color:#7b1fa2">⏳ [TESTE] Enviando ' + label + ' via Zenvia...</span>';
-  try {
-    const response = await fetch('/lead/' + encodeURIComponent(token) + '/doc/' + encodeURIComponent(uuid) + '/send?canal=zenvia&tipo=' + encodeURIComponent(tipo), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const data = await response.json();
-    if (response.ok && data.success) {
-      const destino = (data.telefones && data.telefones.length) ? ' para: ' + data.telefones : '';
-      if (statusDiv) statusDiv.innerHTML = '<span style="color:#28a745;font-weight:600">✓ [TESTE] ' + label + ' enviado via Zenvia' + destino + '. (Embed — sem consumir crédito D4Sign)</span>';
-      if (btn) { btn.textContent = '✓ Enviado (Zenvia)'; btn.style.background = '#6c757d'; }
-    } else {
-      const errorMsg = data.message || data.detalhes || 'Erro ao enviar';
-      if (statusDiv) statusDiv.innerHTML = '<span style="color:#d32f2f;font-weight:600">✗ [TESTE Zenvia] ' + errorMsg + '</span>';
-      if (btn) { btn.disabled = false; btn.textContent = '🧪 [TESTE] ' + label + ' via Zenvia'; }
-    }
-  } catch (error) {
-    if (statusDiv) statusDiv.innerHTML = '<span style="color:#d32f2f">✗ [TESTE Zenvia] Erro: ' + error.message + '</span>';
-    if (btn) { btn.disabled = false; btn.textContent = '🧪 [TESTE] ' + label + ' via Zenvia'; }
-  }
-}
-
 async function enviarContrato(token, uuidDoc, canal) {
   const btnEmail = document.getElementById('btn-enviar-contrato-email');
   const btnWhatsapp = document.getElementById('btn-enviar-contrato-whatsapp');
@@ -4466,11 +4342,9 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Token inválido' });
   }
   const uuidDoc = req.params.uuid;
-  const canal = req.query.canal || 'email'; // 'email', 'whatsapp' ou 'zenvia' (TESTE)
+  const canal = req.query.canal || 'email'; // 'email' ou 'whatsapp'
   const tipo = req.query.tipo || null; // 'contrato' ou 'procuracao' (opcional)
-  // [ZENVIA - TESTE] 'zenvia' usa o mesmo preparo de telefone do WhatsApp, mas entrega o link via Zenvia em modo Embed.
-  const usaTelefone = (canal === 'whatsapp' || canal === 'zenvia');
-  const isZenvia = (canal === 'zenvia');
+  const usaTelefone = (canal === 'whatsapp');
 
   // Proteção contra envio duplicado
   const lockKey = `send:${cardId}:${uuidDoc}:${canal}`;
@@ -4618,7 +4492,7 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 
     if (signers && signers.length > 0) {
       try {
-        // Para WhatsApp/Zenvia, precisamos garantir que os signatários tenham telefone
+        // Para WhatsApp, precisamos garantir que os signatários tenham telefone
         if (usaTelefone) {
           const signersComTelefone = signers.filter(s => s.phone);
           if (signersComTelefone.length === 0) {
@@ -4661,13 +4535,9 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
 
       // skip_email: '1' suprime TODAS as notificações externas (embed mode) — não usar para WhatsApp.
       // A supressão do email para WhatsApp é feita via skipemail: '1' por signatário no createlist.
-      // [ZENVIA - TESTE] No canal 'zenvia' usamos modo Embed (skip_email='1'): a D4Sign NÃO dispara
-      // nada (sem consumo de crédito) e a entrega do link é feita pela Zenvia no bloco abaixo.
-      const skip_email = isZenvia ? '1' : '0';
-
       await sendToSigner(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc, {
         message: mensagem,
-        skip_email: skip_email,
+        skip_email: '0',
         workflow: '0'
       });
       console.log(`[SEND] ${isTermo ? 'Termo de Risco' : (isProcuracao ? 'Procuração' : 'Contrato')} enviado para assinatura por ${canal}:`, uuidDoc);
@@ -4729,57 +4599,6 @@ app.post('/lead/:token/doc/:uuid/send', async (req, res) => {
         } catch (waErr) {
           console.warn(`[SEND-WA] Aviso ao disparar notificações WhatsApp via resend:`, waErr.message);
           // Não bloqueia o fluxo — o documento já está no estado correto
-        }
-      }
-
-      // [ZENVIA - TESTE] Canal 'zenvia': documento foi enviado em modo Embed (skip_email='1', sem consumir
-      // crédito D4Sign). Aqui montamos o link de assinatura Embed por signatário e entregamos via Zenvia.
-      if (canal === 'zenvia') {
-        try {
-          await new Promise(r => setTimeout(r, 3000)); // aguardar D4Sign processar o sendtosigner
-          const signersData = await listSigners(D4SIGN_TOKEN, D4SIGN_CRYPT_KEY, uuidDoc);
-          console.log(`[ZENVIA-WA] Resposta listSigners:`, JSON.stringify(signersData).substring(0, 500));
-
-          let signersList = [];
-          if (Array.isArray(signersData) && signersData.length > 0 && signersData[0]?.list) {
-            const listData = signersData[0].list;
-            signersList = Array.isArray(listData) ? listData : [listData];
-          } else if (Array.isArray(signersData) && signersData.length > 0 && signersData[0]?.key_signer) {
-            signersList = signersData;
-          } else if (signersData?.list) {
-            const listData = signersData.list;
-            signersList = Array.isArray(listData) ? listData : [listData];
-          }
-          console.log(`[ZENVIA-WA] ${signersList.length} signatário(s) encontrado(s)`);
-
-          const docLabel = isProcuracao ? 'procuração' : (isTermo ? 'Termo de Risco' : 'contrato');
-          let enviados = 0;
-
-          for (const s of signersList) {
-            if (!s.key_signer) continue;
-            const emailLower = (s.email || '').toLowerCase();
-            const localSigner = signers.find(orig => (orig.email || '').toLowerCase() === emailLower && orig.phone);
-            // D4Sign guarda o telefone no campo "email" quando o signatário é cadastrado via WhatsApp.
-            const emailIsPhone = /^\+?\d{10,15}$/.test((s.email || '').replace(/\s/g, ''));
-            const whatsappNumber = s.whatsapp || s.whatsapp_number || (emailIsPhone ? s.email : null) || (localSigner ? localSigner.phone : null);
-            if (!whatsappNumber) {
-              console.log(`[ZENVIA-WA] Pulando ${s.email} (sem WhatsApp — ex.: signatário Empresa assina pelo painel D4Sign)`);
-              continue;
-            }
-            const link = montarLinkAssinaturaEmbed(uuidDoc, s.email, s.key_signer);
-            const to = formatPhoneForZenvia(whatsappNumber);
-            // Variáveis do template Zenvia (nomeadas): {{documento}} e {{link}}.
-            await enviarWhatsappZenvia({ to, fields: { documento: docLabel, link } });
-            console.log(`[ZENVIA-WA] ✓ Enviado via Zenvia para ${to} (${s.email})`);
-            enviados++;
-          }
-
-          if (enviados === 0) {
-            throw new Error('Nenhum signatário com telefone válido para envio via Zenvia.');
-          }
-        } catch (zErr) {
-          console.error(`[ZENVIA-WA] Falha no envio via Zenvia:`, zErr.message);
-          throw zErr; // em modo Zenvia a falha deve ser visível (não há fallback pela D4Sign)
         }
       }
 
