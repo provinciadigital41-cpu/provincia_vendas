@@ -9,6 +9,8 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs-extra');
 const path = require('path');
+const mailer = require('./mailer');
+const saveQueue = require('./saveQueue');
 
 const INVALID_WINDOWS_PATH_CHARS = /[<>:"/\\|?*\x00-\x1F]/g;
 const COMBINING_MARKS = /[\u0300-\u036f]/g;
@@ -5543,6 +5545,102 @@ async function uploadFileToPipefy(url, fileName, organizationId) {
 }
 
 // nomeMarca: nome da marca/patente do card — usado como subpasta dentro da pasta de mês/ano
+// Códigos de erro que indicam indisponibilidade da pasta de rede (VPN/CIFS fora).
+const CODIGOS_CONECTIVIDADE = new Set([
+  'EHOSTDOWN', 'EHOSTUNREACH', 'ESTALE', 'ENOTCONN',
+  'ETIMEDOUT', 'ECONNREFUSED', 'ENETUNREACH', 'ECONNRESET', 'EIO',
+]);
+
+/**
+ * Classificação por código de erro: 'conectividade' | 'terminal'.
+ * Usada como dica rápida (ex.: worker abortar passagem). A decisão autoritativa
+ * na hora do salvamento é feita por verificarMountSaudavel().
+ */
+function classificarErroSalvamento(err) {
+  const code = err && err.code;
+  const msg = String((err && err.message) || '').toLowerCase();
+  if (code && CODIGOS_CONECTIVIDADE.has(code)) return 'conectividade';
+  if (msg.includes('host is down') || msg.includes('host down')) return 'conectividade';
+  return 'terminal';
+}
+
+/**
+ * Verifica se a pasta de rede (LOCAL_FOLDER_PATH) está de fato gravável.
+ * Escreve/lê/remove um arquivo sentinela na raiz. Testar por escrita garante que
+ * o CIFS não está só montado stale. Retorna { saudavel, erro }.
+ */
+async function verificarMountSaudavel() {
+  const localBase = process.env.LOCAL_FOLDER_PATH;
+  if (!localBase) return { saudavel: false, erro: new Error('LOCAL_FOLDER_PATH não configurado') };
+  const sentinela = path.join(localBase, '.provincia_health');
+  try {
+    await fs.writeFile(sentinela, `ok ${new Date().toISOString()}`);
+    await fs.readFile(sentinela);
+    await fs.remove(sentinela).catch(() => {}); // remoção é best-effort
+    return { saudavel: true, erro: null };
+  } catch (e) {
+    return { saudavel: false, erro: e };
+  }
+}
+
+/** Monta o caminho de destino a partir dos metadados do documento. */
+function resolverCaminhoDestino({ fileName, equipe, nomeMarca, subpasta }) {
+  const localBase = process.env.LOCAL_FOLDER_PATH;
+  const pastaSegura = String(equipe || 'Sem_Cofre').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Cofre';
+
+  const agora = new Date();
+  const meses = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
+                 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const pastaAno = String(agora.getFullYear());
+  const pastaMes = meses[agora.getMonth()];
+
+  const pastaMarcaSegura = normalizeLocalPathSegment(nomeMarca, 'Sem_Marca');
+  const subpastaSegura = subpasta ? normalizeLocalPathSegment(subpasta, '') : '';
+
+  const pastaDestino = subpastaSegura
+    ? path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura, subpastaSegura)
+    : path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura);
+
+  const arquivoSeguro = normalizeLocalFileName(fileName, 'Documento.pdf');
+  return { pastaDestino, caminhoArquivo: path.join(pastaDestino, arquivoSeguro) };
+}
+
+/**
+ * Núcleo do salvamento: baixa o documento e grava na pasta de rede.
+ * Reutilizado pelo webhook e pelo worker de retry. Lança em caso de erro.
+ * Retorna 'salvo' ou 'existente'.
+ */
+async function salvarArquivoNoDisco(item) {
+  const { downloadUrl, fileName } = item;
+  const { pastaDestino, caminhoArquivo } = resolverCaminhoDestino(item);
+
+  await fs.ensureDir(pastaDestino);
+
+  // Se já existe localmente, não re-salva (evita re-download a cada update de campo).
+  if (await fs.pathExists(caminhoArquivo)) {
+    console.log(`[SAVE LOCAL] Arquivo já existe, ignorando: ${caminhoArquivo}`);
+    return 'existente';
+  }
+
+  const res = await fetchWithRetry(downloadUrl, { method: 'GET' }, { attempts: 3 });
+  if (!res.ok) {
+    const err = new Error(`Falha ao baixar para salvar localmente: HTTP ${res.status}`);
+    err.code = `HTTP_${res.status}`;
+    throw err;
+  }
+  const buffer = await res.arrayBuffer();
+
+  await fs.writeFile(caminhoArquivo, Buffer.from(buffer));
+  console.log(`[SAVE LOCAL] ✓ Arquivo salvo em: ${caminhoArquivo}`);
+  return 'salvo';
+}
+
+/**
+ * Ponto de entrada usado pelo webhook. Mantém a assinatura antiga.
+ * Em caso de falha: classifica (conectividade x terminal), enfileira o arquivo
+ * para reprocessamento automático e — se for erro terminal — dispara email.
+ * Nunca lança: o fluxo do webhook não pode quebrar por causa disso.
+ */
 async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca, subpasta) {
   const localBase = process.env.LOCAL_FOLDER_PATH;
   if (!localBase) {
@@ -5550,47 +5648,150 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca, sub
     return;
   }
 
+  const item = { downloadUrl, fileName, equipe: equipeNome || 'Sem_Equipe', nomeMarca, subpasta: subpasta || '' };
+
   try {
-    const pastaSegura = String(equipeNome || 'Sem_Cofre').replace(/[<>:"/\\|?*]/g, '_').trim() || 'Sem_Cofre';
+    await salvarArquivoNoDisco(item);
+  } catch (e) {
+    console.error('[SAVE LOCAL] Erro ao salvar localmente:', e.message);
 
-    const agora = new Date();
-    const meses = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
-                   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-    const pastaAno = String(agora.getFullYear());
-    const pastaMes = meses[agora.getMonth()];
+    // Decisão autoritativa: o mount está gravável agora? Se não, é conectividade.
+    const saude = await verificarMountSaudavel();
+    const categoria = saude.saudavel ? 'terminal' : 'conectividade';
 
-    // Subpasta com o nome da marca
-    const pastaMarcaSegura = normalizeLocalPathSegment(nomeMarca, 'Sem_Marca');
+    // Enfileira para reprocessamento automático (em ambos os casos).
+    let caminhoPretendido = '';
+    try { caminhoPretendido = resolverCaminhoDestino(item).caminhoArquivo; } catch { /* localBase pode ter sumido */ }
+    const enfileirado = await saveQueue.enfileirar({ ...item, ultimoErro: `${e.code || ''} ${e.message}`.trim() });
 
-    // Subpasta opcional dentro da pasta da marca (ex.: "Contrato" ou "Anexos")
-    const subpastaSegura = subpasta ? normalizeLocalPathSegment(subpasta, '') : '';
+    if (categoria === 'terminal') {
+      // Erro que não se resolve sozinho → notifica por email (com throttle por code).
+      await mailer.sendSaveErrorAlert({
+        fileName,
+        marca: nomeMarca,
+        equipe: equipeNome,
+        downloadUrl,
+        destino: caminhoPretendido,
+        erro: e,
+        tentativas: enfileirado ? enfileirado.tentativas : 0,
+      });
+    } else {
+      // Conectividade: sem email por arquivo. O monitor avisa a queda geral 1x.
+      console.warn('[SAVE LOCAL] Falha de conectividade — arquivo enfileirado; alerta será agregado pelo monitor.');
+    }
+  }
+}
 
-    // Estrutura: localBase / equipe / Ano / Mês / NomeMarca / [Subpasta] / arquivo.pdf
-    const pastaDestino = subpastaSegura
-      ? path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura, subpastaSegura)
-      : path.join(localBase, pastaSegura, pastaAno, pastaMes, pastaMarcaSegura);
+/* =========================
+ * Fila de retry + Monitor de conectividade VPS↔VPN
+ * =======================*/
+const SAVE_RETRY_INTERVAL_MS = Number(process.env.SAVE_RETRY_INTERVAL_MS) || 300000;     // 5 min
+const CONNECTIVITY_CHECK_INTERVAL_MS = Number(process.env.CONNECTIVITY_CHECK_INTERVAL_MS) || 3600000; // 1 h
+const SAVE_QUEUE_MAX_ATTEMPTS = Number(process.env.SAVE_QUEUE_MAX_ATTEMPTS) || 10;
 
-    await fs.ensureDir(pastaDestino);
+// Estado do monitor (em memória): 'desconhecido' | 'online' | 'offline'
+let estadoConexao = 'desconhecido';
+let offlineDesde = null;
 
-    const arquivoSeguro = normalizeLocalFileName(fileName, 'Documento.pdf');
-    const caminhoArquivo = path.join(pastaDestino, arquivoSeguro);
+let _workerEmExecucao = false;
 
-    // Se o arquivo já existe localmente, não faz nada — evita re-salvar em cada atualização de campo
-    const jaExiste = await fs.pathExists(caminhoArquivo);
-    if (jaExiste) {
-      console.log(`[SAVE LOCAL] Arquivo já existe, ignorando: ${caminhoArquivo}`);
+/**
+ * Worker de retry: reprocessa a fila quando a pasta de rede está gravável.
+ * Idempotente/reentrante-safe. Também é disparado quando a conexão volta.
+ */
+async function processarFilaSalvamento() {
+  if (_workerEmExecucao) return;
+  _workerEmExecucao = true;
+  try {
+    const pendentes = await saveQueue.listarPendentes();
+    if (pendentes.length === 0) return;
+
+    // Só reprocessa se o mount estiver saudável — senão não adianta.
+    const saude = await verificarMountSaudavel();
+    if (!saude.saudavel) {
+      console.warn(`[SAVE QUEUE] ${pendentes.length} pendente(s), mas pasta de rede indisponível. Aguardando.`);
       return;
     }
 
-    const res = await fetchWithRetry(downloadUrl, { method: 'GET' }, { attempts: 3 });
-    if (!res.ok) throw new Error(`Falha ao baixar para salvar localmente: ${res.status}`);
-    const buffer = await res.arrayBuffer();
+    console.log(`[SAVE QUEUE] Reprocessando ${pendentes.length} item(ns) pendente(s)...`);
+    for (const item of pendentes) {
+      try {
+        await salvarArquivoNoDisco(item);
+        await saveQueue.remover(item.id);
+        console.log(`[SAVE QUEUE] ✓ Reprocessado e removido: ${item.fileName} (id=${item.id})`);
+      } catch (e) {
+        const categoria = classificarErroSalvamento(e);
+        const tentativas = (item.tentativas || 0) + 1;
+        await saveQueue.atualizar(item.id, {
+          tentativas,
+          ultimoErro: `${e.code || ''} ${e.message}`.trim(),
+          ultimaTentativaEm: new Date().toISOString(),
+        });
 
-    await fs.writeFile(caminhoArquivo, Buffer.from(buffer));
-    console.log(`[SAVE LOCAL] ✓ Arquivo salvo em: ${caminhoArquivo}`);
+        if (categoria === 'conectividade') {
+          // Mount caiu no meio da passagem — para e tenta de novo depois.
+          console.warn('[SAVE QUEUE] Conectividade caiu durante o reprocessamento. Abortando passagem.');
+          return;
+        }
+
+        // Erro terminal persistente: avisa uma vez ao estourar o limite; mantém na fila.
+        if (tentativas >= SAVE_QUEUE_MAX_ATTEMPTS) {
+          await mailer.sendQueueGaveUpAlert({ item: { ...item, tentativas, ultimoErro: `${e.code || ''} ${e.message}`.trim() } });
+        }
+      }
+    }
   } catch (e) {
-    console.error('[SAVE LOCAL] Erro ao salvar localmente:', e.message);
+    console.error('[SAVE QUEUE] Erro na passagem do worker:', e.message);
+  } finally {
+    _workerEmExecucao = false;
   }
+}
+
+/**
+ * Monitor de conectividade: a cada hora testa a pasta de rede e envia email
+ * apenas nas transições online→offline e offline→online.
+ */
+async function verificarConectividade() {
+  const localBase = process.env.LOCAL_FOLDER_PATH;
+  if (!localBase) return; // salvamento local desativado; nada a monitorar
+
+  const saude = await verificarMountSaudavel();
+  const novoEstado = saude.saudavel ? 'online' : 'offline';
+
+  if (novoEstado === estadoConexao) return; // sem transição → sem email
+
+  const estadoAnterior = estadoConexao;
+  estadoConexao = novoEstado;
+
+  if (novoEstado === 'offline') {
+    offlineDesde = Date.now();
+    console.error('[CONN MONITOR] 🔴 Pasta de rede indisponível.');
+    await mailer.sendConnectivityDownAlert({ erro: saude.erro, mountPath: localBase });
+  } else {
+    // online: só alerta se veio de um offline conhecido (evita "recuperação" no boot).
+    console.log('[CONN MONITOR] 🟢 Pasta de rede disponível.');
+    if (estadoAnterior === 'offline') {
+      await mailer.sendConnectivityUpAlert({ mountPath: localBase, foraDesde: offlineDesde });
+    }
+    offlineDesde = null;
+    // Conexão (re)estabelecida → tenta esvaziar a fila imediatamente.
+    processarFilaSalvamento().catch(e => console.error('[SAVE QUEUE] Erro ao disparar retry pós-recuperação:', e.message));
+  }
+}
+
+function iniciarFilaEMonitor() {
+  if (!process.env.LOCAL_FOLDER_PATH) {
+    console.warn('[BOOT] LOCAL_FOLDER_PATH não configurado — fila de retry e monitor de conectividade desativados.');
+    return;
+  }
+  console.log(`[BOOT] Fila de retry a cada ${SAVE_RETRY_INTERVAL_MS}ms; monitor de conectividade a cada ${CONNECTIVITY_CHECK_INTERVAL_MS}ms; fila em ${saveQueue.QUEUE_FOLDER_PATH}`);
+
+  // Checagem inicial pouco depois do boot (dá tempo do mount montar).
+  setTimeout(() => { verificarConectividade().catch(() => {}); }, 15000);
+  setTimeout(() => { processarFilaSalvamento().catch(() => {}); }, 20000);
+
+  setInterval(() => { verificarConectividade().catch(e => console.error('[CONN MONITOR] erro:', e.message)); }, CONNECTIVITY_CHECK_INTERVAL_MS);
+  setInterval(() => { processarFilaSalvamento().catch(e => console.error('[SAVE QUEUE] erro:', e.message)); }, SAVE_RETRY_INTERVAL_MS);
 }
 
 /* =========================
@@ -5614,4 +5815,5 @@ app.listen(PORT, () => {
     }
   });
   console.log('[rotas-registradas]'); list.sort().forEach(r => console.log('  -', r));
+  iniciarFilaEMonitor();
 });
