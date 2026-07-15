@@ -12,3 +12,6 @@ npm-debug.log*
 # Artefatos de SO / editor
 .DS_Store
 Thumbs.db
+
+# Documentos internos de brainstorming/specs (não versionados)
+docs/superpowers/
