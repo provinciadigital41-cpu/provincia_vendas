@@ -205,8 +205,26 @@ async function sendQueueGaveUpAlert({ item }) {
   });
 }
 
+/** Envio de teste sob demanda (para validar entrega SMTP). Sem throttle. */
+async function sendTestEmail() {
+  const enviou = await enviarEmail({
+    subject: '[Provincia] ✅ Teste de envio de alertas',
+    text: [
+      'Este é um email de TESTE do sistema de alertas de salvamento local.',
+      '',
+      linha('Horário', agoraSP()),
+      linha('Remetente', fromAddr),
+      linha('Destinatário(s)', ALERT_EMAIL_TO),
+      '',
+      'Se você recebeu esta mensagem, a entrega SMTP está funcionando.',
+    ].join('\n'),
+  });
+  return { enviou, enabled, from: fromAddr, to: ALERT_EMAIL_TO };
+}
+
 module.exports = {
   enabled,
+  sendTestEmail,
   sendSaveErrorAlert,
   sendConnectivityDownAlert,
   sendConnectivityUpAlert,

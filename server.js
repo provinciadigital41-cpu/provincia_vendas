@@ -5459,6 +5459,17 @@ app.get('/debug/card', async (req, res) => {
 });
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+// [TEMPORÁRIO] Dispara um email de teste para validar a entrega SMTP.
+// Remover depois de confirmar que os alertas chegam.
+app.get('/debug/test-email', async (_req, res) => {
+  try {
+    const r = await mailer.sendTestEmail();
+    res.json({ ok: r.enviou, ...r });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ===============================
 // NOVO — Upload de arquivo para o Pipefy
 // ===============================
