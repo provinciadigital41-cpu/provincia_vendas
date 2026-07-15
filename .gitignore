@@ -1,0 +1,14 @@
+# Dependências (reconstruídas com `npm install` a partir do package-lock.json)
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Variáveis de ambiente locais (segredos — NUNCA commitar)
+.env
+.env.*
+
+# Artefatos de SO / editor
+.DS_Store
+Thumbs.db
