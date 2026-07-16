@@ -5660,23 +5660,14 @@ async function saveFileLocally(downloadUrl, fileName, equipeNome, nomeMarca, sub
     const categoria = saude.saudavel ? 'terminal' : 'conectividade';
 
     // Enfileira para reprocessamento automático (em ambos os casos).
-    let caminhoPretendido = '';
-    try { caminhoPretendido = resolverCaminhoDestino(item).caminhoArquivo; } catch { /* localBase pode ter sumido */ }
     const enfileirado = await saveQueue.enfileirar({ ...item, ultimoErro: `${e.code || ''} ${e.message}`.trim() });
 
+    // Nenhum email é disparado aqui. O arquivo entra na fila e só gera alerta
+    // ("precisa de atenção manual") se estourar SAVE_QUEUE_MAX_ATTEMPTS tentativas
+    // de reprocessamento — e, nesse caso, apenas uma vez (ver processarFilaSalvamento).
     if (categoria === 'terminal') {
-      // Erro que não se resolve sozinho → notifica por email (com throttle por code).
-      await mailer.sendSaveErrorAlert({
-        fileName,
-        marca: nomeMarca,
-        equipe: equipeNome,
-        downloadUrl,
-        destino: caminhoPretendido,
-        erro: e,
-        tentativas: enfileirado ? enfileirado.tentativas : 0,
-      });
+      console.warn(`[SAVE LOCAL] Erro terminal — arquivo enfileirado (id=${enfileirado ? enfileirado.id : '?'}). Alerta só após ${SAVE_QUEUE_MAX_ATTEMPTS} tentativas.`);
     } else {
-      // Conectividade: sem email por arquivo. O monitor avisa a queda geral 1x.
       console.warn('[SAVE LOCAL] Falha de conectividade — arquivo enfileirado; alerta será agregado pelo monitor.');
     }
   }
@@ -5722,22 +5713,24 @@ async function processarFilaSalvamento() {
       } catch (e) {
         const categoria = classificarErroSalvamento(e);
         const tentativas = (item.tentativas || 0) + 1;
-        await saveQueue.atualizar(item.id, {
-          tentativas,
-          ultimoErro: `${e.code || ''} ${e.message}`.trim(),
-          ultimaTentativaEm: new Date().toISOString(),
-        });
+        const ultimoErro = `${e.code || ''} ${e.message}`.trim();
+        const patch = { tentativas, ultimoErro, ultimaTentativaEm: new Date().toISOString() };
 
         if (categoria === 'conectividade') {
           // Mount caiu no meio da passagem — para e tenta de novo depois.
+          await saveQueue.atualizar(item.id, patch);
           console.warn('[SAVE QUEUE] Conectividade caiu durante o reprocessamento. Abortando passagem.');
           return;
         }
 
-        // Erro terminal persistente: avisa uma vez ao estourar o limite; mantém na fila.
-        if (tentativas >= SAVE_QUEUE_MAX_ATTEMPTS) {
-          await mailer.sendQueueGaveUpAlert({ item: { ...item, tentativas, ultimoErro: `${e.code || ''} ${e.message}`.trim() } });
+        // Erro terminal persistente: avisa UMA ÚNICA vez ao estourar o limite.
+        // O flag avisadoAtencao é persistido no item; mesmo que as tentativas
+        // continuem subindo (11, 16, 23...) ou o app reinicie, o email não repete.
+        if (tentativas >= SAVE_QUEUE_MAX_ATTEMPTS && !item.avisadoAtencao) {
+          patch.avisadoAtencao = true;
+          await mailer.sendQueueGaveUpAlert({ item: { ...item, tentativas, ultimoErro } });
         }
+        await saveQueue.atualizar(item.id, patch);
       }
     }
   } catch (e) {

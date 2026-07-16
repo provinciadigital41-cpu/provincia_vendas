@@ -105,39 +105,6 @@ function linha(label, valor) {
   return `${label}: ${valor == null || valor === '' ? '—' : valor}`;
 }
 
-/**
- * Alerta de erro TERMINAL ao salvar um arquivo localmente (não é queda de conexão).
- * Throttle por código de erro para não repetir em rajada.
- */
-async function sendSaveErrorAlert({ fileName, marca, equipe, downloadUrl, destino, erro, tentativas }) {
-  const code = (erro && (erro.code || 'SEM_CODE')) || 'SEM_CODE';
-  const msg = (erro && erro.message) || String(erro);
-  const stack = (erro && erro.stack) ? String(erro.stack).split('\n').slice(0, 5).join('\n') : '';
-
-  const corpo = [
-    '⚠️  Falha ao salvar documento localmente (erro que precisa de correção).',
-    '',
-    linha('Horário', agoraSP()),
-    linha('Arquivo', fileName),
-    linha('Marca', marca),
-    linha('Equipe', equipe),
-    linha('URL de origem', downloadUrl),
-    linha('Destino pretendido', destino),
-    linha('Erro (code)', code),
-    linha('Mensagem', msg),
-    linha('Tentativas até agora', tentativas),
-    '',
-    'O arquivo foi colocado na fila de reprocessamento e será tentado novamente automaticamente.',
-    stack ? `\nStack (resumido):\n${stack}` : '',
-  ].join('\n');
-
-  return enviarEmail({
-    subject: `[Provincia] Falha ao salvar "${fileName}" (${code})`,
-    text: corpo,
-    throttleKey: `save-error:${code}`,
-  });
-}
-
 /** Alerta: a comunicação com a VPN/mount caiu (transição online→offline). */
 async function sendConnectivityDownAlert({ erro, mountPath }) {
   const msg = (erro && erro.message) || String(erro || 'desconhecido');
@@ -187,6 +154,7 @@ async function sendQueueGaveUpAlert({ item }) {
   const corpo = [
     '⛔ Um documento na fila de reprocessamento excedeu o máximo de tentativas.',
     'Ele PERMANECE na fila para inspeção manual (não foi descartado).',
+    'Este é o ÚNICO aviso para este documento — não haverá repetições.',
     '',
     linha('Horário', agoraSP()),
     linha('Arquivo', item.fileName),
@@ -196,6 +164,10 @@ async function sendQueueGaveUpAlert({ item }) {
     linha('Tentativas', item.tentativas),
     linha('Último erro', item.ultimoErro),
     linha('ID na fila', item.id),
+    '',
+    'Depois de corrigir manualmente, para PARAR as tentativas remova o item da fila na VPS:',
+    `  rm /opt/provincia/save-queue/${item.id}.json`,
+    '(enquanto o item existir, a fila segue tentando reprocessá-lo a cada 5 min.)',
   ].join('\n');
 
   return enviarEmail({
@@ -207,7 +179,6 @@ async function sendQueueGaveUpAlert({ item }) {
 
 module.exports = {
   enabled,
-  sendSaveErrorAlert,
   sendConnectivityDownAlert,
   sendConnectivityUpAlert,
   sendQueueGaveUpAlert,
