@@ -5552,6 +5552,21 @@ const CODIGOS_CONECTIVIDADE = new Set([
 ]);
 
 /**
+ * Arquivo-âncora: existe SOMENTE dentro do compartilhamento de rede real, criado
+ * uma única vez na mão. Quando o CIFS cai, o ponto de montagem volta a ser uma
+ * pasta local comum — vazia, mas perfeitamente gravável. Sem a âncora não há como
+ * distinguir os dois casos, e o salvamento "dá certo" no lugar errado em silêncio.
+ */
+const ANCORA_NOME = process.env.MOUNT_ANCHOR_FILE || '.provincia_anchor';
+
+/** Erro de mount ausente, com código que o classificador trata como conectividade. */
+function erroMountAusente(localBase) {
+  const err = new Error(`Pasta de rede não montada: âncora "${ANCORA_NOME}" não encontrada em ${localBase}`);
+  err.code = 'ENOTCONN';
+  return err;
+}
+
+/**
  * Classificação por código de erro: 'conectividade' | 'terminal'.
  * Usada como dica rápida (ex.: worker abortar passagem). A decisão autoritativa
  * na hora do salvamento é feita por verificarMountSaudavel().
@@ -5565,13 +5580,23 @@ function classificarErroSalvamento(err) {
 }
 
 /**
- * Verifica se a pasta de rede (LOCAL_FOLDER_PATH) está de fato gravável.
- * Escreve/lê/remove um arquivo sentinela na raiz. Testar por escrita garante que
- * o CIFS não está só montado stale. Retorna { saudavel, erro }.
+ * Verifica se a pasta de rede (LOCAL_FOLDER_PATH) é o compartilhamento real E está
+ * gravável. Duas checagens, nesta ordem: a âncora prova que o CIFS está montado
+ * (pasta local vazia não a tem); o sentinela prova que dá para escrever (o mount
+ * pode estar montado porém stale). Retorna { saudavel, erro }.
  */
 async function verificarMountSaudavel() {
   const localBase = process.env.LOCAL_FOLDER_PATH;
   if (!localBase) return { saudavel: false, erro: new Error('LOCAL_FOLDER_PATH não configurado') };
+
+  try {
+    if (!(await fs.pathExists(path.join(localBase, ANCORA_NOME)))) {
+      return { saudavel: false, erro: erroMountAusente(localBase) };
+    }
+  } catch (e) {
+    return { saudavel: false, erro: e };
+  }
+
   const sentinela = path.join(localBase, '.provincia_health');
   try {
     await fs.writeFile(sentinela, `ok ${new Date().toISOString()}`);
@@ -5612,6 +5637,16 @@ function resolverCaminhoDestino({ fileName, equipe, nomeMarca, subpasta }) {
  */
 async function salvarArquivoNoDisco(item) {
   const { downloadUrl, fileName } = item;
+  const localBase = process.env.LOCAL_FOLDER_PATH;
+  if (!localBase) throw new Error('LOCAL_FOLDER_PATH não configurado');
+
+  // Guard obrigatório ANTES do ensureDir: sem a âncora o mount caiu, e o ensureDir
+  // criaria a árvore inteira no disco local do container, fazendo o salvamento
+  // "dar certo" fora do servidor de arquivos. Falhar aqui manda o item para a fila.
+  if (!(await fs.pathExists(path.join(localBase, ANCORA_NOME)))) {
+    throw erroMountAusente(localBase);
+  }
+
   const { pastaDestino, caminhoArquivo } = resolverCaminhoDestino(item);
 
   await fs.ensureDir(pastaDestino);
@@ -5630,7 +5665,18 @@ async function salvarArquivoNoDisco(item) {
   }
   const buffer = await res.arrayBuffer();
 
-  await fs.writeFile(caminhoArquivo, Buffer.from(buffer));
+  // Grava em arquivo temporário e renomeia. Com o CIFS montado 'soft', uma queda
+  // no meio da escrita deixaria um PDF truncado no destino final — e a checagem
+  // pathExists acima passaria a tratá-lo como válido para sempre. rename é atômico.
+  const temporario = `${caminhoArquivo}.parcial-${process.pid}-${Date.now()}`;
+  try {
+    await fs.writeFile(temporario, Buffer.from(buffer));
+    await fs.rename(temporario, caminhoArquivo);
+  } catch (e) {
+    await fs.remove(temporario).catch(() => {}); // não deixa lixo no share
+    throw e;
+  }
+
   console.log(`[SAVE LOCAL] ✓ Arquivo salvo em: ${caminhoArquivo}`);
   return 'salvo';
 }
