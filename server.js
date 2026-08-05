@@ -2096,16 +2096,26 @@ async function montarDados(card) {
   }
   console.log('[DEBUG] detalhesPorSlot:', JSON.stringify(detalhesPorSlot));
 
+  // Entradas indexadas pelo slot original (0-4) — mesma base de índice usada por
+  // classes_agrupadas_N / linhas_marcas_espec_N.
+  const entryPorSlot = Array(5).fill(null);
+  for (const e of entries) entryPorSlot[e.slotIndex] = e;
+
   // Cabeçalhos “SERVIÇOS” para classes
   // [ATUALIZADO] Só aparece quando o slot tem NCL/especificações (pedido de registro de marca);
   // caso contrário o quadro de classes fica inteiramente vazio no contrato.
-  const headerClasses = (e) => (e && e.temNcl) ? `MARCA: ${e.title || ''}` : '';
+  // [CORRIGIDO] Indexado por SLOT, não pela posição dentro de byKind['MARCA']. As arrays
+  // classes_agrupadas_N/linhas_marcas_espec_N são por slot; usar o índice de byKind
+  // desalinhava cabeçalho e classes sempre que um slot anterior é de outro kind
+  // (ex.: acompanhamento de patente no slot 1 + pedido de registro de marca no slot 2 —
+  // o cabeçalho saía no bloco 1, vazio, e as classes no bloco 2, sem cabeçalho).
+  const headerClasses = (e) => (e && e.kind === 'MARCA' && e.temNcl) ? `MARCA: ${e.title || ''}` : '';
   const headersServicos = {
-    h1: headerClasses(byKind['MARCA'][0]),
-    h2: headerClasses(byKind['MARCA'][1]),
-    h3: headerClasses(byKind['MARCA'][2]),
-    h4: headerClasses(byKind['MARCA'][3]),
-    h5: headerClasses(byKind['MARCA'][4]),
+    h1: headerClasses(entryPorSlot[0]),
+    h2: headerClasses(entryPorSlot[1]),
+    h3: headerClasses(entryPorSlot[2]),
+    h4: headerClasses(entryPorSlot[3]),
+    h5: headerClasses(entryPorSlot[4]),
   };
 
   // Risco agregado formatado com nome do tipo e do item
@@ -2578,7 +2588,10 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
     // Descrição dos serviços por marca
     'descricaodoservicomarca':   d.desc_servico_marca_1 || '',
-    'detalhesdoservicomarca':    d.det.MARCA[0] || '',
+    // [CORRIGIDO] Usa detalhes_por_slot como os slots 2..5. Com d.det.MARCA[0] o slot 1
+    // recebia o detalhe da 1ª marca do contrato mesmo quando o slot 1 era de outro kind
+    // (ex.: acompanhamento de patente), duplicando a marca e sumindo com a patente.
+    'detalhesdoservicomarca':    d.detalhes_por_slot[0] || '',
 
     'descricaodoservicomarca2': d.nome2 ? (d.desc_servico_marca_2 || '') : '',
     // [CORRIGIDO] Usa detalhesPorSlot para capturar o detalhe do slot 2 independente do kind
