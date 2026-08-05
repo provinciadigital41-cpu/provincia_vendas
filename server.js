@@ -2022,20 +2022,33 @@ async function montarDados(card) {
   entries.forEach(e => byKind[e.kind].push(e));
 
   // Linhas “quantidade + descrição” (sem normalizar o texto do serviço)
+  // [ATUALIZADO] Segue o padrão do template de MARCA: cada serviço distinto da categoria
+  // aparece com a própria contagem, em vez de somar tudo sob o texto do primeiro item.
+  // Ex.: 2 pedidos de patente + 1 acompanhamento →
+  //   "2 PEDIDO DE PATENTE JUNTO AO INPI E 1 ACOMPANHAMENTO DE PATENTE JUNTO AO INPI"
+  // Com um único serviço distinto a saída é idêntica ao comportamento anterior.
+  const baseServicoDoItem = (kind, e) => {
+    // Prorrogação de marca (via flag ou texto) usa texto padronizado
+    if (kind === 'MARCA' && (e.temProrrogacao || /prorrog|renova|decen/i.test(String(e.stmt || '')))) {
+      return 'PEDIDO DE PRORROGAÇÃO DE MARCA';
+    }
+    return String(e.stmt || '').trim() || (kind === 'MARCA' ? 'Registro de Marca' : kind);
+  };
   const makeQtdDescLine = (kind, arr) => {
     if (!arr.length) return '';
-    // Se QUALQUER item do slot for prorrogação de marca (via flag ou texto), usa texto padronizado
-    const slotTemProrrogacao = kind === 'MARCA' && arr.some(e =>
-      e.temProrrogacao || /prorrog|renova|decen/i.test(String(e.stmt || ''))
-    );
-    let baseServico;
-    if (slotTemProrrogacao) {
-      baseServico = 'PEDIDO DE PRORROGAÇÃO DE MARCA';
-    } else {
-      baseServico = String(arr[0].stmt || '').trim() || (kind === 'MARCA' ? 'Registro de Marca' : kind);
+    // Agrupa por serviço distinto preservando a ordem de primeira aparição.
+    // A chave normaliza caixa/espaços (variações de grafia do Pipefy), mas o texto
+    // exibido é o da primeira ocorrência — sem normalizar o serviço no contrato.
+    const grupos = [];
+    const porChave = new Map();
+    for (const e of arr) {
+      const servico = baseServicoDoItem(kind, e);
+      const chave = servico.toUpperCase().replace(/\s+/g, ' ');
+      let g = porChave.get(chave);
+      if (!g) { g = { servico, qtd: 0 }; porChave.set(chave, g); grupos.push(g); }
+      g.qtd++;
     }
-    const qtd = arr.length;
-    return `${qtd} ${baseServico} JUNTO AO INPI`;
+    return grupos.map(g => `${g.qtd} ${g.servico} JUNTO AO INPI`).join(' E ');
   };
   const qtdDesc = {
     MARCA: makeQtdDescLine('MARCA', byKind['MARCA']),
@@ -2686,7 +2699,11 @@ function montarVarsParaTemplateMarca(d, nowInfo) {
 
 
 // Outros
-// Outros
+// [ATUALIZADO] Segue o mesmo padrão do template de MARCA: não existe mais token de
+// quantidade separado — 'descricaodoservico*' carrega a frase completa
+// "{N} {SERVIÇO} JUNTO AO INPI" (montada por makeQtdDescLine), seguida das linhas de
+// detalhe. A diferença para a marca é o agrupamento: aqui os blocos são por categoria
+// (PATENTE / DESENHO INDUSTRIAL / COPYRIGHT / OUTROS), lá são por slot (1..5).
 function montarVarsParaTemplateOutros(d, nowInfo) {
   const valorTotalNum = onlyNumberBR(d.valor_total);
   const parcelaNum = parseInt(String(d.parcelas || '1'), 10) || 1;
@@ -2718,8 +2735,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'dadosparacontato3': d.dados_contato_3 || '',
 
     // PATENTE
-    'quantidadedepositosprocessosdepatente': d.qtd_desc.PATENTE || '',
-    'descricaodoservicopatente': d.qtd_desc.PATENTE ? '' : '',
+    'descricaodoservicopatente': d.qtd_desc.PATENTE || '',
     'detalhesdoservicopatente': d.det.PATENTE[0] || '',
     'detalhesdoservicopatente2': d.det.PATENTE[1] || '',
     'detalhesdoservicopatente3': d.det.PATENTE[2] || '',
@@ -2727,8 +2743,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'detalhesdoservicopatente5': d.det.PATENTE[4] || '',
 
     // DESENHO INDUSTRIAL
-    'quantidadedepositosprocessosdesenhoindustrial': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
-    'descricaodoservicodesenhoindustrial': (d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL']) ? '' : '',
+    'descricaodoservicodesenhoindustrial': d.qtd_desc.DI || d.qtd_desc['DESENHO INDUSTRIAL'] || '',
     'detalhesdoservicodesenhoindustrial': d.det['DESENHO INDUSTRIAL'][0] || '',
     'detalhesdoservicodesenhoindustrial2': d.det['DESENHO INDUSTRIAL'][1] || '',
     'detalhesdoservicodesenhoindustrial3': d.det['DESENHO INDUSTRIAL'][2] || '',
@@ -2736,8 +2751,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'detalhesdoservicodesenhoindustrial5': d.det['DESENHO INDUSTRIAL'][4] || '',
 
     // COPYRIGHT
-    'quantidaderegistrosdecopyrightdireitoautoral': d.qtd_desc.COPY || '',
-    'descricaodoservicocopyrightdireitoautoral': d.qtd_desc.COPY ? '' : '',
+    'descricaodoservicocopyrightdireitoautoral': d.qtd_desc.COPY || '',
     'detalhesdoservicocopyrightdireitoautoral': d.det['COPYRIGHT/DIREITO AUTORAL'][0] || '',
     'detalhesdoservicocopyrightdireitoautoral2': d.det['COPYRIGHT/DIREITO AUTORAL'][1] || '',
     'detalhesdoservicocopyrightdireitoautoral3': d.det['COPYRIGHT/DIREITO AUTORAL'][2] || '',
@@ -2745,8 +2759,7 @@ function montarVarsParaTemplateOutros(d, nowInfo) {
     'detalhesdoservicocopyrightdireitoautoral5': d.det['COPYRIGHT/DIREITO AUTORAL'][4] || '',
 
     // OUTROS SERVIÇOS
-    'quantidaderegistrosdeoutrosservicos': d.qtd_desc.OUTROS || '',
-    'descricaodoservicooutrosservicos': d.qtd_desc.OUTROS ? '' : '',
+    'descricaodoservicooutrosservicos': d.qtd_desc.OUTROS || '',
     'detalhesdoservicooutrosservicos': d.det['OUTROS'][0] || '',
     'detalhesdoservicooutrosservicos2': d.det['OUTROS'][1] || '',
     'detalhesdoservicooutrosservicos3': d.det['OUTROS'][2] || '',
