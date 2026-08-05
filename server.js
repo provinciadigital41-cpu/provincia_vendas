@@ -1209,6 +1209,51 @@ function serviceKindFromText(s) {
   return 'OUTROS';
 }
 
+// Normaliza o texto do serviço para comparação: sem acentos, maiúsculo e espaços colapsados
+function normalizeServicoTexto(s) {
+  return stripDiacritics(String(s || ''))
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Serviços que exibem "Processo: nº X" (número do acompanhamento) nos detalhes.
+ * Relação informada pelo cliente:
+ *   ACOMPANHAMENTO DE REGISTRO DE MARCA / DESENHO INDUSTRIAL / PATENTE
+ *   MANIFESTACAO AO PAN · MANIFESTACAO A OPOSICAO · MANIFESTACAO A CADUCIDADE
+ *   CUMPRIMENTO DE EXIGENCIA (todas as variações, inclusive em grau de recurso/nulidade)
+ *   RECURSO · RECURSO CONTRA INDEFERIMENTO DE PEDIDO DE REGISTRO
+ *   RECURSO EXCETO CONTRA O INDEFERIMENTO · CONTRARAZÕES AO RECURSO DE 3º
+ *   PRORROGACAO (também nomeada como renovação/decenal) · OPOSICAO
+ *   CADUCIDADE DE MARCA · PAN
+ */
+const RE_SERVICO_COM_ACOMPANHAMENTO = /ACOMPANHAMENTO|MANIFESTACAO|EXIGENCIA|RECURSO|CONTRARAZ|CONTRARRAZ|NULIDADE|PRORROG|RENOVA|DECEN|OPOSICAO|CADUCIDADE|\bPAN\b/;
+
+// true se QUALQUER serviço do slot exige o número do processo de acompanhamento
+function servicoTemNumeroAcompanhamento(servicos) {
+  const arr = Array.isArray(servicos) ? servicos : [servicos];
+  return arr.some(s => RE_SERVICO_COM_ACOMPANHAMENTO.test(normalizeServicoTexto(s)));
+}
+
+/**
+ * NCL/classes e especificações só valem para o PEDIDO DE REGISTRO DE MARCA.
+ * Todos os demais serviços (acompanhamento, oposição, caducidade, recurso,
+ * prorrogação, cumprimento de exigência, …) não levam classe nem especificação.
+ */
+function servicoEhPedidoRegistroMarca(servico) {
+  const s = normalizeServicoTexto(servico);
+  if (!s) return false;
+  if (RE_SERVICO_COM_ACOMPANHAMENTO.test(s)) return false;
+  return /REGISTRO DE MARCA/.test(s);
+}
+
+// true se QUALQUER serviço do slot é pedido de registro de marca
+function servicoTemNclEspecificacoes(servicos) {
+  const arr = Array.isArray(servicos) ? servicos : [servicos];
+  return arr.some(servicoEhPedidoRegistroMarca);
+}
+
 // Busca campo statement por N com fallback para connector
 function buscarServicoN(card, n) {
   const mapStmt = {
@@ -1325,17 +1370,28 @@ function extractBrandName(v) {
 
 // Normalização apenas para “Detalhes do serviço …”
 // [ATUALIZADO] O 6º parâmetro pode ser boolean (temAcomp) ou string (stmt) — detecta acompanhamento em ambos os casos
-function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '', risco = '', stmtOrFlag = '', processo = '') {
+// [ATUALIZADO] O 8º parâmetro (opts) permite controlar separadamente NCL/classe e número do acompanhamento
+function normalizarCabecalhoDetalhe(kind, nome, tipoMarca = '', classeNums = '', risco = '', stmtOrFlag = '', processo = '', opts = {}) {
   const k = String(kind || '').toUpperCase();
 
   // [NOVO] Detecta se o servico e de acompanhamento (marca, patente ou desenho industrial)
   // Aceita boolean (temAcomp) ou string (stmt) — no caso boolean, usa diretamente
   const isAcompanhamento = typeof stmtOrFlag === 'boolean' ? stmtOrFlag : /acompanhamento/i.test(String(stmtOrFlag || ''));
-  const processoStr = (isAcompanhamento && processo) ? ` e Processo: nº ${processo}` : '';
+
+  // Número do processo de acompanhamento: relação de serviços definida por servicoTemNumeroAcompanhamento.
+  // Sem opts, mantém o comportamento antigo (baseado em stmtOrFlag).
+  const temNumeroAcomp = typeof opts.temNumeroAcompanhamento === 'boolean'
+    ? opts.temNumeroAcompanhamento
+    : isAcompanhamento;
+  const processoStr = (temNumeroAcomp && processo) ? ` e Processo: nº ${processo}` : '';
+
+  // NCL/classe: apenas para PEDIDO DE REGISTRO DE MARCA.
+  // Sem opts, mantém o comportamento antigo (tudo que não é acompanhamento).
+  const temNcl = typeof opts.temNcl === 'boolean' ? opts.temNcl : !isAcompanhamento;
 
   if (k === 'MARCA') {
     const tipo = tipoMarca ? `, Apresentação: ${tipoMarca}` : '';
-    const classe = (!isAcompanhamento && classeNums) ? `, CLASSE: nº ${classeNums}` : '';
+    const classe = (temNcl && classeNums) ? `, CLASSE: nº ${classeNums}` : '';
     // Normaliza risco: "Médio com Termo" → "Médio"
     // [CONDICIONAL] Quando o serviço é de acompanhamento de marca, o risco NÃO é exibido nos detalhes
     let riscoNorm = String(risco || '').trim();
@@ -1416,45 +1472,66 @@ function parseClassesFromText(value, max = 30) {
 async function montarDados(card) {
   const by = toById(card);
 
+  // [MOVIDO PARA CIMA] Serviços de cada slot — precisam ser conhecidos ANTES dos blocos de
+  // marca porque as classes/especificações (NCL) só são preenchidas para PEDIDO DE REGISTRO DE MARCA.
+  const todosServs1 = buscarTodosServicosN(card, 1);
+  const todosServs2 = buscarTodosServicosN(card, 2);
+  const todosServs3 = buscarTodosServicosN(card, 3);
+  const todosServs4 = buscarTodosServicosN(card, 4);
+  const todosServs5 = buscarTodosServicosN(card, 5);
+
+  // Flag: verdadeiro se QUALQUER serviço do slot é PEDIDO DE REGISTRO DE MARCA.
+  // Só nesse caso o contrato leva NCL/classes e especificações.
+  const temNcl1 = servicoTemNclEspecificacoes(todosServs1);
+  const temNcl2 = servicoTemNclEspecificacoes(todosServs2);
+  const temNcl3 = servicoTemNclEspecificacoes(todosServs3);
+  const temNcl4 = servicoTemNclEspecificacoes(todosServs4);
+  const temNcl5 = servicoTemNclEspecificacoes(todosServs5);
+
+  // Zera classes/especificações dos slots que não têm pedido de registro de marca
+  const vazio30 = () => Array(30).fill('');
+  const gateNcl = (temNcl, valor) => (temNcl ? valor : vazio30());
+  const gateClasse = (temNcl, valor) => (temNcl ? valor : '');
+
   // Marca 1 dados base
   const tituloMarca1 = by['marca_ou_patente_1'] || card.title || '';
   const marcasEspecRaw1 = by['copy_of_classe_e_especifica_es'] || by['classe'] || getFirstByNames(card, ['classes e especificações marca - 1', 'classes e especificações']) || '';
   console.log('[DEBUG CLASSES] marcasEspecRaw1 bruto:', JSON.stringify(marcasEspecRaw1));
-  const linhasMarcasEspec1 = parseListFromLongText(marcasEspecRaw1, 30);
-  const classesAgrupadas1 = parseClassesFromText(marcasEspecRaw1, 30);
-  const classeSomenteNumeros1 = extractClasseNumbersFromText(marcasEspecRaw1);
+  const linhasMarcasEspec1 = gateNcl(temNcl1, parseListFromLongText(marcasEspecRaw1, 30));
+  const classesAgrupadas1 = gateNcl(temNcl1, parseClassesFromText(marcasEspecRaw1, 30));
+  const classeSomenteNumeros1 = gateClasse(temNcl1, extractClasseNumbersFromText(marcasEspecRaw1));
   const tipoMarca1 = checklistToText(by['checklist_vertical'] || getFirstByNames(card, ['tipo de marca']));
 
   // Marca 2
   const tituloMarca2 = extractBrandName(by['marca_2']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 2'])) || '';
   const marcasEspecRaw2 = by['copy_of_classes_e_especifica_es_marca_2'] || getFirstByNames(card, ['classes e especificações marca - 2']) || '';
-  const linhasMarcasEspec2 = parseListFromLongText(marcasEspecRaw2, 30);
-  const classesAgrupadas2 = parseClassesFromText(marcasEspecRaw2, 30);
-  const classeSomenteNumeros2 = extractClasseNumbersFromText(marcasEspecRaw2);
+  const linhasMarcasEspec2 = gateNcl(temNcl2, parseListFromLongText(marcasEspecRaw2, 30));
+  const classesAgrupadas2 = gateNcl(temNcl2, parseClassesFromText(marcasEspecRaw2, 30));
+  const classeSomenteNumeros2 = gateClasse(temNcl2, extractClasseNumbersFromText(marcasEspecRaw2));
   const tipoMarca2 = checklistToText(by['copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 2']));
 
   // Marca 3
   const tituloMarca3 = extractBrandName(by['marca_3']) || extractBrandName(getFirstByNames(card, ['marca ou patente - 3'])) || '';
   const marcasEspecRaw3 = by['copy_of_copy_of_classe_e_especifica_es'] || getFirstByNames(card, ['classes e especificações marca - 3']) || '';
-  const linhasMarcasEspec3 = parseListFromLongText(marcasEspecRaw3, 30);
-  const classesAgrupadas3 = parseClassesFromText(marcasEspecRaw3, 30);
-  const classeSomenteNumeros3 = extractClasseNumbersFromText(marcasEspecRaw3);
+  const linhasMarcasEspec3 = gateNcl(temNcl3, parseListFromLongText(marcasEspecRaw3, 30));
+  const classesAgrupadas3 = gateNcl(temNcl3, parseClassesFromText(marcasEspecRaw3, 30));
+  const classeSomenteNumeros3 = gateClasse(temNcl3, extractClasseNumbersFromText(marcasEspecRaw3));
   const tipoMarca3 = checklistToText(by['copy_of_copy_of_tipo_de_marca'] || getFirstByNames(card, ['tipo de marca - 3']));
 
   // Marca 4
   const tituloMarca4 = extractBrandName(by['marca_ou_patente_4']) || '';
   const marcasEspecRaw4 = by['classes_e_especifica_es_marca_4'] || '';
-  const linhasMarcasEspec4 = parseListFromLongText(marcasEspecRaw4, 30);
-  const classesAgrupadas4 = parseClassesFromText(marcasEspecRaw4, 30);
-  const classeSomenteNumeros4 = extractClasseNumbersFromText(marcasEspecRaw4);
+  const linhasMarcasEspec4 = gateNcl(temNcl4, parseListFromLongText(marcasEspecRaw4, 30));
+  const classesAgrupadas4 = gateNcl(temNcl4, parseClassesFromText(marcasEspecRaw4, 30));
+  const classeSomenteNumeros4 = gateClasse(temNcl4, extractClasseNumbersFromText(marcasEspecRaw4));
   const tipoMarca4 = checklistToText(by['copy_of_tipo_de_marca_3'] || '');
 
   // Marca 5
   const tituloMarca5 = extractBrandName(by['marca_ou_patente_5']) || '';
   const marcasEspecRaw5 = by['copy_of_classes_e_especifica_es_marca_4'] || '';
-  const linhasMarcasEspec5 = parseListFromLongText(marcasEspecRaw5, 30);
-  const classesAgrupadas5 = parseClassesFromText(marcasEspecRaw5, 30);
-  const classeSomenteNumeros5 = extractClasseNumbersFromText(marcasEspecRaw5);
+  const linhasMarcasEspec5 = gateNcl(temNcl5, parseListFromLongText(marcasEspecRaw5, 30));
+  const classesAgrupadas5 = gateNcl(temNcl5, parseClassesFromText(marcasEspecRaw5, 30));
+  const classeSomenteNumeros5 = gateClasse(temNcl5, extractClasseNumbersFromText(marcasEspecRaw5));
   const tipoMarca5 = checklistToText(by['copy_of_tipo_de_marca_3_1'] || '');
 
   // Serviços por N
@@ -1464,20 +1541,22 @@ async function montarDados(card) {
   const serv4Stmt = firstNonEmpty(buscarServicoN(card, 4));
   const serv5Stmt = firstNonEmpty(buscarServicoN(card, 5));
 
-  // [NOVO] Todos os serviços de cada slot (para detectar acompanhamento em qualquer serviço selecionado)
-  const todosServs1 = buscarTodosServicosN(card, 1);
-  const todosServs2 = buscarTodosServicosN(card, 2);
-  const todosServs3 = buscarTodosServicosN(card, 3);
-  const todosServs4 = buscarTodosServicosN(card, 4);
-  const todosServs5 = buscarTodosServicosN(card, 5);
+  // (todosServs1..5 e temNcl1..5 são declarados no topo desta função)
 
-  // Flag: verdadeiro se QUALQUER serviço do slot contém "acompanhamento" OU "prorrog"
-  // (ambos reutilizam os campos de número do processo e incluem "Processo: nº X" nos detalhes)
+  // Flag antiga: usada apenas para omitir o Risco da marca em serviços de acompanhamento/prorrogação
   const temAcomp1 = todosServs1.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
   const temAcomp2 = todosServs2.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
   const temAcomp3 = todosServs3.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
   const temAcomp4 = todosServs4.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
   const temAcomp5 = todosServs5.some(s => /acompanhamento|prorrog|renova|decen/i.test(s));
+
+  // [NOVO] Flag: verdadeiro se QUALQUER serviço do slot está na relação de serviços que
+  // exibem "Processo: nº X" nos detalhes (ver RE_SERVICO_COM_ACOMPANHAMENTO)
+  const temNumAcomp1 = servicoTemNumeroAcompanhamento(todosServs1);
+  const temNumAcomp2 = servicoTemNumeroAcompanhamento(todosServs2);
+  const temNumAcomp3 = servicoTemNumeroAcompanhamento(todosServs3);
+  const temNumAcomp4 = servicoTemNumeroAcompanhamento(todosServs4);
+  const temNumAcomp5 = servicoTemNumeroAcompanhamento(todosServs5);
 
   // Flag específica: verdadeiro se QUALQUER serviço do slot é prorrogação de marca
   const temProrrogacao1 = todosServs1.some(s => /prorrog|renova|decen/i.test(s));
@@ -1931,11 +2010,11 @@ async function montarDados(card) {
 
   // Entradas consolidadas — slotIndex preserva a posição original (0-4) de cada slot
   const entries = [
-    { slotIndex: 0, kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1, temAcomp: temAcomp1, temProrrogacao: temProrrogacao1 },
-    { slotIndex: 1, kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2, temAcomp: temAcomp2, temProrrogacao: temProrrogacao2 },
-    { slotIndex: 2, kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3, temAcomp: temAcomp3, temProrrogacao: temProrrogacao3 },
-    { slotIndex: 3, kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4, temAcomp: temAcomp4, temProrrogacao: temProrrogacao4 },
-    { slotIndex: 4, kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5, temAcomp: temAcomp5, temProrrogacao: temProrrogacao5 },
+    { slotIndex: 0, kind: serviceKindFromText(serv1Stmt), title: tituloMarca1, tipo: tipoMarca1, classes: classeSomenteNumeros1, stmt: serv1Stmt, risco: risco1, lines: linhasMarcasEspec1, processo: processoAcomp1, temAcomp: temAcomp1, temNumAcomp: temNumAcomp1, temNcl: temNcl1, temProrrogacao: temProrrogacao1 },
+    { slotIndex: 1, kind: serviceKindFromText(serv2Stmt), title: tituloMarca2, tipo: tipoMarca2, classes: classeSomenteNumeros2, stmt: serv2Stmt, risco: risco2, lines: linhasMarcasEspec2, processo: processoAcomp2, temAcomp: temAcomp2, temNumAcomp: temNumAcomp2, temNcl: temNcl2, temProrrogacao: temProrrogacao2 },
+    { slotIndex: 2, kind: serviceKindFromText(serv3Stmt), title: tituloMarca3, tipo: tipoMarca3, classes: classeSomenteNumeros3, stmt: serv3Stmt, risco: risco3, lines: linhasMarcasEspec3, processo: processoAcomp3, temAcomp: temAcomp3, temNumAcomp: temNumAcomp3, temNcl: temNcl3, temProrrogacao: temProrrogacao3 },
+    { slotIndex: 3, kind: serviceKindFromText(serv4Stmt), title: tituloMarca4, tipo: tipoMarca4, classes: classeSomenteNumeros4, stmt: serv4Stmt, risco: risco4, lines: linhasMarcasEspec4, processo: processoAcomp4, temAcomp: temAcomp4, temNumAcomp: temNumAcomp4, temNcl: temNcl4, temProrrogacao: temProrrogacao4 },
+    { slotIndex: 4, kind: serviceKindFromText(serv5Stmt), title: tituloMarca5, tipo: tipoMarca5, classes: classeSomenteNumeros5, stmt: serv5Stmt, risco: risco5, lines: linhasMarcasEspec5, processo: processoAcomp5, temAcomp: temAcomp5, temNumAcomp: temNumAcomp5, temNcl: temNcl5, temProrrogacao: temProrrogacao5 },
   ].filter(e => String(e.title || e.stmt || '').trim());
 
   // Agrupamento por kind
@@ -1981,7 +2060,12 @@ async function montarDados(card) {
       if (!e) { detalhes[k][i] = ''; continue; }
       // [ATUALIZADO] Passa stmt e processo para normalizarCabecalhoDetalhe
       // [ATUALIZADO] Passa e.temAcomp (bool) para detecção correta quando há múltiplos serviços
-      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes, e.risco, e.temAcomp, e.processo);
+      // [ATUALIZADO] opts separa as duas regras: NCL/classe só em pedido de registro de marca,
+      // número do processo apenas na relação de serviços de acompanhamento
+      const cab = normalizarCabecalhoDetalhe(k, e.title, e.tipo, e.classes, e.risco, e.temAcomp, e.processo, {
+        temNcl: e.temNcl,
+        temNumeroAcompanhamento: e.temNumAcomp
+      });
       detalhes[k][i] = cab;
     }
   });
@@ -2000,12 +2084,15 @@ async function montarDados(card) {
   console.log('[DEBUG] detalhesPorSlot:', JSON.stringify(detalhesPorSlot));
 
   // Cabeçalhos “SERVIÇOS” para classes
+  // [ATUALIZADO] Só aparece quando o slot tem NCL/especificações (pedido de registro de marca);
+  // caso contrário o quadro de classes fica inteiramente vazio no contrato.
+  const headerClasses = (e) => (e && e.temNcl) ? `MARCA: ${e.title || ''}` : '';
   const headersServicos = {
-    h1: byKind['MARCA'][0] ? `MARCA: ${byKind['MARCA'][0].title || ''}` : '',
-    h2: byKind['MARCA'][1] ? `MARCA: ${byKind['MARCA'][1].title || ''}` : '',
-    h3: byKind['MARCA'][2] ? `MARCA: ${byKind['MARCA'][2].title || ''}` : '',
-    h4: byKind['MARCA'][3] ? `MARCA: ${byKind['MARCA'][3].title || ''}` : '',
-    h5: byKind['MARCA'][4] ? `MARCA: ${byKind['MARCA'][4].title || ''}` : '',
+    h1: headerClasses(byKind['MARCA'][0]),
+    h2: headerClasses(byKind['MARCA'][1]),
+    h3: headerClasses(byKind['MARCA'][2]),
+    h4: headerClasses(byKind['MARCA'][3]),
+    h5: headerClasses(byKind['MARCA'][4]),
   };
 
   // Risco agregado formatado com nome do tipo e do item
